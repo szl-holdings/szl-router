@@ -1,0 +1,56 @@
+# SZL Router config (reference only — the live registry lives in szl_router/core.py).
+# This file documents the env vars and the routing doctrine. No secrets here.
+#
+# Routing doctrine (sovereign-first):
+#   1. our own metal  (box_gpu, nvidia_gpu)        sovereign: true   tier: sovereign
+#   2. free grid      (groq, nvidia_nim, zhipu, siliconflow)         tier: free-grid
+#   3. paid grid      (moonshot / Kimi)                              tier: paid-grid
+#
+# A logical model resolves to an ordered fallback list. Unavailable providers
+# (missing key/url) are skipped at call time — never faked.
+
+providers:
+  box_gpu:
+    base_url_env: A11OY_MODEL_BASE_URL     # e.g. http://100.125.77.31:11434/v1 (Tailscale Ollama)
+    key_env: A11OY_GPU_TOKEN
+    sovereign: true
+    energy_source: self-hosted
+  nvidia_gpu:
+    base_url_env: NVIDIA_GPU_BASE_URL       # set to the rented GPU's OpenAI-compatible URL to arm
+    key_env: NVIDIA_GPU_TOKEN
+    sovereign: true
+    energy_source: self-hosted
+  groq:
+    base_url: https://api.groq.com/openai/v1
+    key_env: GROQ_API_KEY
+    sovereign: false
+    energy_source: grid
+  nvidia_nim:
+    base_url: https://integrate.api.nvidia.com/v1
+    key_env: NVIDIA_NIM_API_KEY
+    sovereign: false
+    energy_source: grid
+  zhipu:
+    base_url: https://open.bigmodel.cn/api/paas/v4
+    key_env: ZHIPU_API_KEY
+    sovereign: false
+    energy_source: grid
+  siliconflow:
+    base_url: https://api.siliconflow.com/v1
+    key_env: SILICONFLOW_API_KEY
+    sovereign: false
+    energy_source: grid
+  moonshot:
+    base_url: https://api.moonshot.ai/v1
+    key_env: KIMI_API_KEY
+    sovereign: false
+    energy_source: grid
+
+logical_models:
+  szl-large:  [box_gpu, nvidia_gpu, groq, nvidia_nim, moonshot]
+  szl-fast:   [box_gpu, groq, nvidia_nim]
+  szl-coder:  [box_gpu, nvidia_gpu, nvidia_nim, groq]
+
+server:
+  port_env: PORT                 # default 8099
+  auth_token_env: SZL_ROUTER_TOKEN   # optional; if set, callers must Bearer-match
