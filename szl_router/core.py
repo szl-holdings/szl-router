@@ -362,3 +362,75 @@ def status() -> Dict[str, Any]:
         "logical_models": {k: v for k, v in MODEL_ROUTES.items()},
         "default_model": DEFAULT_MODEL,
     }
+
+
+# energy_source values we are allowed to claim, honestly. "self-hosted" and
+# "grid" are the only TRUE ones today (our own metal still runs on grid power;
+# third-party clouds are grid). The rest are the Sovereign-Resilience / Stranded-
+# Energy roadmap targets — only ever set when verifiably true (no greenwashing).
+HONEST_ENERGY_SOURCES = ["self-hosted", "grid"]
+ROADMAP_ENERGY_SOURCES = ["solar", "curtailed-wind", "hydro", "flare-mitigated", "biogas"]
+
+
+def fabric_status() -> Dict[str, Any]:
+    """Energy/sovereignty posture of the whole fabric — honest, live.
+
+    Maps the live provider registry onto the Sovereign-Resilience tier ladder
+    (sovereign own-metal first, then free grid faucets, then paid grid) and
+    reports a single posture: green = a sovereign node is up AND has a fallback;
+    yellow = degraded (only one route, or no sovereign node up); red = nothing
+    armed. Never claims sovereign/clean-energy that isn't literally true."""
+    sovereign, free_grid, paid_grid = [], [], []
+    for name, p in PROVIDERS.items():
+        rec = {
+            "provider": name,
+            "armed": p.available(),
+            "sovereign": p.sovereign,
+            "energy_source": p.energy_source,
+            "note": p.note,
+        }
+        tier = _tier_of(p)
+        (sovereign if tier == "sovereign"
+         else paid_grid if tier == "paid-grid"
+         else free_grid).append(rec)
+
+    sov_armed = [r for r in sovereign if r["armed"]]
+    grid_armed = [r for r in (free_grid + paid_grid) if r["armed"]]
+    total_armed = len(sov_armed) + len(grid_armed)
+    if sov_armed and total_armed >= 2:
+        posture = "green"      # sovereign up + at least one fallback
+    elif total_armed >= 1:
+        posture = "yellow"     # degraded: no sovereign, or no redundancy
+    else:
+        posture = "red"        # nothing armed
+
+    return {
+        "posture": posture,
+        "sovereign_up": bool(sov_armed),
+        "routes_armed": total_armed,
+        "ladder": {
+            "tier_0_allodial_solar": {
+                "status": "roadmap",
+                "what": "own weights + own solar + own metal = unkillable, sovereign:true",
+                "energy_source": "solar (not yet — claim only when literally true)",
+            },
+            "tier_1_sovereign_gpu": {
+                "status": "live" if sov_armed else "armed-but-down" if sovereign else "absent",
+                "providers": sovereign,
+                "what": "our own GPU node(s) over Tailscale; sovereign:true, grid power today",
+            },
+            "tier_2_free_grid_faucets": {
+                "status": "live" if [r for r in free_grid if r["armed"]] else "configured",
+                "providers": free_grid,
+                "what": "free open-weight clouds (Groq, NIM, GLM-Flash, SiliconFlow); sovereign:false",
+            },
+            "tier_3_paid_grid": {
+                "providers": paid_grid,
+                "what": "paid last-resort (Kimi); sovereign:false",
+            },
+        },
+        "honest_energy_sources": HONEST_ENERGY_SOURCES,
+        "roadmap_energy_sources": ROADMAP_ENERGY_SOURCES,
+        "doctrine": "sovereign:true ONLY on own metal; energy_source claims must be real; "
+                    "free faucets are honest sovereign:false; no half-state.",
+    }
