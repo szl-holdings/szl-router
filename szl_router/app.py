@@ -51,8 +51,18 @@ def status() -> Dict[str, Any]:
 @app.get("/fabric")
 @app.get("/energy")
 def fabric() -> Dict[str, Any]:
-    """Energy/sovereignty posture of the whole fabric (Sovereign-Resilience ladder)."""
-    return core.fabric_status()
+    """Energy/sovereignty posture of the whole fabric (Sovereign-Resilience ladder)
+    with the live wasted-energy harvest overlay (R-HARVEST-FABRIC)."""
+    return core.fabric_status(include_harvest=True, allow_network=True)
+
+
+@app.get("/harvest")
+def harvest() -> Dict[str, Any]:
+    """Live wasted-energy harvest posture from real public grid feeds (no key):
+    negative wholesale price (aWATTar DE), renewable-share curtailment
+    (Energy-Charts), carbon intensity (UK). Honest: a down feed reads
+    'unreachable', joules stay SAMPLE, grid data never sets sovereign:true."""
+    return core.harvest_status(allow_network=True)
 
 
 @app.get("/v1/models")
