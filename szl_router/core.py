@@ -33,6 +33,20 @@ from typing import Any, Dict, List, Optional, Tuple
 # "grid" for third-party clouds; "self-hosted" for our own metal (still grid
 # power today — flip to "solar"/"renewable" only when that is literally true).
 # ---------------------------------------------------------------------------
+def _normalize_base(url: str) -> str:
+    """Normalize an OpenAI-compatible base URL.
+
+    A bare host (scheme://host:port with no path) gets `/v1` appended — this is
+    what Ollama / vLLM expose. URLs that already carry a path are left as-is."""
+    u = url.strip().rstrip("/")
+    if not u:
+        return ""
+    after = u.split("://", 1)[-1]
+    if "/" not in after:  # no path component at all -> bare host:port
+        return u + "/v1"
+    return u
+
+
 @dataclass(frozen=True)
 class Provider:
     name: str
@@ -47,8 +61,8 @@ class Provider:
         if self.base_url_env:
             v = os.environ.get(self.base_url_env, "").strip()
             if v:
-                return v.rstrip("/")
-        return self.base_url_default.rstrip("/")
+                return _normalize_base(v)
+        return _normalize_base(self.base_url_default) if self.base_url_default else ""
 
     def api_key(self) -> Optional[str]:
         if not self.key_env:
@@ -142,10 +156,12 @@ PROVIDERS: Dict[str, Provider] = {
 Route = Tuple[str, str]
 
 MODEL_ROUTES: Dict[str, List[Route]] = {
-    # general large brain
+    # general brain. Sovereign-first: our own GPU (llama3.1:8b on the laptop)
+    # is preferred even though it is smaller than the 70B grid models — running
+    # on our own metal is the point. Grid 70Bs are the fallback if the GPU is off.
     "szl-large": [
-        ("box_gpu", "qwen2.5:32b"),
-        ("nvidia_gpu", "meta/llama-3.3-70b-instruct"),
+        ("box_gpu", "llama3.1:8b"),
+        ("nvidia_gpu", "llama3.1:8b"),
         ("groq", "llama-3.3-70b-versatile"),
         ("nvidia_nim", "meta/llama-3.3-70b-instruct"),
         ("moonshot", "kimi-k2-0905-preview"),
@@ -153,13 +169,14 @@ MODEL_ROUTES: Dict[str, List[Route]] = {
     # low-latency small brain
     "szl-fast": [
         ("box_gpu", "llama3.1:8b"),
+        ("nvidia_gpu", "llama3.1:8b"),
         ("groq", "llama-3.1-8b-instant"),
         ("nvidia_nim", "meta/llama-3.1-8b-instruct"),
     ],
     # coding brain
     "szl-coder": [
-        ("box_gpu", "qwen2.5-coder:32b"),
-        ("nvidia_gpu", "qwen/qwen2.5-coder-32b-instruct"),
+        ("box_gpu", "qwen2.5-coder:7b"),
+        ("nvidia_gpu", "qwen2.5-coder:7b"),
         ("nvidia_nim", "deepseek-ai/deepseek-coder-6.7b-instruct"),
         ("groq", "llama-3.3-70b-versatile"),
     ],
