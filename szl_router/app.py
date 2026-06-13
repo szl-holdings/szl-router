@@ -48,6 +48,13 @@ def status() -> Dict[str, Any]:
     return core.status()
 
 
+@app.get("/fabric")
+@app.get("/energy")
+def fabric() -> Dict[str, Any]:
+    """Energy/sovereignty posture of the whole fabric (Sovereign-Resilience ladder)."""
+    return core.fabric_status()
+
+
 @app.get("/v1/models")
 def models() -> Dict[str, Any]:
     now = int(time.time())
