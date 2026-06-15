@@ -70,6 +70,9 @@ def models() -> Dict[str, Any]:
     now = int(time.time())
     data = [{"id": name, "object": "model", "created": now, "owned_by": "szl-router"}
             for name in core.MODEL_ROUTES]
+    # Embeddings models (HOME-node-first) are listed too so callers can discover them.
+    data += [{"id": name, "object": "model", "created": now, "owned_by": "szl-router"}
+             for name in core.EMBED_ROUTES]
     return {"object": "list", "data": data}
 
 
@@ -89,6 +92,37 @@ async def chat_completions(request: Request) -> JSONResponse:
             max_tokens=body.get("max_tokens"),
             extra={k: v for k, v in body.items()
                    if k not in {"model", "messages", "temperature", "max_tokens", "stream"}},
+        )
+    except core.RouterError as e:
+        return JSONResponse(
+            status_code=502,
+            content={
+                "error": {"message": str(e), "type": "router_all_routes_failed"},
+                "x_szl_provenance": {"attempts": [a.__dict__ for a in e.attempts]},
+            },
+        )
+    return JSONResponse(content=result)
+
+
+@app.post("/v1/embeddings")
+async def embeddings(request: Request) -> JSONResponse:
+    """OpenAI-compatible embeddings. body.model = bge-large (HOME-node-first) or
+    provider:upstream_model. Same honest provenance contract as chat: the answer
+    carries x_szl_provenance (served_by, sovereign true ONLY for owned metal, tier,
+    full attempts trail). Sequential failover across separate sovereign workers —
+    never fused VRAM. Fails loud (502) with the attempt trail if no route answers."""
+    _check_auth(request)
+    body = await request.json()
+    input_ = body.get("input")
+    if input_ is None:
+        raise HTTPException(status_code=400, detail="input is required")
+    model = body.get("model") or "bge-large"
+    try:
+        result = core.embed(
+            model,
+            input_,
+            extra={k: v for k, v in body.items()
+                   if k not in {"model", "input"}},
         )
     except core.RouterError as e:
         return JSONResponse(
