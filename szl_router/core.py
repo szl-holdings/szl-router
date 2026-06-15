@@ -97,6 +97,19 @@ PROVIDERS: Dict[str, Provider] = {
         energy_source="self-hosted",
         note="Founder's rented NVIDIA GPU (vLLM/NIM/Ollama). Set the two envs to arm.",
     ),
+    "omen_gpu": Provider(
+        name="omen_gpu",
+        base_url_env="OMEN_GPU_BASE_URL",
+        base_url_default="",
+        key_env="OMEN_GPU_TOKEN",
+        sovereign=True,
+        energy_source="self-hosted",
+        note="Always-on HOME node (OMEN RTX 4060 Ti 8GB) on the founder tailnet. "
+             "Set OMEN_GPU_BASE_URL=http://100.70.130.45:11434/v1 to arm. Preferred "
+             "for low-latency small jobs + embeddings so the TRAVELING laptop is not "
+             "the sole worker. Each sovereign node is a SEPARATE worker — placement + "
+             "sequential failover only; VRAM is NEVER fused/combined.",
+    ),
     # --- free / grid tiers (third-party clouds) ------------------------------
     "groq": Provider(
         name="groq",
@@ -162,12 +175,18 @@ MODEL_ROUTES: Dict[str, List[Route]] = {
     "szl-large": [
         ("box_gpu", "llama3.1:8b"),
         ("nvidia_gpu", "llama3.1:8b"),
+        ("omen_gpu", "llama3.1:8b"),
         ("groq", "llama-3.3-70b-versatile"),
         ("nvidia_nim", "meta/llama-3.3-70b-instruct"),
         ("moonshot", "kimi-k2-0905-preview"),
     ],
-    # low-latency small brain
+    # low-latency small brain. OFFLOAD doctrine: prefer the always-on HOME node
+    # (omen_gpu) FIRST for small/fast jobs so the TRAVELING Blackwell laptop
+    # (box_gpu) is not the sole worker. If OMEN is not armed/reachable this
+    # falls through honestly to the laptop, then the free grid. Each is a
+    # separate sovereign worker (sequential failover, never fused VRAM).
     "szl-fast": [
+        ("omen_gpu", "llama3.1:8b"),
         ("box_gpu", "llama3.1:8b"),
         ("nvidia_gpu", "llama3.1:8b"),
         ("groq", "llama-3.1-8b-instant"),
@@ -177,8 +196,24 @@ MODEL_ROUTES: Dict[str, List[Route]] = {
     "szl-coder": [
         ("box_gpu", "qwen2.5-coder:7b"),
         ("nvidia_gpu", "qwen2.5-coder:7b"),
+        ("omen_gpu", "qwen2.5-coder:7b"),
         ("nvidia_nim", "deepseek-ai/deepseek-coder-6.7b-instruct"),
         ("groq", "llama-3.3-70b-versatile"),
+    ],
+}
+
+# Embeddings routes. Same sovereign-first doctrine, but for embeddings we bias
+# the always-on HOME node (omen_gpu) FIRST so the embeddings/RAG lane lives on
+# the always-on desktop and the TRAVELING laptop is not pinned as the embeddings
+# dependency. Served through the OpenAI-compatible /v1/embeddings surface in
+# app.py. Honest provenance is identical to chat. Free-grid has no honest
+# always-on embeddings peer here, so the sovereign nodes are the route; if none
+# is armed the call fails loud (no fabricated vector).
+EMBED_ROUTES: Dict[str, List[Route]] = {
+    "bge-large": [
+        ("omen_gpu", "bge-large"),
+        ("box_gpu", "bge-large"),
+        ("nvidia_gpu", "bge-large"),
     ],
 }
 
@@ -343,6 +378,101 @@ def chat(
     raise RouterError(f"all routes failed for model '{model}'", attempts)
 
 
+def _post_embeddings(provider: Provider, payload: Dict[str, Any], timeout: float) -> Dict[str, Any]:
+    url = provider.base_url() + "/embeddings"
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("User-Agent", "szl-router/1.0")
+    req.add_header("Accept", "application/json")
+    key = provider.api_key()
+    if key:
+        req.add_header("Authorization", "Bearer " + key)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        body = resp.read().decode("utf-8")
+        return json.loads(body)
+
+
+def resolve_embed_routes(model: str) -> List[Route]:
+    """Map a requested embeddings model to its ordered routes (HOME-node first).
+
+    Accepts our logical embed name (bge-large) OR a raw 'provider:model'. Unknown
+    logical names fall back to the bge-large route so callers stay honest."""
+    if model in EMBED_ROUTES:
+        return EMBED_ROUTES[model]
+    if ":" in model:
+        prov, _, up = model.partition(":")
+        if prov in PROVIDERS:
+            return [(prov, up)]
+    return EMBED_ROUTES["bge-large"]
+
+
+def embed(
+    model: str,
+    input_: Any,
+    *,
+    timeout: float = 60.0,
+    extra: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Run an embeddings call through the HOME-node-first sovereign chain.
+
+    Mirrors chat(): OpenAI-shaped /v1/embeddings response with an added
+    `x_szl_provenance` block (identical honesty contract — served_by, sovereign
+    true ONLY for owned metal, tier, full attempts trail). Each sovereign node is
+    a SEPARATE worker; this is sequential failover, never fused VRAM. Raises
+    RouterError if every route fails (no fabricated vector)."""
+    routes = resolve_embed_routes(model)
+    prov = Provenance()
+    attempts: List[Attempt] = []
+
+    for provider_name, upstream_model in routes:
+        provider = PROVIDERS.get(provider_name)
+        if provider is None or not provider.available():
+            attempts.append(Attempt(provider_name, upstream_model, ok=False,
+                                    error="provider unavailable (no key/url)"))
+            continue
+
+        payload: Dict[str, Any] = {"model": upstream_model, "input": input_}
+        if extra:
+            payload.update(extra)
+
+        t0 = time.time()
+        try:
+            result = _post_embeddings(provider, payload, timeout)
+            dt = int((time.time() - t0) * 1000)
+            if "data" not in result:
+                detail = str(result.get("error") or result.get("detail") or result)[:200]
+                attempts.append(Attempt(provider_name, upstream_model, ok=False,
+                                        status=200, error=detail, latency_ms=dt))
+                continue
+            attempts.append(Attempt(provider_name, upstream_model, ok=True,
+                                    status=200, latency_ms=dt))
+            prov.served_by = f"{provider_name}:{upstream_model}"
+            prov.provider = provider_name
+            prov.upstream_model = upstream_model
+            prov.base_url = provider.base_url()
+            prov.sovereign = provider.sovereign
+            prov.energy_source = provider.energy_source
+            prov.tier = _tier_of(provider)
+            prov.attempts = attempts
+            result["x_szl_provenance"] = prov.to_dict()
+            return result
+        except urllib.error.HTTPError as e:
+            dt = int((time.time() - t0) * 1000)
+            try:
+                err_body = e.read().decode("utf-8")[:200]
+            except Exception:
+                err_body = str(e)
+            attempts.append(Attempt(provider_name, upstream_model, ok=False,
+                                    status=e.code, error=err_body, latency_ms=dt))
+        except Exception as e:  # noqa: BLE001 - honest catch-all, recorded
+            dt = int((time.time() - t0) * 1000)
+            attempts.append(Attempt(provider_name, upstream_model, ok=False,
+                                    error=f"{type(e).__name__}: {e}"[:200], latency_ms=dt))
+
+    raise RouterError(f"all embed routes failed for model '{model}'", attempts)
+
+
 def status() -> Dict[str, Any]:
     """Honest snapshot: which providers are armed right now."""
     out = []
@@ -360,6 +490,7 @@ def status() -> Dict[str, Any]:
     return {
         "providers": out,
         "logical_models": {k: v for k, v in MODEL_ROUTES.items()},
+        "embed_models": {k: v for k, v in EMBED_ROUTES.items()},
         "default_model": DEFAULT_MODEL,
     }
 
