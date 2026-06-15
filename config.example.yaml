@@ -20,6 +20,15 @@ providers:
     key_env: NVIDIA_GPU_TOKEN
     sovereign: true
     energy_source: self-hosted
+  omen_gpu:
+    base_url_env: OMEN_GPU_BASE_URL         # e.g. http://100.70.130.45:11434/v1 (always-on OMEN home node)
+    key_env: OMEN_GPU_TOKEN
+    sovereign: true
+    energy_source: self-hosted
+    # OFFLOAD: the always-on HOME desktop (OMEN RTX 4060 Ti 8GB). Preferred FIRST
+    # for szl-fast + embeddings so the TRAVELING Blackwell laptop (box_gpu) is not
+    # the sole worker. A SEPARATE sovereign worker: placement + sequential failover
+    # only; VRAM is NEVER fused/combined across nodes (no "16GB combined" claim).
   groq:
     base_url: https://api.groq.com/openai/v1
     key_env: GROQ_API_KEY
@@ -47,9 +56,15 @@ providers:
     energy_source: grid
 
 logical_models:
-  szl-large:  [box_gpu, nvidia_gpu, groq, nvidia_nim, moonshot]
-  szl-fast:   [box_gpu, groq, nvidia_nim]
-  szl-coder:  [box_gpu, nvidia_gpu, nvidia_nim, groq]
+  szl-large:  [box_gpu, nvidia_gpu, omen_gpu, groq, nvidia_nim, moonshot]
+  szl-fast:   [omen_gpu, box_gpu, nvidia_gpu, groq, nvidia_nim]   # HOME node first (offload)
+  szl-coder:  [box_gpu, nvidia_gpu, omen_gpu, nvidia_nim, groq]
+
+# Embeddings routes (HOME-node-first). Served via OpenAI-compatible /v1/embeddings.
+# Same honest provenance as chat; sequential failover across separate sovereign
+# workers; never fused VRAM.
+embed_models:
+  bge-large:  [omen_gpu, box_gpu, nvidia_gpu]
 
 server:
   port_env: PORT                 # default 8099
