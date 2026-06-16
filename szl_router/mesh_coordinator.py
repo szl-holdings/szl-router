@@ -156,6 +156,7 @@ HOP_BY_HOP = {
 # serve tiers stamped on every answer (x-szl-serve-tier)
 TIER_MESH_LIVE = "mesh-live"          # served by a sovereign worker; >=1 sovereign reachable
 TIER_MESH_DEGRADED = "mesh-degraded"  # served by sovereign, but it was the ONLY one reachable (reduced redundancy)
+TIER_MESH_TAILNET = "mesh-tailnet"    # NO sovereign reachable; served by a reachable NON-sovereign tailnet GPU (chaski) — honest, not owned metal
 TIER_HF_FAILOVER = "hf-failover"      # NO sovereign worker reachable; served by the cloud failover tier
 
 
@@ -233,6 +234,12 @@ class MeshCoordinator:
     def reachable_sovereign(self) -> List[Worker]:
         return [w for w in self.workers if w.sovereign and w.reachable]
 
+    def reachable_tailnet_nonsovereign(self) -> List[Worker]:
+        # Reachable, owned-tailnet-but-not-sovereign GPUs (e.g. chaski, a Replit VM).
+        # Served honestly as sovereign=False; only used AFTER sovereign nodes.
+        return [w for w in self.workers
+                if (not w.sovereign) and w.reachable and w.kind == "tailnet-gpu"]
+
     # -- least-connections picker (generalized forge pattern) --------------
     def pick_order(self) -> Tuple[List[Worker], str]:
         """Return (ordered_candidate_workers, serve_tier).
@@ -257,6 +264,19 @@ class MeshCoordinator:
             # NOT fused VRAM — still one separate worker serving).
             tier = TIER_MESH_LIVE if len(live) >= 2 else TIER_MESH_DEGRADED
             return ordered, tier
+        # No sovereign worker reachable: before cloud failover, try a reachable
+        # NON-sovereign tailnet GPU (chaski). Served honestly (sovereign=False in
+        # provenance); tier = mesh-tailnet (NOT mesh-live: no owned metal served it).
+        tailnet = self.reachable_tailnet_nonsovereign()
+        if tailnet:
+            with self._lock:
+                self._rr += 1
+                rr = self._rr
+            ordered = sorted(
+                tailnet,
+                key=lambda w: (w.inflight, (self.workers.index(w) + rr) % max(len(tailnet), 1)),
+            )
+            return ordered, TIER_MESH_TAILNET
         if self.failover and self.failover.reachable:
             return [self.failover], TIER_HF_FAILOVER
         return [], TIER_HF_FAILOVER
@@ -409,11 +429,14 @@ def build_workers_from_env() -> Tuple[List[Worker], Optional[Worker]]:
     Sovereign workers (owned metal, sovereign=True):
       SZL_MESH_LAPTOP_BASE_URL  (default http://100.125.77.31:11434/v1) — traveling RTX 5050
       SZL_MESH_OMEN_BASE_URL    (default http://100.70.130.45:11434/v1) — always-on OMEN 4060 Ti
-      SZL_MESH_CHASKI_BASE_URL  (default http://100.102.173.88:11434/v1) — chaski, the 2nd LIVE
-                                 sovereign GPU. Governed metal on the founder tailnet, metered as a
-                                 peer sovereign node by szl_energy_operator (own exporter engine,
-                                 per-node joules, never fused). Hosts the LARGER brain (qwen2.5:32b)
-                                 so it anchors szl-large. A real probe still gates it (never bluffed).
+    Non-sovereign tailnet GPU (sovereign=False — Replit-hosted, NOT owned metal):
+      SZL_MESH_CHASKI_BASE_URL  (default http://100.102.173.88:11434/v1) — chaski, a LIVE tailnet
+                                 GPU on the founder tailnet, metered as a peer node by
+                                 szl_energy_operator (own exporter, per-node joules, never fused).
+                                 Hosts the LARGER brain (qwen2.5:32b) so it anchors szl-large. It
+                                 IS served (real probe + dispatch) but is NOT owned metal, so
+                                 sovereign=False and provenance never claims it sovereign. Picked
+                                 only AFTER reachable sovereign nodes (sovereign-first preserved).
     Cloud failover (sovereign=False):
       SZL_MESH_FAILOVER_BASE_URL (default https://integrate.api.nvidia.com/v1) + SZL_MESH_FAILOVER_TOKEN
     A worker whose base_url resolves empty is dropped (never half-armed)."""
@@ -443,8 +466,13 @@ def build_workers_from_env() -> Tuple[List[Worker], Optional[Worker]]:
         ("omen", "SZL_MESH_OMEN_BASE_URL", "http://100.70.130.45:11434/v1", True,
          "sovereign-gpu", os.environ.get("SZL_MESH_OMEN_GEN_MODEL", "llama3.1:8b"),
          "szl-fast", "MEASURED"),
-        ("chaski", "SZL_MESH_CHASKI_BASE_URL", "http://100.102.173.88:11434/v1", True,
-         "sovereign-gpu", os.environ.get("SZL_MESH_CHASKI_GEN_MODEL", "qwen2.5:32b"),
+        # chaski is a Replit-hosted tailnet GPU, NOT owned metal -> sovereign=False
+        # (authoritative: a11oy szl_backend_hardening.py kind="tailnet-gpu", sovereign=False;
+        # honest caveat "up only while the Repl runs, not always-on metal"). It STILL serves
+        # (real probe + dispatch) and hosts the larger brain qwen2.5:32b for szl-large, but
+        # provenance must never claim it as sovereign owned metal. Picked AFTER sovereign nodes.
+        ("chaski", "SZL_MESH_CHASKI_BASE_URL", "http://100.102.173.88:11434/v1", False,
+         "tailnet-gpu", os.environ.get("SZL_MESH_CHASKI_GEN_MODEL", "qwen2.5:32b"),
          "szl-large", "PENDING_EXPORTER"),
     ]
     workers: List[Worker] = []
