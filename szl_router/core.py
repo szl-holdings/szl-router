@@ -18,11 +18,16 @@ zero install and is trivially testable. The HTTP server wrapper lives in app.py.
 
 from __future__ import annotations
 
+import hashlib
+import http.client
+import io
 import json
 import os
+import threading
 import time
-import urllib.request
 import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -272,23 +277,151 @@ class RouterError(RuntimeError):
 
 
 # ---------------------------------------------------------------------------
+# Upstream connection pool (keep-alive).
+#
+# Replaces per-call urllib.urlopen (fresh TCP+TLS handshake every request) with
+# a bounded pool of keep-alive http.client connections, keyed by (scheme, host,
+# port). Pure stdlib so it still runs anywhere with zero install. Transport-only:
+# the request shape, headers (incl. the Groq Cloudflare User-Agent quirk), and
+# JSON contract are byte-for-byte what _post_chat/_post_embeddings sent before.
+# A connection that errors or returns a non-keep-alive response is dropped, not
+# reused — so correctness never depends on the pool being warm.
+# ---------------------------------------------------------------------------
+_POOL_MAX_PER_HOST = 4    # idle keep-alive conns kept per (scheme, host, port)
+_POOL_MAX_HOSTS = 16      # distinct hosts tracked before we stop caching new ones
+
+
+class _ConnectionPool:
+    def __init__(self, max_per_host: int = _POOL_MAX_PER_HOST,
+                 max_hosts: int = _POOL_MAX_HOSTS):
+        self._max_per_host = max_per_host
+        self._max_hosts = max_hosts
+        self._idle: Dict[Tuple[str, str, int], List[http.client.HTTPConnection]] = {}
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _key(scheme: str, host: str, port: int) -> Tuple[str, str, int]:
+        return (scheme, host, port)
+
+    def _new_conn(self, scheme: str, host: str, port: int,
+                  timeout: float) -> http.client.HTTPConnection:
+        if scheme == "https":
+            return http.client.HTTPSConnection(host, port, timeout=timeout)
+        return http.client.HTTPConnection(host, port, timeout=timeout)
+
+    def _checkout(self, scheme: str, host: str, port: int,
+                  timeout: float) -> http.client.HTTPConnection:
+        key = self._key(scheme, host, port)
+        with self._lock:
+            bucket = self._idle.get(key)
+            if bucket:
+                conn = bucket.pop()
+                conn.timeout = timeout
+                return conn
+        return self._new_conn(scheme, host, port, timeout)
+
+    def _release(self, scheme: str, host: str, port: int,
+                 conn: http.client.HTTPConnection) -> None:
+        key = self._key(scheme, host, port)
+        with self._lock:
+            if key not in self._idle and len(self._idle) >= self._max_hosts:
+                conn.close()
+                return
+            bucket = self._idle.setdefault(key, [])
+            if len(bucket) >= self._max_per_host:
+                conn.close()
+                return
+            bucket.append(conn)
+
+    def request_json(self, url: str, data: bytes, headers: Dict[str, str],
+                     timeout: float) -> Dict[str, Any]:
+        """POST `data` to `url` and return the parsed JSON body, reusing a pooled
+        keep-alive connection when one is available.
+
+        Raises urllib.error.HTTPError on a non-2xx status so the existing
+        failover/honesty handling in chat()/embed() is unchanged."""
+        parts = urllib.parse.urlsplit(url)
+        scheme = parts.scheme
+        host = parts.hostname or ""
+        port = parts.port or (443 if scheme == "https" else 80)
+        path = parts.path or "/"
+        if parts.query:
+            path += "?" + parts.query
+
+        conn = self._checkout(scheme, host, port, timeout)
+        try:
+            try:
+                conn.request("POST", path, body=data, headers=headers)
+                resp = conn.getresponse()
+            except (http.client.HTTPException, OSError):
+                # A stale pooled connection can fail at send/recv; retry once on a
+                # fresh connection so pool reuse is never observable as an error.
+                try:
+                    conn.close()
+                except Exception:  # noqa: BLE001
+                    pass
+                conn = self._new_conn(scheme, host, port, timeout)
+                conn.request("POST", path, body=data, headers=headers)
+                resp = conn.getresponse()
+
+            status = resp.status
+            body = resp.read()
+            keep_alive = self._can_keep_alive(resp)
+            if status >= 400:
+                conn.close()
+                raise urllib.error.HTTPError(
+                    url, status, resp.reason,
+                    {k.lower(): v for k, v in resp.getheaders()},
+                    io.BytesIO(body),
+                )
+            if keep_alive:
+                self._release(scheme, host, port, conn)
+            else:
+                conn.close()
+            return json.loads(body.decode("utf-8"))
+        except urllib.error.HTTPError:
+            raise
+        except Exception:
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+            raise
+
+    @staticmethod
+    def _can_keep_alive(resp: http.client.HTTPResponse) -> bool:
+        conn_hdr = (resp.getheader("Connection") or "").lower()
+        if "close" in conn_hdr:
+            return False
+        if resp.version == 10 and "keep-alive" not in conn_hdr:
+            return False  # HTTP/1.0 defaults to close unless it opts in
+        return True
+
+
+_UPSTREAM_POOL = _ConnectionPool()
+
+
+# ---------------------------------------------------------------------------
 # Core call
 # ---------------------------------------------------------------------------
+def _upstream_headers(provider: Provider) -> Dict[str, str]:
+    headers = {
+        "Content-Type": "application/json",
+        # Some upstreams (e.g. Groq behind Cloudflare) reject the default urllib
+        # User-Agent with HTTP 1010. Identify ourselves like a normal client.
+        "User-Agent": "szl-router/1.0",
+        "Accept": "application/json",
+    }
+    key = provider.api_key()
+    if key:
+        headers["Authorization"] = "Bearer " + key
+    return headers
+
+
 def _post_chat(provider: Provider, payload: Dict[str, Any], timeout: float) -> Dict[str, Any]:
     url = provider.base_url() + "/chat/completions"
     data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=data, method="POST")
-    req.add_header("Content-Type", "application/json")
-    # Some upstreams (e.g. Groq behind Cloudflare) reject the default urllib
-    # User-Agent with HTTP 1010. Identify ourselves like a normal client.
-    req.add_header("User-Agent", "szl-router/1.0")
-    req.add_header("Accept", "application/json")
-    key = provider.api_key()
-    if key:
-        req.add_header("Authorization", "Bearer " + key)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        body = resp.read().decode("utf-8")
-        return json.loads(body)
+    return _UPSTREAM_POOL.request_json(url, data, _upstream_headers(provider), timeout)
 
 
 def resolve_routes(model: str) -> List[Route]:
@@ -381,16 +514,7 @@ def chat(
 def _post_embeddings(provider: Provider, payload: Dict[str, Any], timeout: float) -> Dict[str, Any]:
     url = provider.base_url() + "/embeddings"
     data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=data, method="POST")
-    req.add_header("Content-Type", "application/json")
-    req.add_header("User-Agent", "szl-router/1.0")
-    req.add_header("Accept", "application/json")
-    key = provider.api_key()
-    if key:
-        req.add_header("Authorization", "Bearer " + key)
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        body = resp.read().decode("utf-8")
-        return json.loads(body)
+    return _UPSTREAM_POOL.request_json(url, data, _upstream_headers(provider), timeout)
 
 
 def resolve_embed_routes(model: str) -> List[Route]:
@@ -407,12 +531,98 @@ def resolve_embed_routes(model: str) -> List[Route]:
     return EMBED_ROUTES["bge-large"]
 
 
+# ---------------------------------------------------------------------------
+# Exact-hash embeddings cache.
+#
+# Embeddings are a pure function of (model, input, extra) — identical inputs
+# yield identical vectors — and are highly repeat-prone (RAG re-indexing the
+# same docs). So an EXACT-hash cache is honesty-safe: a hit returns the SAME
+# bytes the upstream returned, never a fabricated or approximate vector. Reuses
+# the proven _HARVEST_CACHE TTL idea (in-process, time-bounded) plus a size cap.
+#
+# Chat is deliberately NOT cached: it is correctness-sensitive (temperature,
+# tools, non-determinism), so caching it could silently change behavior.
+#
+# On a hit, provenance.served_by is suffixed with the honest ":cache" marker and
+# the response carries x_szl_cache so callers can SEE the answer came from cache.
+# The cached vectors and the upstream tier/sovereign labels are unchanged.
+# ---------------------------------------------------------------------------
+_EMBED_CACHE_TTL = float(os.environ.get("SZL_EMBED_CACHE_TTL", "300") or 300)  # seconds
+_EMBED_CACHE_MAX = int(os.environ.get("SZL_EMBED_CACHE_MAX", "1024") or 1024)  # entries
+_EMBED_CACHE: "Dict[str, Tuple[float, Dict[str, Any]]]" = {}
+_EMBED_CACHE_LOCK = threading.Lock()
+
+
+def _embed_cache_key(model: str, input_: Any, extra: Optional[Dict[str, Any]]) -> str:
+    """Deterministic key over the full request shape. sort_keys makes dict order
+    irrelevant; default=str keeps non-JSON-native inputs hashable rather than
+    crashing the hot path."""
+    payload = {"model": model, "input": input_, "extra": extra or {}}
+    blob = json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _embed_cache_get(key: str) -> Optional[Dict[str, Any]]:
+    now = time.time()
+    with _EMBED_CACHE_LOCK:
+        hit = _EMBED_CACHE.get(key)
+        if hit is None:
+            return None
+        ts, value = hit
+        if (now - ts) >= _EMBED_CACHE_TTL:
+            _EMBED_CACHE.pop(key, None)
+            return None
+        return value
+
+
+def _embed_cache_put(key: str, value: Dict[str, Any]) -> None:
+    now = time.time()
+    with _EMBED_CACHE_LOCK:
+        if len(_EMBED_CACHE) >= _EMBED_CACHE_MAX and key not in _EMBED_CACHE:
+            # Simple bound: drop the oldest entry. Cheap and adequate for an
+            # in-process exact-hash cache; not an LRU on purpose (no per-get cost).
+            oldest = min(_EMBED_CACHE, key=lambda k: _EMBED_CACHE[k][0])
+            _EMBED_CACHE.pop(oldest, None)
+        _EMBED_CACHE[key] = (now, value)
+
+
+def embed_cache_clear() -> None:
+    """Drop all cached embeddings (test/ops helper)."""
+    with _EMBED_CACHE_LOCK:
+        _EMBED_CACHE.clear()
+
+
+def _as_cache_hit(cached: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a cached embeddings response, honestly marked as cache-served.
+
+    Deep-copies so callers can't mutate the stored entry. The vectors (`data`)
+    are byte-identical to what the upstream returned. Provenance is preserved
+    exactly (same provider/tier/sovereign/energy_source — we don't relabel where
+    the vector was actually computed) except served_by gains an honest ":cache"
+    suffix, and an `x_szl_cache` block makes the cache hit explicit."""
+    out = json.loads(json.dumps(cached))  # cheap deep copy of JSON-shaped data
+    prov = out.get("x_szl_provenance")
+    origin = prov.get("served_by") if isinstance(prov, dict) else None
+    if isinstance(prov, dict):
+        if origin and not str(origin).endswith(":cache"):
+            prov["served_by"] = f"{origin}:cache"
+    out["x_szl_cache"] = {
+        "served_by": "cache",
+        "hit": True,
+        "origin_served_by": origin,
+        "note": "exact-hash embeddings cache hit; vectors byte-identical to the "
+                "upstream result; no recompute, no fabrication.",
+    }
+    return out
+
+
 def embed(
     model: str,
     input_: Any,
     *,
     timeout: float = 60.0,
     extra: Optional[Dict[str, Any]] = None,
+    use_cache: bool = True,
 ) -> Dict[str, Any]:
     """Run an embeddings call through the HOME-node-first sovereign chain.
 
@@ -420,8 +630,19 @@ def embed(
     `x_szl_provenance` block (identical honesty contract — served_by, sovereign
     true ONLY for owned metal, tier, full attempts trail). Each sovereign node is
     a SEPARATE worker; this is sequential failover, never fused VRAM. Raises
-    RouterError if every route fails (no fabricated vector)."""
+    RouterError if every route fails (no fabricated vector).
+
+    An exact-hash cache (TTL + size cap) serves byte-identical vectors for a
+    repeated (model, input, extra) request and marks the answer honestly as
+    served_by ...:cache. Set use_cache=False to force a fresh upstream call."""
     routes = resolve_embed_routes(model)
+
+    cache_key = _embed_cache_key(model, input_, extra) if use_cache else None
+    if cache_key is not None:
+        cached = _embed_cache_get(cache_key)
+        if cached is not None:
+            return _as_cache_hit(cached)
+
     prov = Provenance()
     attempts: List[Attempt] = []
 
@@ -456,6 +677,8 @@ def embed(
             prov.tier = _tier_of(provider)
             prov.attempts = attempts
             result["x_szl_provenance"] = prov.to_dict()
+            if cache_key is not None:
+                _embed_cache_put(cache_key, result)
             return result
         except urllib.error.HTTPError as e:
             dt = int((time.time() - t0) * 1000)
