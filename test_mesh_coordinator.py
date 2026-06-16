@@ -87,11 +87,18 @@ def test_least_connections_and_gating():
     check([w.name for w in order] == ["laptop"], "unreachable sovereign (omen) is never picked")
     check(tier == mc.TIER_MESH_DEGRADED, "single reachable sovereign -> mesh-degraded (honest reduced redundancy)")
 
-    # no sovereign reachable -> cloud failover tier
-    by["laptop"].reachable = False
+    # no sovereign reachable, but chaski (reachable non-sovereign tailnet GPU) IS up
+    # -> chaski serves via the honest mesh-tailnet tier, BEFORE cloud failover.
+    by["laptop"].reachable = False  # chaski still reachable=True from above
     order, tier = c.pick_order()
-    check([w.name for w in order] == ["nvidia-nim"], "no sovereign up -> cloud failover picked")
-    check(tier == mc.TIER_HF_FAILOVER, "no sovereign up -> hf-failover tier")
+    check([w.name for w in order] == ["chaski"], "no sovereign up, chaski reachable -> chaski picked (mesh-tailnet, before cloud)")
+    check(tier == mc.TIER_MESH_TAILNET, "no sovereign up + chaski up -> mesh-tailnet tier (honest, not owned metal)")
+
+    # no sovereign AND no tailnet GPU reachable -> cloud failover tier
+    by["chaski"].reachable = False
+    order, tier = c.pick_order()
+    check([w.name for w in order] == ["nvidia-nim"], "no sovereign + no tailnet -> cloud failover picked")
+    check(tier == mc.TIER_HF_FAILOVER, "no sovereign + no tailnet -> hf-failover tier")
 
     # nothing reachable at all -> empty (caller fails loud)
     c.failover.reachable = False
@@ -227,41 +234,48 @@ def test_proxy_picks_reachable_and_failover():
     print()
 
 
-def test_chaski_armed_as_real_sovereign_worker() -> None:
-    """PowerD4: chaski is wired as a REAL dispatch target by default -- the 2nd live
-    sovereign GPU. Was previously empty-default + sovereign=False so the picker never
-    selected it (idle horsepower). Now: armed default URL, sovereign=True, hosts the
-    larger brain (qwen2.5:32b) -> szl-large, with an honest PENDING_EXPORTER joule hint.
-    The picker gating logic is UNCHANGED -- it still honors sovereign=False (see
-    test_least_connections_and_gating); only chaski's default classification changed,
-    matching the live mesh + szl_energy_operator (which meters chaski as a peer node)."""
-    print("test_chaski_armed_as_real_sovereign_worker")
+def test_chaski_armed_as_real_worker_honest() -> None:
+    """chaski is wired as a REAL dispatch target (the 2nd live tailnet GPU, hosting the
+    larger brain qwen2.5:32b -> szl-large) BUT labeled HONESTLY sovereign=False, because
+    chaski is a Replit-hosted VM, NOT owned metal (authoritative: a11oy
+    szl_backend_hardening.py kind="tailnet-gpu", sovereign=False). Doctrine: sovereign is
+    TRUE only for owned hardware. chaski still SERVES (real probe + dispatch) and is metered
+    as a peer node by szl_energy_operator, but provenance never claims it sovereign, and it
+    is picked only AFTER reachable sovereign nodes (sovereign-first preserved). When chaski
+    serves with no sovereign up, the tier is mesh-tailnet (NOT mesh-live)."""
+    print("test_chaski_armed_as_real_worker_honest")
     import os
     for k in [x for x in os.environ if x.startswith("SZL_MESH_")]:
         del os.environ[k]
     workers, _failover = mc.build_workers_from_env()
     by = {w.name: w for w in workers}
     check("chaski" in by, "chaski is armed in the default registry")
-    check(by["chaski"].sovereign is True, "chaski sovereign=True (peer sovereign GPU, matches live mesh)")
+    check(by["chaski"].sovereign is False, "chaski sovereign=False (Replit VM, NOT owned metal — honest)")
+    check(by["chaski"].kind == "tailnet-gpu", "chaski kind=tailnet-gpu (matches a11oy authoritative source)")
     check(by["chaski"].base_url == "http://100.102.173.88:11434/v1",
           "chaski default base = live tailnet IP")
     check(by["chaski"].gen_model == "qwen2.5:32b", "chaski hosts the larger brain qwen2.5:32b")
     check(by["chaski"].serve_role == "szl-large", "chaski anchors szl-large (big brain)")
     check(by["chaski"].joule_label_hint == "PENDING_EXPORTER",
           "chaski joule hint = PENDING_EXPORTER (honest; never a fabricated joule)")
-    # picker now selects chaski when reachable
     c = mc.MeshCoordinator(workers, failover=None)
+    # Sovereign-first: when a sovereign node (laptop) is reachable, IT is picked, not chaski.
     for w in workers:
         w.reachable = (w.name in ("laptop", "chaski")); w.inflight = 0
     order, tier = c.pick_order()
     names = [w.name for w in order]
-    check("chaski" in names and "laptop" in names, "chaski IS dispatched alongside laptop (THE FIX)")
-    check(tier == mc.TIER_MESH_LIVE, "two reachable sovereigns -> mesh-live (real redundancy)")
-    by["laptop"].inflight = 5
-    check(c.pick_order()[0][0].name == "chaski", "least-connections picks idle chaski over busy laptop")
-    # provenance carries the documentation fields
-    out = mc._inject_provenance(json.dumps({"a": 1}).encode(), by["chaski"], mc.TIER_MESH_LIVE, [])
+    check(names == ["laptop"], "sovereign-first: only the sovereign laptop is picked while it is up (chaski held back)")
+    check(tier == mc.TIER_MESH_DEGRADED, "one reachable sovereign -> mesh-degraded (honest, chaski not counted as sovereign)")
+    # chaski IS served when NO sovereign is reachable: honest mesh-tailnet tier.
+    for w in workers:
+        w.reachable = (w.name == "chaski"); w.inflight = 0
+    order2, tier2 = c.pick_order()
+    check([w.name for w in order2] == ["chaski"], "chaski IS dispatched when no sovereign is up (real horsepower, not idle)")
+    check(tier2 == mc.TIER_MESH_TAILNET, "chaski-only -> mesh-tailnet tier (NOT mesh-live: no owned metal served it)")
+    # provenance: served, but sovereign=False, model+tier surfaced honestly.
+    out = mc._inject_provenance(json.dumps({"a": 1}).encode(), by["chaski"], mc.TIER_MESH_TAILNET, [])
     prov = json.loads(out)["x_szl_provenance"]
+    check(prov.get("sovereign") is False, "provenance sovereign=False for chaski (never overclaims owned metal)")
     check(prov["node_gen_model"] == "qwen2.5:32b" and prov["serve_role"] == "szl-large"
           and prov["joule_label_hint"] == "PENDING_EXPORTER",
           "provenance surfaces chaski model+tier+honest joule hint")
@@ -277,7 +291,7 @@ if __name__ == "__main__":
     test_provenance_injection()
     test_fail_loud_no_fabrication()
     test_proxy_picks_reachable_and_failover()
-    test_chaski_armed_as_real_sovereign_worker()
+    test_chaski_armed_as_real_worker_honest()
     if FAILED:
         print("\nRESULT: %d check(s) FAILED — coordinator logic regressed." % FAILED)
         sys.exit(1)
