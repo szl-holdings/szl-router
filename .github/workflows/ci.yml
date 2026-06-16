@@ -1,0 +1,66 @@
+# .github/workflows/ci.yml — SZL Router CI
+#
+# Real CI for szl-router (ships router code + offline deterministic tests).
+# Added 2026-06-16: repo previously had NO CI (flagged in the audit).
+#
+# Jobs:
+#   test      — Python 3.12, install requirements + pytest, syntax gate
+#               (compileall), then run the offline/deterministic test suite.
+#   doctrine  — calls the org-canonical reusable SZL Doctrine Check, same as
+#               every other szl-holdings repo's doctrine.yml.
+#
+# Honesty contract:
+#   * `python -m pytest -q` collects ONLY the offline, deterministic test_*
+#     functions (test_mesh_coordinator.py in full + test_router.py's pure
+#     test_harvest_classifier). The live-network smoke driver in
+#     test_router.py's __main__ block (try_model / show_harvest_live) is NOT a
+#     test_* function and is intentionally NOT collected — it requires armed
+#     providers + network egress and is an operational smoke check, not a CI
+#     gate. Nothing is skipped or allow-failure'd to fake green.
+#   * No secrets are referenced. Tests pass with zero providers armed and no
+#     network, which is exactly the CI sandbox posture.
+#
+# Doctrine: SHA-pin all actions (Pin Check standard); no secrets; honest.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (py3.12)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Syntax gate (compileall)
+        run: python -m compileall szl_router
+
+      - name: Run tests
+        run: python -m pytest -q
+
+  doctrine:
+    name: Doctrine
+    uses: szl-holdings/.github/.github/workflows/doctrine-check.yml@main
