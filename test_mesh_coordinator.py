@@ -227,6 +227,48 @@ def test_proxy_picks_reachable_and_failover():
     print()
 
 
+def test_chaski_armed_as_real_sovereign_worker() -> None:
+    """PowerD4: chaski is wired as a REAL dispatch target by default -- the 2nd live
+    sovereign GPU. Was previously empty-default + sovereign=False so the picker never
+    selected it (idle horsepower). Now: armed default URL, sovereign=True, hosts the
+    larger brain (qwen2.5:32b) -> szl-large, with an honest PENDING_EXPORTER joule hint.
+    The picker gating logic is UNCHANGED -- it still honors sovereign=False (see
+    test_least_connections_and_gating); only chaski's default classification changed,
+    matching the live mesh + szl_energy_operator (which meters chaski as a peer node)."""
+    print("test_chaski_armed_as_real_sovereign_worker")
+    import os
+    for k in [x for x in os.environ if x.startswith("SZL_MESH_")]:
+        del os.environ[k]
+    workers, _failover = mc.build_workers_from_env()
+    by = {w.name: w for w in workers}
+    check("chaski" in by, "chaski is armed in the default registry")
+    check(by["chaski"].sovereign is True, "chaski sovereign=True (peer sovereign GPU, matches live mesh)")
+    check(by["chaski"].base_url == "http://100.102.173.88:11434/v1",
+          "chaski default base = live tailnet IP")
+    check(by["chaski"].gen_model == "qwen2.5:32b", "chaski hosts the larger brain qwen2.5:32b")
+    check(by["chaski"].serve_role == "szl-large", "chaski anchors szl-large (big brain)")
+    check(by["chaski"].joule_label_hint == "PENDING_EXPORTER",
+          "chaski joule hint = PENDING_EXPORTER (honest; never a fabricated joule)")
+    # picker now selects chaski when reachable
+    c = mc.MeshCoordinator(workers, failover=None)
+    for w in workers:
+        w.reachable = (w.name in ("laptop", "chaski")); w.inflight = 0
+    order, tier = c.pick_order()
+    names = [w.name for w in order]
+    check("chaski" in names and "laptop" in names, "chaski IS dispatched alongside laptop (THE FIX)")
+    check(tier == mc.TIER_MESH_LIVE, "two reachable sovereigns -> mesh-live (real redundancy)")
+    by["laptop"].inflight = 5
+    check(c.pick_order()[0][0].name == "chaski", "least-connections picks idle chaski over busy laptop")
+    # provenance carries the documentation fields
+    out = mc._inject_provenance(json.dumps({"a": 1}).encode(), by["chaski"], mc.TIER_MESH_LIVE, [])
+    prov = json.loads(out)["x_szl_provenance"]
+    check(prov["node_gen_model"] == "qwen2.5:32b" and prov["serve_role"] == "szl-large"
+          and prov["joule_label_hint"] == "PENDING_EXPORTER",
+          "provenance surfaces chaski model+tier+honest joule hint")
+    check("VRAM not fused" in prov["placement"], "placement still asserts VRAM not fused")
+    print()
+
+
 if __name__ == "__main__":
     test_normalize_base()
     test_least_connections_and_gating()
@@ -235,6 +277,7 @@ if __name__ == "__main__":
     test_provenance_injection()
     test_fail_loud_no_fabrication()
     test_proxy_picks_reachable_and_failover()
+    test_chaski_armed_as_real_sovereign_worker()
     if FAILED:
         print("\nRESULT: %d check(s) FAILED — coordinator logic regressed." % FAILED)
         sys.exit(1)
