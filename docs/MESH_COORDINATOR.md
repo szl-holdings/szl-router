@@ -40,11 +40,11 @@ instead of one laptop.
 ## Run it on the box (the always-on host — NOT the traveling laptop)
 
 ```bash
-# sovereign workers (owned metal). Defaults are the known tailnet endpoints;
-# override per box. A worker whose URL is empty is simply dropped (never half-armed).
-export SZL_MESH_LAPTOP_BASE_URL=http://100.125.77.31:11434/v1   # traveling RTX 5050 (default)
-export SZL_MESH_OMEN_BASE_URL=http://100.70.130.45:11434/v1     # always-on OMEN 4060 Ti (default)
-# export SZL_MESH_CHASKI_BASE_URL=http://100.76.58.50:11434/v1  # tailnet node — sovereign=FALSE (not owned metal)
+# sovereign workers (owned metal). Set each node's tailnet endpoint via env
+# (no hardcoded IP defaults). A worker whose URL is empty is simply dropped (never half-armed).
+export SZL_MESH_LAPTOP_BASE_URL=http://<laptop-host>:11434/v1   # traveling RTX 5050
+export SZL_MESH_OMEN_BASE_URL=http://<omen-host>:11434/v1       # always-on OMEN 4060 Ti
+# export SZL_MESH_CHASKI_BASE_URL=http://<chaski-host>:11434/v1  # tailnet node — sovereign=FALSE (not owned metal)
 
 # cloud failover (sovereign=false). Default = NVIDIA NIM. Token from env, never hardcoded.
 export SZL_MESH_FAILOVER_BASE_URL=https://integrate.api.nvidia.com/v1

@@ -11,7 +11,7 @@
 
 providers:
   box_gpu:
-    base_url_env: A11OY_MODEL_BASE_URL     # e.g. http://100.125.77.31:11434/v1 (Tailscale Ollama)
+    base_url_env: A11OY_MODEL_BASE_URL     # e.g. http://<gpu-host>:11434/v1 (Tailscale Ollama)
     key_env: A11OY_GPU_TOKEN
     sovereign: true
     energy_source: self-hosted
@@ -21,7 +21,7 @@ providers:
     sovereign: true
     energy_source: self-hosted
   omen_gpu:
-    base_url_env: OMEN_GPU_BASE_URL         # e.g. http://100.70.130.45:11434/v1 (always-on OMEN home node)
+    base_url_env: OMEN_GPU_BASE_URL         # e.g. http://<omen-host>:11434/v1 (always-on OMEN home node)
     key_env: OMEN_GPU_TOKEN
     sovereign: true
     energy_source: self-hosted

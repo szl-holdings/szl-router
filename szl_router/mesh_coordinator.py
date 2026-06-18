@@ -69,7 +69,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 @dataclass
 class Worker:
     name: str
-    base_url: str          # OpenAI-compatible root, e.g. http://100.70.130.45:11434/v1
+    base_url: str          # OpenAI-compatible root, e.g. http://<node-host>:11434/v1
     sovereign: bool        # TRUE only for owned hardware
     kind: str = "sovereign-gpu"
     energy_source: str = "self-hosted"
@@ -427,19 +427,22 @@ def build_workers_from_env() -> Tuple[List[Worker], Optional[Worker]]:
     """Build the sovereign worker pool + optional cloud failover from env.
 
     Sovereign workers (owned metal, sovereign=True):
-      SZL_MESH_LAPTOP_BASE_URL  (default http://100.125.77.31:11434/v1) — traveling RTX 5050
-      SZL_MESH_OMEN_BASE_URL    (default http://100.70.130.45:11434/v1) — always-on OMEN 4060 Ti
+      SZL_MESH_LAPTOP_BASE_URL  — traveling RTX 5050
+      SZL_MESH_OMEN_BASE_URL    — always-on OMEN 4060 Ti
     Non-sovereign tailnet GPU (sovereign=False — Replit-hosted, NOT owned metal):
-      SZL_MESH_CHASKI_BASE_URL  (default http://100.102.173.88:11434/v1) — chaski, a LIVE tailnet
-                                 GPU on the founder tailnet, metered as a peer node by
-                                 szl_energy_operator (own exporter, per-node joules, never fused).
-                                 Hosts the LARGER brain (qwen2.5:32b) so it anchors szl-large. It
-                                 IS served (real probe + dispatch) but is NOT owned metal, so
-                                 sovereign=False and provenance never claims it sovereign. Picked
-                                 only AFTER reachable sovereign nodes (sovereign-first preserved).
+      SZL_MESH_CHASKI_BASE_URL  — chaski, a LIVE tailnet GPU on the founder tailnet,
+                                 metered as a peer node by szl_energy_operator (own exporter,
+                                 per-node joules, never fused). Hosts the LARGER brain
+                                 (qwen2.5:32b) so it anchors szl-large. It IS served (real probe
+                                 + dispatch) but is NOT owned metal, so sovereign=False and
+                                 provenance never claims it sovereign. Picked only AFTER reachable
+                                 sovereign nodes (sovereign-first preserved).
     Cloud failover (sovereign=False):
       SZL_MESH_FAILOVER_BASE_URL (default https://integrate.api.nvidia.com/v1) + SZL_MESH_FAILOVER_TOKEN
-    A worker whose base_url resolves empty is dropped (never half-armed)."""
+
+    Node base URLs are env-only — there are NO hardcoded host/IP defaults (private
+    tailnet addresses must never live in source). A worker whose base_url resolves
+    empty is simply dropped (never half-armed); arm a node by setting its env var."""
     # spec = (name, base_url_env, default_base, sovereign, kind, gen_model, serve_role, joule_label_hint)
     # WHY chaski is now an ARMED sovereign worker (it was: empty default + sovereign=False,
     # so reachable_sovereign() never selected it -- chaski was idle horsepower the balancer
@@ -451,19 +454,19 @@ def build_workers_from_env() -> Tuple[List[Worker], Optional[Worker]]:
     #     szl_energy_operator (its own exporter engine label 'chaski', per-node joules, never
     #     fused). Aligning the coordinator with the rest of the live system, chaski is a
     #     sovereign worker here too.
-    #   * Default base = chaski's LIVE tailnet IP 100.102.173.88:11434 (the same IP D3's fix
-    #     put in DEFAULT_FABRIC_NODES) -- env-overridable like every node. A REAL probe still
-    #     decides reachable; an unrouted chaski is simply never picked (never bluffed green).
-    #     VRAM is NOT fused: chaski is a SEPARATE worker placed horizontally beside the laptop.
+    #   * chaski's base URL is supplied via SZL_MESH_CHASKI_BASE_URL (no hardcoded tailnet
+    #     IP in source). A REAL probe still decides reachable; an unset/unrouted chaski is
+    #     simply never picked (never bluffed green). VRAM is NOT fused: chaski is a SEPARATE
+    #     worker placed horizontally beside the laptop.
     #   * gen_model/serve_role DOCUMENT which brain each node hosts: chaski hosts the LARGER
     #     brain (qwen2.5:32b) so it anchors szl-large; the laptop/omen llama3.1:8b anchor the
     #     low-latency szl-fast lane. These are hints surfaced in provenance/status; the
     #     coordinator still proxies the caller's requested model verbatim.
     specs = [
-        ("laptop", "SZL_MESH_LAPTOP_BASE_URL", "http://100.125.77.31:11434/v1", True,
+        ("laptop", "SZL_MESH_LAPTOP_BASE_URL", "", True,
          "sovereign-gpu", os.environ.get("SZL_MESH_LAPTOP_GEN_MODEL", "llama3.1:8b"),
          "szl-fast", "MEASURED"),
-        ("omen", "SZL_MESH_OMEN_BASE_URL", "http://100.70.130.45:11434/v1", True,
+        ("omen", "SZL_MESH_OMEN_BASE_URL", "", True,
          "sovereign-gpu", os.environ.get("SZL_MESH_OMEN_GEN_MODEL", "llama3.1:8b"),
          "szl-fast", "MEASURED"),
         # chaski is a Replit-hosted tailnet GPU, NOT owned metal -> sovereign=False
@@ -471,7 +474,7 @@ def build_workers_from_env() -> Tuple[List[Worker], Optional[Worker]]:
         # honest caveat "up only while the Repl runs, not always-on metal"). It STILL serves
         # (real probe + dispatch) and hosts the larger brain qwen2.5:32b for szl-large, but
         # provenance must never claim it as sovereign owned metal. Picked AFTER sovereign nodes.
-        ("chaski", "SZL_MESH_CHASKI_BASE_URL", "http://100.102.173.88:11434/v1", False,
+        ("chaski", "SZL_MESH_CHASKI_BASE_URL", "", False,
          "tailnet-gpu", os.environ.get("SZL_MESH_CHASKI_GEN_MODEL", "qwen2.5:32b"),
          "szl-large", "PENDING_EXPORTER"),
     ]

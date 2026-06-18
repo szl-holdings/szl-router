@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
   # Forge Dual-GPU Mesh router - sovereign least-connections proxy across two local
   # Ollama workers (NVIDIA dGPU + Intel iGPU). Python stdlib only, zero dependencies.
-  import http.client, json, threading
+  import http.client, json, os, threading
   from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-  GPU = "100.125.77.31"
+  GPU = os.environ.get("FORGE_GPU_HOST", "127.0.0.1")  # set to the GPU host's tailnet IP
   DGPU = (GPU, 11434)
   IGPU = (GPU, 11435)
   LISTEN = ("0.0.0.0", 11500)

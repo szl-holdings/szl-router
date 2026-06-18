@@ -110,7 +110,7 @@ PROVIDERS: Dict[str, Provider] = {
         sovereign=True,
         energy_source="self-hosted",
         note="Always-on HOME node (OMEN RTX 4060 Ti 8GB) on the founder tailnet. "
-             "Set OMEN_GPU_BASE_URL=http://100.70.130.45:11434/v1 to arm. Preferred "
+             "Set OMEN_GPU_BASE_URL=http://<omen-host>:11434/v1 to arm. Preferred "
              "for low-latency small jobs + embeddings so the TRAVELING laptop is not "
              "the sole worker. Each sovereign node is a SEPARATE worker — placement + "
              "sequential failover only; VRAM is NEVER fused/combined.",

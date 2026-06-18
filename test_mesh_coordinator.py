@@ -30,9 +30,9 @@ def check(cond: bool, msg: str) -> None:
 
 def _workers():
     return [
-        mc.Worker(name="laptop", base_url="http://100.125.77.31:11434/v1", sovereign=True),
-        mc.Worker(name="omen", base_url="http://100.70.130.45:11434/v1", sovereign=True),
-        mc.Worker(name="chaski", base_url="http://100.76.58.50:11434/v1", sovereign=False,
+        mc.Worker(name="laptop", base_url="http://laptop.example:11434/v1", sovereign=True),
+        mc.Worker(name="omen", base_url="http://omen.example:11434/v1", sovereign=True),
+        mc.Worker(name="chaski", base_url="http://chaski.example:11434/v1", sovereign=False,
                   kind="tailnet-gpu", energy_source="grid"),
     ]
 
@@ -136,7 +136,7 @@ def test_sovereign_never_inferred():
 
 def test_provenance_injection():
     print("== honest provenance injection (no fused-VRAM claim) ==")
-    w = mc.Worker(name="omen", base_url="http://100.70.130.45:11434/v1", sovereign=True)
+    w = mc.Worker(name="omen", base_url="http://omen.example:11434/v1", sovereign=True)
     body = json.dumps({"choices": [{"message": {"content": "hi"}}]}).encode()
     out = mc._inject_provenance(body, w, mc.TIER_MESH_LIVE,
                                [mc.Attempt("omen", w.base_url, ok=True, status=200)])
@@ -203,7 +203,7 @@ def test_proxy_picks_reachable_and_failover():
         def request(self, method, path, body=None, headers=None):
             calls.append(self.host)
             self._reply = (FakeResp(200, b'{"choices":[{"message":{"content":"ok"}}]}')
-                           if self.host == "100.70.130.45"
+                           if self.host == "omen.example"
                            else FakeResp(500, b'{"error":"boom"}'))
         def getresponse(self):
             return self._reply
@@ -247,13 +247,22 @@ def test_chaski_armed_as_real_worker_honest() -> None:
     import os
     for k in [x for x in os.environ if x.startswith("SZL_MESH_")]:
         del os.environ[k]
+    # No hardcoded host/IP defaults: with no env set, sovereign nodes + chaski are
+    # dropped (never half-armed, no private tailnet IP in source).
+    dropped, _f = mc.build_workers_from_env()
+    check(all(w.name != "chaski" for w in dropped),
+          "chaski is DROPPED when SZL_MESH_CHASKI_BASE_URL is unset (no hardcoded IP default)")
+    # Arm chaski + a sovereign laptop via env (the only honest way) and verify the
+    # honest descriptors + sovereign-first ordering.
+    os.environ["SZL_MESH_CHASKI_BASE_URL"] = "http://chaski.example:11434/v1"
+    os.environ["SZL_MESH_LAPTOP_BASE_URL"] = "http://laptop.example:11434/v1"
     workers, _failover = mc.build_workers_from_env()
     by = {w.name: w for w in workers}
-    check("chaski" in by, "chaski is armed in the default registry")
+    check("chaski" in by, "chaski is armed once its env base URL is set")
     check(by["chaski"].sovereign is False, "chaski sovereign=False (Replit VM, NOT owned metal — honest)")
     check(by["chaski"].kind == "tailnet-gpu", "chaski kind=tailnet-gpu (matches a11oy authoritative source)")
-    check(by["chaski"].base_url == "http://100.102.173.88:11434/v1",
-          "chaski default base = live tailnet IP")
+    check(by["chaski"].base_url == "http://chaski.example:11434/v1",
+          "chaski base = the env-provided endpoint")
     check(by["chaski"].gen_model == "qwen2.5:32b", "chaski hosts the larger brain qwen2.5:32b")
     check(by["chaski"].serve_role == "szl-large", "chaski anchors szl-large (big brain)")
     check(by["chaski"].joule_label_hint == "PENDING_EXPORTER",
@@ -280,6 +289,8 @@ def test_chaski_armed_as_real_worker_honest() -> None:
           and prov["joule_label_hint"] == "PENDING_EXPORTER",
           "provenance surfaces chaski model+tier+honest joule hint")
     check("VRAM not fused" in prov["placement"], "placement still asserts VRAM not fused")
+    for k in [x for x in os.environ if x.startswith("SZL_MESH_")]:
+        del os.environ[k]
     print()
 
 
