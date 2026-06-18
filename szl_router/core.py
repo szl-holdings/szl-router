@@ -23,6 +23,7 @@ import http.client
 import io
 import json
 import os
+import random
 import threading
 import time
 import urllib.error
@@ -402,6 +403,65 @@ _UPSTREAM_POOL = _ConnectionPool()
 
 
 # ---------------------------------------------------------------------------
+# Transient-error retry with exponential backoff + full jitter.
+#
+# Distinct from the route-level failover below: the route loop walks DIFFERENT
+# providers (sovereign -> free -> paid) and needs no backoff. But a SINGLE
+# provider can blip transiently — a rate-limit (429) or an overloaded upstream
+# (500/502/503/504), or a dropped connection — where an immediate same-provider
+# retry would just hammer it. So before falling through to the next route we
+# retry the SAME provider a bounded number of times with exponential backoff and
+# FULL jitter (sleep = random(0, base * 2**attempt), capped). Full jitter is the
+# AWS-recommended shape: it spreads concurrent clients so they don't retry in
+# lockstep and stampede a recovering upstream.
+#
+# Only transient statuses are retried. A 4xx that is NOT 429 (e.g. 400 bad
+# request, 401 bad key, 404 model not found) is a permanent error for this
+# provider — retrying can't help, so we fail through to the next route at once.
+# Honesty is unchanged: every try (including retried ones) is still ultimately
+# surfaced through the same attempt trail; we never fabricate a success.
+# ---------------------------------------------------------------------------
+_RETRY_MAX_ATTEMPTS = int(os.environ.get("SZL_RETRY_MAX_ATTEMPTS", "3") or 3)  # total tries per provider
+_RETRY_BASE_DELAY = float(os.environ.get("SZL_RETRY_BASE_DELAY", "0.25") or 0.25)  # seconds
+_RETRY_MAX_DELAY = float(os.environ.get("SZL_RETRY_MAX_DELAY", "4.0") or 4.0)  # seconds cap
+_RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+
+
+def _is_retryable_http(status: Optional[int]) -> bool:
+    return status is not None and status in _RETRYABLE_STATUS
+
+
+def _backoff_sleep_seconds(attempt: int) -> float:
+    """Full-jitter exponential backoff for retry number `attempt` (0-based):
+    uniform(0, min(cap, base * 2**attempt)). Pure except for the RNG so the
+    schedule is easy to reason about and override via env."""
+    ceiling = min(_RETRY_MAX_DELAY, _RETRY_BASE_DELAY * (2 ** attempt))
+    return random.uniform(0, ceiling) if ceiling > 0 else 0.0
+
+
+def _post_with_retry(poster, provider: Provider, payload: Dict[str, Any],
+                     timeout: float):
+    """Call `poster(provider, payload, timeout)` with same-provider transient
+    retry (exponential backoff + full jitter). Re-raises the LAST error once the
+    attempt budget is spent or the error is permanent, so the caller's existing
+    per-route honesty handling records it exactly as before."""
+    last_exc: Exception
+    for attempt in range(_RETRY_MAX_ATTEMPTS):
+        try:
+            return poster(provider, payload, timeout)
+        except urllib.error.HTTPError as e:
+            last_exc = e
+            if not _is_retryable_http(getattr(e, "code", None)):
+                raise  # permanent (e.g. 400/401/404) — fail through now
+        except (http.client.HTTPException, OSError) as e:
+            last_exc = e  # connection-level blip — retryable
+        if attempt + 1 >= _RETRY_MAX_ATTEMPTS:
+            break
+        time.sleep(_backoff_sleep_seconds(attempt))
+    raise last_exc
+
+
+# ---------------------------------------------------------------------------
 # Core call
 # ---------------------------------------------------------------------------
 def _upstream_headers(provider: Provider) -> Dict[str, str]:
@@ -474,7 +534,7 @@ def chat(
 
         t0 = time.time()
         try:
-            result = _post_chat(provider, payload, timeout)
+            result = _post_with_retry(_post_chat, provider, payload, timeout)
             dt = int((time.time() - t0) * 1000)
             # An upstream can return 200 with an error body; treat missing
             # choices as a failure so we fall through honestly.
@@ -659,7 +719,7 @@ def embed(
 
         t0 = time.time()
         try:
-            result = _post_embeddings(provider, payload, timeout)
+            result = _post_with_retry(_post_embeddings, provider, payload, timeout)
             dt = int((time.time() - t0) * 1000)
             if "data" not in result:
                 detail = str(result.get("error") or result.get("detail") or result)[:200]
