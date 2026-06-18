@@ -56,6 +56,27 @@ curl localhost:8099/v1/chat/completions -H 'content-type: application/json' \
 
 Set `SZL_ROUTER_TOKEN` to require `Authorization: Bearer <token>` on callers.
 
+## Reliability
+
+Two layers of resilience, both honest (a real failure is always surfaced in the
+`attempts` trail — never papered over):
+
+- **Route failover** — each logical model walks its ordered route list
+  (sovereign → free-grid → paid-grid) and returns the first upstream that
+  answers. An unavailable provider (no key/url) is skipped, never faked.
+- **Same-provider transient retry** — before falling through to the next route, a
+  provider that blips transiently (HTTP `429`/`500`/`502`/`503`/`504`, or a
+  dropped connection) is retried with **exponential backoff + full jitter**, so
+  concurrent callers don't retry in lockstep and stampede a recovering upstream.
+  Permanent errors (`400`/`401`/`404`) are **not** retried — they fail through to
+  the next route immediately. Tunable via env:
+
+  | env | default | meaning |
+  |-----|---------|---------|
+  | `SZL_RETRY_MAX_ATTEMPTS` | `3` | total tries per provider |
+  | `SZL_RETRY_BASE_DELAY`   | `0.25` | base backoff (seconds) |
+  | `SZL_RETRY_MAX_DELAY`    | `4.0` | per-sleep cap (seconds) |
+
 ## Arm the NVIDIA GPU
 
 When the rented GPU is reachable on an OpenAI-compatible URL (vLLM / NIM /
