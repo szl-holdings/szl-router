@@ -500,6 +500,74 @@ def resolve_routes(model: str) -> List[Route]:
     return MODEL_ROUTES[DEFAULT_MODEL]
 
 
+# Documented fallback only — real deployments set SZL_RECEIPT_SINK.
+_RECEIPT_SINK_FALLBACK = "https://szlholdings-a11oy.hf.space/api/lake/v1"
+
+
+def _emit_route_receipt(
+    *,
+    model: str,
+    decision: str,
+    provenance: Optional["Provenance"],
+    attempts: List["Attempt"],
+) -> None:
+    """Fire-and-forget governance receipt for one routing decision.
+
+    POSTs to <SZL_RECEIPT_SINK>/receipts on a daemon thread with a short
+    timeout; every error is swallowed. A sink hiccup never blocks or breaks
+    routing. No-op when SZL_RECEIPT_SINK is unset — the fallback URL is only a
+    documented default and is never contacted unless the env var is set.
+    """
+    sink = os.environ.get("SZL_RECEIPT_SINK")
+    if not sink:
+        return
+    prov_dict = provenance.to_dict() if provenance is not None else {}
+    served_by = prov_dict.get("served_by")
+    canonical = json.dumps(
+        {"model": model, "decision": decision, "served_by": served_by},
+        sort_keys=True, separators=(",", ":"),
+    ).encode()
+    rid = hashlib.sha256(canonical + str(time.time_ns()).encode()).hexdigest()
+    payload = {
+        "id": rid,
+        "ts": time.time(),
+        "organ": "szl-router",
+        "decision": decision,  # served | all-routes-failed
+        "governance": {
+            # The router computes no Λ score — honest null, never fabricated.
+            "lambda": None,
+            "gates": {
+                "model": model,
+                "served_by": served_by,
+                "tier": prov_dict.get("tier"),
+                "sovereign": prov_dict.get("sovereign"),
+                "energy_source": prov_dict.get("energy_source"),
+                "attempts": len(attempts),
+            },
+        },
+        # No joules meter in the router — honest UNAVAILABLE, never fabricated.
+        "energy": {"label": "UNAVAILABLE", "joules": None},
+    }
+
+    def _send() -> None:
+        try:
+            data = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(
+                sink.rstrip("/") + "/receipts",
+                data=data,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            urllib.request.urlopen(req, timeout=2.0).close()
+        except Exception:
+            pass  # fire-and-forget: never raise, never block routing
+
+    try:
+        threading.Thread(target=_send, daemon=True).start()
+    except Exception:
+        pass
+
+
 def chat(
     model: str,
     messages: List[Dict[str, Any]],
@@ -554,6 +622,8 @@ def chat(
             prov.tier = _tier_of(provider)
             prov.attempts = attempts
             result["x_szl_provenance"] = prov.to_dict()
+            _emit_route_receipt(model=model, decision="served",
+                                provenance=prov, attempts=attempts)
             return result
         except urllib.error.HTTPError as e:
             dt = int((time.time() - t0) * 1000)
@@ -568,6 +638,8 @@ def chat(
             attempts.append(Attempt(provider_name, upstream_model, ok=False,
                                     error=f"{type(e).__name__}: {e}"[:200], latency_ms=dt))
 
+    _emit_route_receipt(model=model, decision="all-routes-failed",
+                        provenance=None, attempts=attempts)
     raise RouterError(f"all routes failed for model '{model}'", attempts)
 
 
