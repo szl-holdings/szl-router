@@ -1,0 +1,37 @@
+name: hf-space-deploy
+
+# Deploy the public status Space (space/) to HF SZLHOLDINGS/llm-router-live.
+# Whole-context surface (static index.html + assets, http.server Dockerfile) — the
+# org per-file-COPY deployer deliberately skips `COPY . /app`, so this is the
+# honest whole-context variant. The router GATEWAY image is separate (publish.yml -> GHCR).
+on:
+  push:
+    branches: [main]
+    paths:
+      - "space/**"
+      - ".github/workflows/hf-space-deploy.yml"
+      - "scripts/hf_space_deploy.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hf-space-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@39cd14951b08e74b54015e9e001cdefcf80e669f # v5
+        with:
+          python-version: "3.12"
+      - run: pip install "huggingface_hub>=0.24"
+      - name: Deploy status Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: python scripts/hf_space_deploy.py --token "$HF_TOKEN"
+      - name: Attest live == source
+        run: python scripts/hf_space_drift_check.py

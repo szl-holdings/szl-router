@@ -1,0 +1,27 @@
+name: hf-space-drift-check
+
+# Independently assert the live llm-router-live Space == szl-router/space (sha256).
+# Runs on every push/PR touching space/, and daily, so silent HF-side edits surface.
+on:
+  push:
+    branches: [main]
+    paths: ["space/**", "scripts/hf_space_drift_check.py"]
+  pull_request:
+    paths: ["space/**", "scripts/hf_space_drift_check.py"]
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@39cd14951b08e74b54015e9e001cdefcf80e669f # v5
+        with:
+          python-version: "3.12"
+      - name: Assert live Space == source tree
+        run: python scripts/hf_space_drift_check.py

@@ -169,3 +169,15 @@ keyless is UNSIGNED-honest):
 pip install "git+https://github.com/szl-holdings/szl-receipt.git@v0.1.0" pytest httpx
 python -m pytest -q
 ```
+
+## Public status Space (governed source-of-truth)
+
+The investor-facing status page at
+[`SZLHOLDINGS/llm-router-live`](https://huggingface.co/spaces/SZLHOLDINGS/llm-router-live)
+is a **static** surface (no internals, no keys) and is now governed from this repo
+under [`space/`](space/) — previously it was hand-built on HF with no GitHub source.
+It is deployed whole-context (`hf-space-deploy.yml`, `huggingface_hub.upload_folder`)
+because its `COPY . /app` Dockerfile is intentionally excluded by the org's per-file
+deployer. `hf-space-drift-check.yml` re-fetches every file from the live Space and
+asserts `sha256 == space/`. This is distinct from the **router gateway image**
+(`publish.yml` → GHCR), which stays private and serves a different surface on `:8000`.
