@@ -21,12 +21,23 @@ import os
 import time
 from typing import Any, Dict, List, Optional
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from . import core
+from . import core, receipts
 
-app = FastAPI(title="SZL Router", version="1.0")
+
+@asynccontextmanager
+async def _lifespan(_app: "FastAPI"):
+    # Resolve (or generate ephemeral) the receipt signing key once, logging the
+    # honest posture + public key so a caller can verify this session's receipts.
+    receipts.init_signing()
+    yield
+
+
+app = FastAPI(title="SZL Router", version="1.0", lifespan=_lifespan)
 
 
 def _check_auth(request: Request) -> None:
@@ -101,7 +112,59 @@ async def chat_completions(request: Request) -> JSONResponse:
                 "x_szl_provenance": {"attempts": [a.__dict__ for a in e.attempts]},
             },
         )
-    return JSONResponse(content=result)
+    headers: Dict[str, str] = {}
+    envelope = receipts.build_envelope(
+        provenance=result.get("x_szl_provenance", {}),
+        model=model,
+        usage=result.get("usage"),
+        req_digest=receipts.request_digest(model, messages),
+    )
+    if envelope is not None:
+        headers["x-szl-receipt"] = receipts.encode_header(envelope)
+    return JSONResponse(content=result, headers=headers)
+
+
+@app.post("/v1/receipt/verify")
+async def receipt_verify(request: Request) -> Dict[str, Any]:
+    """Independently verify a receipt a buyer received. Body:
+    {"envelope": <x-szl-receipt envelope dict OR base64 header string>,
+     "public_key_pem": "<PEM>"}. public_key_pem is optional — omit it to confirm
+    the UNSIGNED-honest verdict. Returns {valid, detail, signed}. Honest by
+    construction: a keyless envelope always returns valid=false/'unsigned-honest',
+    and tampering with the body fails verification."""
+    body = await request.json()
+    env = body.get("envelope")
+    if env is None:
+        raise HTTPException(status_code=400, detail="envelope is required")
+    if isinstance(env, str):
+        try:
+            env = receipts.decode_header(env)
+        except Exception:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail="envelope is not valid base64-JSON")
+    if not isinstance(env, dict):
+        raise HTTPException(status_code=400, detail="envelope must be an object or base64 string")
+    valid, detail = receipts.verify_envelope(env, body.get("public_key_pem"))
+    return {"valid": valid, "detail": detail, "signed": bool(env.get("signed", False))}
+
+
+@app.get("/v1/receipt/pubkey")
+def receipt_pubkey() -> Dict[str, Any]:
+    """The PUBLIC key this session signs receipts with (PEM), so a buyer can
+    verify x-szl-receipt headers independently. Honest about provenance: reports
+    whether the key is an ephemeral session key or a configured one, and null if
+    receipts are unsigned (keyless / szl-receipt absent)."""
+    receipts.init_signing()
+    st = receipts.signing_state()
+    return {
+        "public_key_pem": receipts.public_key_pem(),
+        "source": st.source,
+        "ephemeral": st.ephemeral,
+        "library_available": st.library_available,
+        "note": ("ephemeral session key — verifies THIS session's receipts only; "
+                 "not a persistent identity" if st.ephemeral else
+                 "configured signing key" if st.private_pem else
+                 "receipts are UNSIGNED-honest (no key armed)"),
+    }
 
 
 @app.post("/v1/embeddings")
@@ -133,3 +196,17 @@ async def embeddings(request: Request) -> JSONResponse:
             },
         )
     return JSONResponse(content=result)
+
+
+def main() -> None:
+    """Module entrypoint so the service is runnable as `python -m szl_router.app`
+    (this is what the Docker image runs). Host/port are env-overridable; the
+    Docker default is 0.0.0.0:8000."""
+    import uvicorn
+    host = os.environ.get("SZL_ROUTER_HOST", "0.0.0.0")
+    port = int(os.environ.get("PORT", os.environ.get("SZL_ROUTER_PORT", "8000")))
+    uvicorn.run(app, host=host, port=port)
+
+
+if __name__ == "__main__":
+    main()
