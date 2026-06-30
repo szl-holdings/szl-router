@@ -1,2 +1,6 @@
 fastapi>=0.110
 uvicorn[standard]>=0.27
+# Signed receipts (x-szl-receipt) are OPTIONAL and git-only — not installed by
+# this file. Enable them with the `sign` extra:
+#   pip install "git+https://github.com/szl-holdings/szl-receipt.git@v0.1.0"
+# Keyless stays UNSIGNED-honest; a signature is never fabricated.

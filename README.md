@@ -1,5 +1,66 @@
 # SZL Router
 
+**Sovereign, OpenAI-compatible LLM gateway with a signed receipt on every answer.**
+
+One endpoint in front of many brains — our own GPU first, then free grid tiers,
+then a paid fallback — and every answer comes with a **signed, verifiable receipt**
+of which model served it, on whose hardware, and at what energy/tier.
+
+## 🚀 Quickstart (`docker run`)
+
+```bash
+docker build -t szl-router .
+# Point it at any upstream via env (no key is baked into the image):
+docker run -p 8000:8000 -e GROQ_API_KEY=... szl-router
+```
+
+Then point any OpenAI client at `http://localhost:8000/v1`:
+
+```bash
+curl -i localhost:8000/v1/chat/completions -H 'content-type: application/json' \
+  -d '{"model":"szl-large","messages":[{"role":"user","content":"hi"}]}'
+```
+
+The response body carries the honest `x_szl_provenance` block, and the HTTP
+response carries an **`x-szl-receipt`** header: a base64-JSON DSSE/ECDSA-P256
+envelope you can verify independently.
+
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://localhost:8000/v1", api_key="unused")
+client.chat.completions.create(model="szl-large",
+    messages=[{"role": "user", "content": "hi"}])
+```
+
+### Verify a receipt (independently)
+
+On first boot with no key configured, the server generates an **ephemeral session
+signing key** and logs its public key (honest: a per-session identity, not a
+persistent one). Fetch it and verify any receipt — offline, with no trust in us:
+
+```bash
+# this session's public key
+curl -s localhost:8000/v1/receipt/pubkey | python -c 'import sys,json;print(json.load(sys.stdin)["public_key_pem"])' > session.pub
+
+# grab the receipt header from a response, then verify via the CLI...
+RECEIPT=$(curl -si localhost:8000/v1/chat/completions -H 'content-type: application/json' \
+  -d '{"model":"szl-large","messages":[{"role":"user","content":"hi"}]}' \
+  | tr -d '\r' | awk -F': ' 'tolower($1)=="x-szl-receipt"{print $2}')
+echo "$RECEIPT" | python -m szl_router.verify --envelope - --pubkey session.pub
+
+# ...or via the verify endpoint
+curl -s localhost:8000/v1/receipt/verify -H 'content-type: application/json' \
+  -d "{\"envelope\":\"$RECEIPT\",\"public_key_pem\":\"$(awk '{printf "%s\\n",$0}' session.pub)\"}"
+```
+
+For a **persistent** signing identity, set `SZL_RECEIPT_KEY_PEM` (a PEM string) or
+`SZL_RECEIPT_KEY_FILE` (a PEM path) from the environment. **Keyless is honest:**
+with `SZL_RECEIPT_EPHEMERAL=0` and no key, receipts are emitted UNSIGNED-honest
+(`signed:false`) — a signature is never fabricated. Signing requires the optional
+`sign` extra (the git-only `szl-receipt` library); the Docker image installs it.
+
+---
+
 Our own unified, OpenAI-compatible LLM router. One endpoint in front of many
 brains — our own GPU first, then free grid tiers, then a paid fallback — with
 **honest provenance on every answer**.
@@ -98,3 +159,13 @@ python3 test_router.py
 
 Hits whatever providers are armed via env and prints the honest provenance of
 each answer. Exits non-zero if nothing is wired.
+
+The offline, deterministic suite (no network, no real keys) runs under pytest —
+including `test_signed_receipt.py`, which mocks the upstream and proves the
+signed-receipt contract end to end (signed receipt verifies, tampering fails,
+keyless is UNSIGNED-honest):
+
+```bash
+pip install "git+https://github.com/szl-holdings/szl-receipt.git@v0.1.0" pytest httpx
+python -m pytest -q
+```
