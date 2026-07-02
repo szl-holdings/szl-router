@@ -183,6 +183,9 @@ def build_envelope(
         "sovereign": provenance.get("sovereign"),
         "tier": provenance.get("tier"),
         "energy_source": provenance.get("energy_source"),
+        # The router runs no joules meter, so bound energy is honestly the literal
+        # "UNAVAILABLE" — measured-or-UNAVAILABLE doctrine, never a fabricated number.
+        "energy": "UNAVAILABLE",
         "model": model,
         "attempts": provenance.get("attempts"),
         "usage": usage,

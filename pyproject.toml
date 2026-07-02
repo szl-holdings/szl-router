@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "szl-router"
 version = "1.0.0"
-description = "Sovereign, OpenAI-compatible LLM gateway with a signed receipt on every answer."
+description = "Sovereign, OpenAI-compatible LLM gateway with a receipt on every answer; signed when a key is armed, else UNSIGNED-honest."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
@@ -17,9 +17,9 @@ dependencies = [
 
 [project.optional-dependencies]
 # szl-receipt is git-only (not on PyPI), so signing is an OPT-IN extra. Install:
-#   pip install "git+https://github.com/szl-holdings/szl-receipt.git@v0.1.0"
+#   pip install "git+https://github.com/szl-holdings/szl-receipt.git@v0.2.0"
 # Keyless (extra not installed) stays UNSIGNED-honest — never a fabricated signature.
-sign = ["szl-receipt>=0.1.0"]
+sign = ["szl-receipt>=0.2.0"]
 test = ["pytest", "httpx"]
 
 [project.scripts]

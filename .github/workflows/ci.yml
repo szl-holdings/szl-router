@@ -55,7 +55,7 @@ jobs:
           pip install -r requirements.txt
           # szl-receipt is git-only (the optional 'sign' extra); install it so the
           # signed-receipt tests run for real. httpx backs the FastAPI TestClient.
-          pip install "git+https://github.com/szl-holdings/szl-receipt.git@v0.1.0"
+          pip install "git+https://github.com/szl-holdings/szl-receipt.git@v0.2.0"
           pip install pytest httpx
 
       - name: Syntax gate (compileall)

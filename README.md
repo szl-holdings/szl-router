@@ -1,10 +1,11 @@
 # SZL Router
 
-**Sovereign, OpenAI-compatible LLM gateway with a signed receipt on every answer.**
+**Sovereign, OpenAI-compatible LLM gateway with a receipt on every answer — signed when a key is armed, else UNSIGNED-honest.**
 
 One endpoint in front of many brains — our own GPU first, then free grid tiers,
-then a paid fallback — and every answer comes with a **signed, verifiable receipt**
-of which model served it, on whose hardware, and at what energy/tier.
+then a paid fallback — and every answer comes with a **verifiable receipt**
+(signed when a key is armed, else UNSIGNED-honest) of which model served it, on
+whose hardware, and at what energy/tier.
 
 ## 🚀 Quickstart (`docker run`)
 
@@ -166,7 +167,7 @@ signed-receipt contract end to end (signed receipt verifies, tampering fails,
 keyless is UNSIGNED-honest):
 
 ```bash
-pip install "git+https://github.com/szl-holdings/szl-receipt.git@v0.1.0" pytest httpx
+pip install "git+https://github.com/szl-holdings/szl-receipt.git@v0.2.0" pytest httpx
 python -m pytest -q
 ```
 
