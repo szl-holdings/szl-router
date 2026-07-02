@@ -81,6 +81,10 @@ def models() -> Dict[str, Any]:
     now = int(time.time())
     data = [{"id": name, "object": "model", "created": now, "owned_by": "szl-router"}
             for name in core.MODEL_ROUTES]
+    # Opt-in smart-routing pseudo-model: scores prompt complexity and dispatches
+    # sovereign-first to a real logical model, recording the decision in the receipt.
+    data.append({"id": core.AUTO_MODEL, "object": "model", "created": now,
+                 "owned_by": "szl-router"})
     # Embeddings models (HOME-node-first) are listed too so callers can discover them.
     data += [{"id": name, "object": "model", "created": now, "owned_by": "szl-router"}
              for name in core.EMBED_ROUTES]
@@ -113,11 +117,15 @@ async def chat_completions(request: Request) -> JSONResponse:
             },
         )
     headers: Dict[str, str] = {}
+    prov = result.get("x_szl_provenance", {})
     envelope = receipts.build_envelope(
-        provenance=result.get("x_szl_provenance", {}),
+        provenance=prov,
         model=model,
         usage=result.get("usage"),
         req_digest=receipts.request_digest(model, messages),
+        # For "szl-auto" this signs the routing decision INTO the receipt; None
+        # (hence omitted) for every other model, keeping their receipts unchanged.
+        routing=prov.get("routing"),
     )
     if envelope is not None:
         headers["x-szl-receipt"] = receipts.encode_header(envelope)

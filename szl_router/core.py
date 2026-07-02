@@ -249,9 +249,13 @@ class Provenance:
     energy_source: Optional[str] = None
     tier: Optional[str] = None             # sovereign | free-grid | paid-grid
     attempts: List[Attempt] = field(default_factory=list)
+    # Set ONLY for the opt-in "szl-auto" logical model: the honest, deterministic
+    # routing decision (complexity heuristic + chosen real logical model). Absent
+    # for every other model so their provenance shape stays byte-identical.
+    routing: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        d = {
             "served_by": self.served_by,
             "provider": self.provider,
             "upstream_model": self.upstream_model,
@@ -261,6 +265,9 @@ class Provenance:
             "tier": self.tier,
             "attempts": [a.__dict__ for a in self.attempts],
         }
+        if self.routing is not None:
+            d["routing"] = self.routing
+        return d
 
 
 def _tier_of(p: Provider) -> str:
@@ -568,6 +575,132 @@ def _emit_route_receipt(
         pass
 
 
+# ---------------------------------------------------------------------------
+# szl-auto: opt-in complexity-aware, sovereign-first smart routing.
+#
+# "szl-auto" is NOT a route of its own — chat() intercepts it, scores the prompt
+# with a deterministic, no-LLM heuristic, and dispatches to the cheapest CAPABLE
+# real logical model SOVEREIGN-FIRST: simple -> szl-fast, complex -> szl-large,
+# code -> szl-coder. The decision (score, signals, chosen model) is recorded
+# HONESTLY in x_szl_provenance.routing and inside the signed receipt. It is a
+# routing ESTIMATE, never a quality guarantee, and it costs no upstream call.
+# ---------------------------------------------------------------------------
+AUTO_MODEL = "szl-auto"
+AUTO_SCORER_VERSION = "heuristic-v1"
+
+_CODE_MARKERS = (
+    "```", "def ", "return ", "import ", "function", "class ", "();", "});",
+    "const ", "let ", " var ", "select ", "#include", "public static",
+    "console.log", "print(", "</", "/>", "traceback", "stack trace",
+    "npm ", "pip install", "regex",
+)
+_REASONING_MARKERS = (
+    "why", "explain", "compare", "analyze", "analyse", "step by step",
+    "prove", "derive", "trade-off", "tradeoff", "design", "architect",
+    "evaluate", "reason", "implications", "pros and cons", "in detail",
+    "comprehensive", "strategy", "optimize", "refactor", "debug",
+)
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _coerce_text(content: Any) -> str:
+    """Flatten an OpenAI message 'content' (str, list-of-parts, or other) to
+    plain text for lexical scoring. Never raises; unknown shapes -> str()."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for p in content:
+            if isinstance(p, dict):
+                parts.append(str(p.get("text") or ""))
+            else:
+                parts.append(str(p))
+        return " ".join(parts)
+    return str(content)
+
+
+def score_complexity(messages: List[Dict[str, Any]]) -> Tuple[float, List[str], str]:
+    """Deterministic, no-LLM heuristic ESTIMATE of prompt complexity.
+
+    Returns (score in [0,1], human-readable signals, chosen logical model). Pure
+    and side-effect free, so the same prompt always routes the same way and a
+    receipt can be reproduced. This is a routing choice, never a quality claim,
+    and makes NO upstream call.
+    """
+    signals: List[str] = []
+    msgs = messages or []
+    user_msgs = [m for m in msgs if isinstance(m, dict) and m.get("role") == "user"]
+    last = user_msgs[-1] if user_msgs else (msgs[-1] if msgs else {})
+    text = _coerce_text(last.get("content") if isinstance(last, dict) else last)
+    all_text = " ".join(_coerce_text(m.get("content")) for m in msgs
+                        if isinstance(m, dict))
+    lower = text.lower()
+    all_lower = all_text.lower()
+    n_chars = len(text)
+    n_msgs = len(msgs)
+
+    # Code detection (routes to szl-coder regardless of length).
+    code_hits = [mk for mk in _CODE_MARKERS if mk in all_lower]
+    is_code = ("```" in all_text) or (len(code_hits) >= 2)
+
+    # Complexity score, baseline 0.30.
+    score = 0.30
+    if n_chars > 1200:
+        score += 0.35
+        signals.append("very-long-prompt")
+    elif n_chars > 400:
+        score += 0.20
+        signals.append("long-prompt")
+    elif n_chars < 120:
+        score -= 0.12
+        signals.append("short-prompt")
+    if n_msgs >= 6:
+        score += 0.15
+        signals.append("deep-conversation")
+    reasoning = [w for w in _REASONING_MARKERS if w in lower]
+    if reasoning:
+        score += min(0.30, 0.10 * len(reasoning))
+        signals.append("reasoning:" + ",".join(reasoning[:3]))
+    if text.count("?") >= 3:
+        score += 0.10
+        signals.append("multi-question")
+    score = max(0.0, min(1.0, round(score, 3)))
+
+    large_threshold = _env_float("SZL_AUTO_LARGE_THRESHOLD", 0.50)
+    if is_code:
+        chosen = "szl-coder"
+        signals.insert(0, "code:" + ",".join(code_hits[:3]) if code_hits else "code-fence")
+    elif score >= large_threshold:
+        chosen = "szl-large"
+    else:
+        chosen = "szl-fast"
+    return score, signals, chosen
+
+
+def _auto_routing_block(score: float, signals: List[str], chosen: str) -> Dict[str, Any]:
+    return {
+        "router": AUTO_MODEL,
+        "method": f"{AUTO_SCORER_VERSION}: deterministic lexical scorer, no LLM call",
+        "complexity_score": score,
+        "signals": signals,
+        "chosen_logical": chosen,
+        "note": ("heuristic ESTIMATE of prompt complexity to pick a "
+                 "sovereign-first route — a routing choice, not a quality "
+                 "guarantee"),
+    }
+
+
 def chat(
     model: str,
     messages: List[Dict[str, Any]],
@@ -580,9 +713,21 @@ def chat(
     """Run a chat completion through the sovereign-first fallback chain.
 
     Returns the upstream OpenAI-shaped response with an added
-    `x_szl_provenance` block. Raises RouterError if every route fails."""
-    routes = resolve_routes(model)
-    prov = Provenance()
+    `x_szl_provenance` block. Raises RouterError if every route fails.
+
+    The opt-in "szl-auto" model is intercepted here: its prompt is scored by a
+    deterministic no-LLM heuristic and dispatched to the cheapest capable real
+    logical model (sovereign-first). `model` stays "szl-auto" on the receipt so
+    the caller sees WHAT they asked for; the chosen real model and served
+    provider are recorded honestly in provenance.routing + served_by."""
+    routing_block: Optional[Dict[str, Any]] = None
+    route_model = model
+    if model == AUTO_MODEL:
+        _score, _signals, _chosen = score_complexity(messages)
+        routing_block = _auto_routing_block(_score, _signals, _chosen)
+        route_model = _chosen
+    routes = resolve_routes(route_model)
+    prov = Provenance(routing=routing_block)
     attempts: List[Attempt] = []
 
     for provider_name, upstream_model in routes:

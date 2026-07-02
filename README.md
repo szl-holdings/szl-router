@@ -87,8 +87,38 @@ built our own, leaner version that fits our doctrine:
 | `szl-large` | general large brain | box_gpu → nvidia_gpu → groq → nvidia_nim → moonshot(Kimi)          |
 | `szl-fast`  | low-latency small   | box_gpu → groq → nvidia_nim                                        |
 | `szl-coder` | coding              | box_gpu → nvidia_gpu → nvidia_nim → groq                           |
+| `szl-auto`  | smart routing       | scores the prompt, then dispatches to one of the three above      |
 
 You can also call `provider:upstream_model` directly (e.g. `groq:llama-3.3-70b-versatile`).
+
+## Smart routing (`szl-auto`)
+
+We studied how the leaders route by quality (lm-sys **RouteLLM**, OpenRouter's
+*auto* model) and built our own, doctrine-true version. Ask for the opt-in
+`szl-auto` model and the router scores the prompt with a **deterministic,
+no-LLM heuristic** (`heuristic-v1`) — prompt length, code markers, conversation
+depth, reasoning cues — then dispatches to the cheapest **capable** real logical
+model, **sovereign-first**: a greeting goes to `szl-fast`, a hard multi-step
+question to `szl-large`, anything with code to `szl-coder`.
+
+What makes it *ours*: the routing decision is recorded honestly in
+`x_szl_provenance.routing` **and signed into the inference receipt** — a
+governed, independently-verifiable record of *why* a given brain answered. No
+competitor ships a signed routing-decision receipt.
+
+It is honest by construction: the score is a **routing estimate, never a quality
+guarantee**, it makes **no extra upstream call**, and it is **pure** — the same
+prompt always routes the same way, so the receipt is reproducible. Existing
+models are untouched: their provenance and receipts are byte-identical to before
+(the `routing` block is present only for `szl-auto`). Tune the escalation point
+with `SZL_AUTO_LARGE_THRESHOLD` (default `0.50`).
+
+```bash
+curl localhost:8099/v1/chat/completions -H 'content-type: application/json' \
+  -d '{"model":"szl-auto","messages":[{"role":"user","content":"hi"}]}' -i
+# -> body.x_szl_provenance.routing shows chosen_logical=szl-fast;
+#    the x-szl-receipt header carries the SIGNED routing decision.
+```
 
 ## Providers
 

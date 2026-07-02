@@ -167,6 +167,7 @@ def build_envelope(
     model: str,
     usage: Optional[Dict[str, Any]],
     req_digest: str,
+    routing: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Build (and sign, if a key is armed) the inference.route receipt envelope.
 
@@ -191,6 +192,10 @@ def build_envelope(
         "usage": usage,
         "request_digest": req_digest,
     }
+    # Only present for the opt-in "szl-auto" model: the signed, reproducible
+    # routing decision. Omitted otherwise so existing receipts stay byte-identical.
+    if routing is not None:
+        body["routing"] = routing
     receipt = sr.Receipt(kind=RECEIPT_KIND, body=body)
     return sr.sign_receipt(receipt, _STATE.private_pem, organ=ORGAN)
 
