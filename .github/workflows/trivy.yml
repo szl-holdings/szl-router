@@ -1,0 +1,14 @@
+name: Trivy
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly Monday 06:00 UTC
+permissions:
+  contents: read
+jobs:
+  trivy:
+    uses: szl-holdings/.github/.github/workflows/reusable-trivy.yml@0c06506cba0f9d87f8bf25e37ebc1b53b3121523
+    secrets: inherit
