@@ -8,7 +8,7 @@
 # No secrets are baked in — all upstream + signing keys come from the env at run
 # time. With no SZL_RECEIPT_KEY_PEM set, the server generates an EPHEMERAL session
 # signing key on boot and logs its public key (honest: not a persistent identity).
-FROM python:3.12-slim
+FROM python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
