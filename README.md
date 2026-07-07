@@ -1,3 +1,5 @@
+> **SZL Holdings** · Doctrine v11 · Λ = Conjecture 1 (advisory, never "green"/theorem) · canonical [a-11-oy.com](https://a-11-oy.com)
+
 # SZL Router
 
 **Sovereign, OpenAI-compatible LLM gateway with a receipt on every answer — signed when a key is armed, else UNSIGNED-honest.**
