@@ -16,3 +16,5 @@ jobs:
   sbom:
     uses: szl-holdings/.github/.github/workflows/reusable-sbom.yml@ebd2128c691b850c84438b671fbb512945933776
     secrets: inherit
+
+# ci: re-register (no functional change)
