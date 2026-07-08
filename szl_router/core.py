@@ -221,9 +221,9 @@ MODEL_ROUTES: Dict[str, List[Route]] = {
         # Gemini free — each skipped automatically until its key is armed.
         ("groq", "deepseek-r1-distill-llama-70b"),
         ("nvidia_nim", "deepseek-ai/deepseek-r1"),
-        ("cerebras", "llama-3.3-70b"),
-        ("openrouter", "deepseek/deepseek-r1:free"),
-        ("google", "gemini-2.5-pro"),
+        ("cerebras", "gpt-oss-120b"),
+        ("openrouter", "qwen/qwen3-next-80b-a3b-instruct:free"),
+        ("google", "gemini-2.5-flash"),
         # reliable 70B grid fallback, then paid last-resort (unchanged).
         ("groq", "llama-3.3-70b-versatile"),
         ("nvidia_nim", "meta/llama-3.3-70b-instruct"),
@@ -239,7 +239,7 @@ MODEL_ROUTES: Dict[str, List[Route]] = {
         ("box_gpu", "llama3.1:8b"),
         ("nvidia_gpu", "llama3.1:8b"),
         # ultra-fast free grid: Cerebras (≈1M tok/day) first, then Groq instant.
-        ("cerebras", "llama-3.3-70b"),
+        ("cerebras", "gpt-oss-120b"),
         ("groq", "llama-3.1-8b-instant"),
         ("nvidia_nim", "meta/llama-3.1-8b-instruct"),
         ("openrouter", "meta-llama/llama-3.3-70b-instruct:free"),
@@ -252,7 +252,7 @@ MODEL_ROUTES: Dict[str, List[Route]] = {
         # free-grid: DeepSeek-R1 (strong on hard/algorithmic code) first, then the
         # existing coder-specialist and 70B fallbacks. New providers skip until armed.
         ("groq", "deepseek-r1-distill-llama-70b"),
-        ("openrouter", "deepseek/deepseek-r1:free"),
+        ("openrouter", "qwen/qwen3-next-80b-a3b-instruct:free"),
         ("nvidia_nim", "deepseek-ai/deepseek-coder-6.7b-instruct"),
         ("groq", "llama-3.3-70b-versatile"),
     ],
