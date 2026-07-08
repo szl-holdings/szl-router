@@ -32,7 +32,10 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from . import spend_guard  # SZL Sovereign Ops: paid-tier spend cap + kill-switch
+try:
+    from . import spend_guard  # SZL Sovereign Ops: paid-tier spend cap + kill-switch
+except ImportError:  # test harness imports `core` top-level (sys.path=szl_router)
+    import spend_guard  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -229,7 +232,7 @@ MODEL_ROUTES: Dict[str, List[Route]] = {
         # reliable 70B grid fallback, then paid last-resort (unchanged).
         ("groq", "llama-3.3-70b-versatile"),
         ("nvidia_nim", "meta/llama-3.3-70b-instruct"),
-        ("moonshot", "kimi-k2-0905-preview"),
+        ("moonshot", "kimi-k2.5"),
     ],
     # low-latency small brain. OFFLOAD doctrine: prefer the always-on HOME node
     # (omen_gpu) FIRST for small/fast jobs so the TRAVELING Blackwell laptop
@@ -842,9 +845,15 @@ def chat(
             # append-only ledger stays honest (free/sovereign record nothing).
             if _tier_of(provider) == "paid-grid":
                 try:
-                    spend_guard.record(spend_guard.estimate_usd(result),
+                    _sg_detail = spend_guard.estimate_detail(result, upstream_model)
+                    spend_guard.record(_sg_detail["amount_usd"],
                                        source=prov.served_by or provider_name,
-                                       meta={"model": model})
+                                       meta={"model": model, "upstream_model": upstream_model,
+                                             "basis": _sg_detail.get("basis"),
+                                             "rate_in_per_1k": _sg_detail.get("rate_in_per_1k"),
+                                             "rate_out_per_1k": _sg_detail.get("rate_out_per_1k"),
+                                             "prompt_tokens": _sg_detail.get("prompt_tokens"),
+                                             "completion_tokens": _sg_detail.get("completion_tokens")})
                 except Exception:
                     pass
             _emit_route_receipt(model=model, decision="served",
