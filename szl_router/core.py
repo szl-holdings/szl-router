@@ -32,7 +32,10 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from . import spend_guard  # SZL Sovereign Ops: paid-tier spend cap + kill-switch
+try:
+    from . import spend_guard  # SZL Sovereign Ops: paid-tier spend cap + kill-switch
+except ImportError:  # test harness imports `core` top-level (sys.path=szl_router)
+    import spend_guard  # type: ignore
 
 
 # ---------------------------------------------------------------------------
