@@ -4,8 +4,14 @@ on:
     branches: [main]
   schedule:
     - cron: '30 1 * * 6'  # Weekly Saturday 01:30 UTC
+# reusable-scorecard.yml requests security-events: write, id-token: write and
+# actions: read; a reusable job cannot exceed the caller's grant, so the caller
+# must grant at least these or the run is rejected at startup (startup_failure).
 permissions:
   contents: read
+  security-events: write
+  id-token: write
+  actions: read
 jobs:
   scorecard:
     uses: szl-holdings/.github/.github/workflows/reusable-scorecard.yml@0c06506cba0f9d87f8bf25e37ebc1b53b3121523
