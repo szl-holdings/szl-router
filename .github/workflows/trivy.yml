@@ -6,8 +6,13 @@ on:
     branches: [main]
   schedule:
     - cron: '0 6 * * 1'  # Weekly Monday 06:00 UTC
+# reusable-trivy.yml uploads a SARIF report to code-scanning, which needs
+# security-events: write. A reusable job cannot exceed the caller's grant, so
+# without this the run is rejected at startup (startup_failure).
 permissions:
   contents: read
+  security-events: write
+  actions: read
 jobs:
   trivy:
     uses: szl-holdings/.github/.github/workflows/reusable-trivy.yml@0c06506cba0f9d87f8bf25e37ebc1b53b3121523
