@@ -153,6 +153,38 @@ PROVIDERS: Dict[str, Provider] = {
         energy_source="grid",
         note="Free Qwen3-8B and DeepSeek-R1 distills.",
     ),
+    "cerebras": Provider(
+        name="cerebras",
+        base_url_env="CEREBRAS_BASE_URL",
+        base_url_default="https://api.cerebras.ai/v1",
+        key_env="CEREBRAS_API_KEY",
+        sovereign=False,
+        energy_source="grid",
+        note="Free tier ~1M tokens/day, ultra-fast, no card. Dormant until "
+             "CEREBRAS_API_KEY is armed (skipped automatically while unset).",
+    ),
+    "openrouter": Provider(
+        name="openrouter",
+        base_url_env="OPENROUTER_BASE_URL",
+        base_url_default="https://openrouter.ai/api/v1",
+        key_env="OPENROUTER_API_KEY",
+        sovereign=False,
+        energy_source="grid",
+        note="Aggregator with :free model variants (DeepSeek-R1, Qwen3). Dormant "
+             "until OPENROUTER_API_KEY is armed (skipped automatically while unset).",
+    ),
+    "google": Provider(
+        name="google",
+        base_url_env="GEMINI_BASE_URL",
+        base_url_default="https://generativelanguage.googleapis.com/v1beta/openai",
+        key_env="GEMINI_API_KEY",
+        sovereign=False,
+        energy_source="grid",
+        note="Gemini free tier via AI Studio (2.5 Pro/Flash). HONEST CAVEAT: the "
+             "free tier may use inputs to improve Google's models — keep sovereign / "
+             "open-weight routes primary for sensitive data. Dormant until "
+             "GEMINI_API_KEY is armed (skipped automatically while unset).",
+    ),
     # --- paid grid tier (last resort) ----------------------------------------
     "moonshot": Provider(
         name="moonshot",
@@ -179,9 +211,20 @@ MODEL_ROUTES: Dict[str, List[Route]] = {
     # is preferred even though it is smaller than the 70B grid models — running
     # on our own metal is the point. Grid 70Bs are the fallback if the GPU is off.
     "szl-large": [
+        # sovereign FIRST (doctrine unchanged): our own metal, even if smaller.
         ("box_gpu", "llama3.1:8b"),
         ("nvidia_gpu", "llama3.1:8b"),
         ("omen_gpu", "llama3.1:8b"),
+        # free-grid, frontier-class FIRST: DeepSeek-R1 (open-weight, MIT) is a
+        # stronger reasoner than Llama-70B and Groq serves it free today; NVIDIA
+        # NIM hosts the full R1. Then ultra-fast Cerebras, OpenRouter :free R1 and
+        # Gemini free — each skipped automatically until its key is armed.
+        ("groq", "deepseek-r1-distill-llama-70b"),
+        ("nvidia_nim", "deepseek-ai/deepseek-r1"),
+        ("cerebras", "llama-3.3-70b"),
+        ("openrouter", "deepseek/deepseek-r1:free"),
+        ("google", "gemini-2.5-pro"),
+        # reliable 70B grid fallback, then paid last-resort (unchanged).
         ("groq", "llama-3.3-70b-versatile"),
         ("nvidia_nim", "meta/llama-3.3-70b-instruct"),
         ("moonshot", "kimi-k2-0905-preview"),
@@ -195,14 +238,21 @@ MODEL_ROUTES: Dict[str, List[Route]] = {
         ("omen_gpu", "llama3.1:8b"),
         ("box_gpu", "llama3.1:8b"),
         ("nvidia_gpu", "llama3.1:8b"),
+        # ultra-fast free grid: Cerebras (≈1M tok/day) first, then Groq instant.
+        ("cerebras", "llama-3.3-70b"),
         ("groq", "llama-3.1-8b-instant"),
         ("nvidia_nim", "meta/llama-3.1-8b-instruct"),
+        ("openrouter", "meta-llama/llama-3.3-70b-instruct:free"),
     ],
     # coding brain
     "szl-coder": [
         ("box_gpu", "qwen2.5-coder:7b"),
         ("nvidia_gpu", "qwen2.5-coder:7b"),
         ("omen_gpu", "qwen2.5-coder:7b"),
+        # free-grid: DeepSeek-R1 (strong on hard/algorithmic code) first, then the
+        # existing coder-specialist and 70B fallbacks. New providers skip until armed.
+        ("groq", "deepseek-r1-distill-llama-70b"),
+        ("openrouter", "deepseek/deepseek-r1:free"),
         ("nvidia_nim", "deepseek-ai/deepseek-coder-6.7b-instruct"),
         ("groq", "llama-3.3-70b-versatile"),
     ],
