@@ -26,7 +26,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from . import core, receipts
+from . import core, receipts, spend_guard
 
 
 @asynccontextmanager
@@ -57,6 +57,13 @@ def healthz() -> Dict[str, Any]:
 @app.get("/status")
 def status() -> Dict[str, Any]:
     return core.status()
+
+
+@app.get("/v1/spend")
+def spend_state() -> Dict[str, Any]:
+    """Honest read-only view of the local spend cap + kill-switch + append-only
+    ledger this router enforces at the paid-tier chokepoint. Loopback-only."""
+    return spend_guard.state()
 
 
 @app.get("/fabric")

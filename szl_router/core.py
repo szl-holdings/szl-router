@@ -32,6 +32,8 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
+from . import spend_guard  # SZL Sovereign Ops: paid-tier spend cap + kill-switch
+
 
 # ---------------------------------------------------------------------------
 # Provider registry. base_url is the OpenAI-compatible root (ends before /chat).
@@ -795,6 +797,17 @@ def chat(
                                     error="provider unavailable (no key/url)"))
             continue
 
+        # SPEND GUARD (SZL Sovereign Ops): a PAID tier may never spend past the
+        # hard USD cap or while the kill-switch is engaged. Sovereign/free tiers
+        # cost nothing and are never gated. A blocked paid route falls through to
+        # the next (cheaper) route honestly, recorded in the attempt trail.
+        if _tier_of(provider) == "paid-grid":
+            _sg_ok, _sg_why = spend_guard.allow()
+            if not _sg_ok:
+                attempts.append(Attempt(provider_name, upstream_model, ok=False,
+                                        error="spend-cap blocked paid tier: " + _sg_why))
+                continue
+
         payload: Dict[str, Any] = {"model": upstream_model, "messages": messages}
         if temperature is not None:
             payload["temperature"] = temperature
@@ -825,6 +838,15 @@ def chat(
             prov.tier = _tier_of(provider)
             prov.attempts = attempts
             result["x_szl_provenance"] = prov.to_dict()
+            # SPEND GUARD: record estimated USD for a served PAID call so the
+            # append-only ledger stays honest (free/sovereign record nothing).
+            if _tier_of(provider) == "paid-grid":
+                try:
+                    spend_guard.record(spend_guard.estimate_usd(result),
+                                       source=prov.served_by or provider_name,
+                                       meta={"model": model})
+                except Exception:
+                    pass
             _emit_route_receipt(model=model, decision="served",
                                 provenance=prov, attempts=attempts)
             return result
