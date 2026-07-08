@@ -639,7 +639,15 @@ def score_complexity(messages: List[Dict[str, Any]]) -> Tuple[float, List[str], 
     and makes NO upstream call.
     """
     signals: List[str] = []
-    msgs = messages or []
+    # Fail-safe: an "szl-auto" request whose `messages` is malformed (a JSON
+    # object instead of an array, a bare string, null, or any other non-list
+    # shape) must still resolve to a route — never crash the smart-router. A
+    # non-list `messages` previously reached `msgs[-1]` and raised (e.g. a dict
+    # payload -> KeyError), turning a bad request into an unhandled 500. Normalize
+    # any non-list to an empty list so the scorer is TOTAL: a malformed payload
+    # degrades to the cheap sovereign-first default (szl-fast) and the real
+    # upstream call still surfaces the bad body honestly in the attempt trail.
+    msgs = messages if isinstance(messages, list) else []
     user_msgs = [m for m in msgs if isinstance(m, dict) and m.get("role") == "user"]
     last = user_msgs[-1] if user_msgs else (msgs[-1] if msgs else {})
     text = _coerce_text(last.get("content") if isinstance(last, dict) else last)
