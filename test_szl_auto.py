@@ -56,6 +56,46 @@ def test_empty_messages_does_not_crash():
     assert chosen in ("szl-fast", "szl-large", "szl-coder")
 
 
+def test_malformed_messages_object_does_not_crash():
+    # An adversarial/malformed client can send `messages` as a JSON OBJECT
+    # instead of an array. Before the fail-safe normalization this reached
+    # `msgs[-1]` on a dict and raised KeyError, turning an szl-auto request into
+    # an unhandled 500. It must now degrade to the cheap sovereign-first default.
+    _s, _sig, chosen = score_complexity({"role": "user", "content": "hi"})
+    assert chosen == "szl-fast"
+
+
+def test_non_list_messages_shapes_do_not_crash():
+    # Every non-list shape must resolve to a valid route, never raise.
+    for bad in (None, "just a string", 123, 4.5, True, ("tuple",), {"k": "v"}, set()):
+        score, _sig, chosen = score_complexity(bad)  # type: ignore[arg-type]
+        assert chosen in ("szl-fast", "szl-large", "szl-coder")
+        assert 0.0 <= score <= 1.0
+
+
+def test_list_with_non_dict_and_none_entries_does_not_crash():
+    # A list that contains non-dict junk (None / ints / strings / nested lists)
+    # and no usable user turn must still route without raising.
+    msgs = [None, 42, "loose text", ["nested"], {"role": "system", "content": "x"}]
+    _s, _sig, chosen = score_complexity(msgs)
+    assert chosen in ("szl-fast", "szl-large", "szl-coder")
+
+
+def test_message_with_non_string_content_does_not_crash():
+    # content that is neither str nor a list-of-parts (e.g. an int or a dict)
+    # is coerced to text rather than crashing the scorer.
+    for content in (123, {"unexpected": "shape"}, None, 3.14):
+        _s, _sig, chosen = score_complexity([{"role": "user", "content": content}])
+        assert chosen in ("szl-fast", "szl-large", "szl-coder")
+
+
+def test_malformed_messages_still_deterministic():
+    # Fail-safe path stays pure: identical malformed input routes identically.
+    a = score_complexity({"role": "user", "content": "hi"})
+    b = score_complexity({"role": "user", "content": "hi"})
+    assert a == b
+
+
 def test_routing_block_is_honest():
     score, signals, chosen = score_complexity([{"role": "user", "content": "hello"}])
     block = _auto_routing_block(score, signals, chosen)
