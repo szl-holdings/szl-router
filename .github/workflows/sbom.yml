@@ -9,8 +9,14 @@ on:
     types: [published]
   workflow_dispatch:
 
+# reusable-sbom.yml runs a trivy-fs child job that uploads SARIF, which needs
+# security-events: write. A reusable job cannot exceed the caller's grant, so
+# without this the workflow is rejected at startup (startup_failure). actions:
+# read is required for the SARIF/code-scanning upload action.
 permissions:
   contents: write
+  security-events: write
+  actions: read
 
 jobs:
   sbom:
