@@ -214,3 +214,7 @@ because its `COPY . /app` Dockerfile is intentionally excluded by the org's per-
 deployer. `hf-space-drift-check.yml` re-fetches every file from the live Space and
 asserts `sha256 == space/`. This is distinct from the **router gateway image**
 (`publish.yml` → GHCR), which stays private and serves a different surface on `:8000`.
+
+---
+
+**Explore the SZL estate:** [a11oy console](https://a-11-oy.com) · [Receipt format spec](https://github.com/szl-holdings/governed-receipt-spec) · [Lean proofs](https://github.com/szl-holdings/lutar-lean) · [Docs](https://github.com/szl-holdings/docs-site) · [🤗 SZLHOLDINGS](https://huggingface.co/SZLHOLDINGS)
