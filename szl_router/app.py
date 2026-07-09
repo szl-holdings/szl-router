@@ -26,7 +26,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from . import core, receipts, spend_guard
+from . import core, grid, receipts, spend_guard
 
 
 @asynccontextmanager
@@ -134,6 +134,14 @@ async def chat_completions(request: Request) -> JSONResponse:
         "note": ("observer frame: what this caller asked for and how they were "
                  "authenticated — the receipt verdict is relative to this frame"),
     }
+    # OPTIONAL, OPT-IN, NON-BLOCKING honest grid_context (SZL_RECEIPT_GRID_CONTEXT).
+    # Reads a short-TTL cache warmed by a background daemon — the keyless UK Carbon
+    # Intensity fetch NEVER runs on this request path, so routing latency is
+    # untouched. Returns None (block omitted -> receipt byte-identical) until the
+    # cache is warm; a REPORTED pass-through once warm; an honest UNAVAILABLE block
+    # if the feed is unreachable. It DOCUMENTS the grid window and never measures a
+    # joule (energy stays "UNAVAILABLE" in the receipt).
+    grid_context = grid.current_grid_context() if grid.enabled() else None
     envelope = receipts.build_envelope(
         provenance=prov,
         model=model,
@@ -145,6 +153,7 @@ async def chat_completions(request: Request) -> JSONResponse:
         # Honest cost + observer frame, signed when a key is armed (additive).
         cost=prov.get("cost"),
         observer=observer,
+        grid_context=grid_context,
     )
     if envelope is not None:
         headers["x-szl-receipt"] = receipts.encode_header(envelope)

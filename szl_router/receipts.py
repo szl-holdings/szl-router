@@ -161,7 +161,7 @@ def request_digest(model: str, messages: Any) -> str:
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
-def build_envelope(
+def build_body(
     *,
     provenance: Dict[str, Any],
     model: str,
@@ -170,18 +170,15 @@ def build_envelope(
     routing: Optional[Dict[str, Any]] = None,
     cost: Optional[Dict[str, Any]] = None,
     observer: Optional[Dict[str, Any]] = None,
-) -> Optional[Dict[str, Any]]:
-    """Build (and sign, if a key is armed) the inference.route receipt envelope.
+    grid_context: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Construct the honest ``inference.route`` receipt body (no signing here).
 
-    Returns the szl-receipt envelope dict, or None if szl-receipt is not
-    installed (no header is attached in that case). When no key is armed the
-    envelope is UNSIGNED-honest (signed=false) — never a fabricated signature.
+    Pure and dependency-free so it is unit-testable WITHOUT szl-receipt. Every
+    additive field (``routing``/``cost``/``observer``/``grid_context``) is
+    OMITTED when None so receipts from older callers stay byte-identical.
     """
-    sr = _try_import()
-    if sr is None:
-        return None
-    init_signing()
-    body = {
+    body: Dict[str, Any] = {
         "served_by": provenance.get("served_by"),
         "sovereign": provenance.get("sovereign"),
         "tier": provenance.get("tier"),
@@ -198,21 +195,57 @@ def build_envelope(
     # routing decision. Omitted otherwise so existing receipts stay byte-identical.
     if routing is not None:
         body["routing"] = routing
-    # ADDITIVE, honesty-first extensions (each omitted when absent so receipts
-    # from older callers stay byte-identical):
-    #   cost     — per-call USD block for the served route: paid tiers carry the
-    #              spend-guard's auditable ESTIMATE (estimated:true + rate basis
-    #              + token counts, matching the append-only ledger); free and
-    #              sovereign tiers carry $0.00 vendor charge with an explicit
-    #              basis string. Never a fabricated joules/energy figure.
-    #   observer — the observer frame this receipt was issued under (endpoint,
-    #              auth mode, requested model). The verdict is honest RELATIVE
-    #              to this frame: what THIS caller asked and how they were
-    #              authenticated — never a claim about any other vantage point.
+    # ADDITIVE, honesty-first extensions (each omitted when absent):
+    #   cost     — per-call USD block for the served route (auditable ESTIMATE
+    #              or an explicit $0.00 basis). Never a fabricated joules figure.
+    #   observer — the observer frame (endpoint, auth mode, requested model). The
+    #              verdict is honest RELATIVE to this frame.
+    #   grid_context — the observed, REPORTED grid signal (carbon intensity) at
+    #              route time from the keyless UK Carbon Intensity API, carried
+    #              verbatim (see grid.py). It DOCUMENTS the run's grid window; it
+    #              NEVER measures a joule and NEVER flips energy off "UNAVAILABLE".
+    #              Absent unless SZL_RECEIPT_GRID_CONTEXT is enabled AND a value
+    #              is cached, so legacy receipts stay byte-identical.
     if cost is not None:
         body["cost"] = cost
     if observer is not None:
         body["observer"] = observer
+    if grid_context is not None:
+        body["grid_context"] = grid_context
+    return body
+
+
+def build_envelope(
+    *,
+    provenance: Dict[str, Any],
+    model: str,
+    usage: Optional[Dict[str, Any]],
+    req_digest: str,
+    routing: Optional[Dict[str, Any]] = None,
+    cost: Optional[Dict[str, Any]] = None,
+    observer: Optional[Dict[str, Any]] = None,
+    grid_context: Optional[Dict[str, Any]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Build (and sign, if a key is armed) the inference.route receipt envelope.
+
+    Returns the szl-receipt envelope dict, or None if szl-receipt is not
+    installed (no header is attached in that case). When no key is armed the
+    envelope is UNSIGNED-honest (signed=false) — never a fabricated signature.
+    """
+    sr = _try_import()
+    if sr is None:
+        return None
+    init_signing()
+    body = build_body(
+        provenance=provenance,
+        model=model,
+        usage=usage,
+        req_digest=req_digest,
+        routing=routing,
+        cost=cost,
+        observer=observer,
+        grid_context=grid_context,
+    )
     receipt = sr.Receipt(kind=RECEIPT_KIND, body=body)
     return sr.sign_receipt(receipt, _STATE.private_pem, organ=ORGAN)
 

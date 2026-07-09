@@ -62,7 +62,7 @@ with `SZL_RECEIPT_EPHEMERAL=0` and no key, receipts are emitted UNSIGNED-honest
 (`signed:false`) — a signature is never fabricated. Signing requires the optional
 `sign` extra (the git-only `szl-receipt` library); the Docker image installs it.
 
-### Receipt fields: `cost` + `observer` (additive)
+### Receipt fields: `cost` + `observer` + `grid_context` (additive)
 
 Beyond provenance, usage and the request digest, every new receipt also carries:
 
@@ -76,6 +76,17 @@ Beyond provenance, usage and the request digest, every new receipt also carries:
   auth mode (`bearer`/`open`), and the requested model. A receipt's verdict is
   honest *relative to this frame* — what this caller asked and how they were
   authenticated — never a claim about any other vantage point.
+- **`grid_context`** *(opt-in)* — the observed, **REPORTED** grid signal at route
+  time (carbon intensity, gCO2/kWh) from the **keyless UK Carbon Intensity API**
+  (`https://api.carbonintensity.org.uk/intensity`), carried **verbatim** with its
+  `source`, `observed_at` and `fetched_at`. It follows the same honest pattern as
+  `szl-energy-attest` (grid-*average*, never claimed "marginal"; no price, so
+  `price` is `UNAVAILABLE`). It **documents** the grid window a run happened in —
+  it never measures a joule (the receipt's `energy` stays `"UNAVAILABLE"`) and
+  never creates energy. Enable with `SZL_RECEIPT_GRID_CONTEXT=1`; the keyless
+  fetch runs in a background thread behind a short-TTL cache (`SZL_RECEIPT_GRID_TTL`,
+  default 300s) and **never** blocks the request path. A missing/unreachable feed
+  yields an honest all-null `UNAVAILABLE` block — never a fabricated number.
 
 Both fields are **additive**: they are simply omitted when absent, so receipts
 produced by older builds stay byte-identical.
