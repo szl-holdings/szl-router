@@ -242,6 +242,33 @@ deployer. `hf-space-drift-check.yml` re-fetches every file from the live Space a
 asserts `sha256 == space/`. This is distinct from the **router gateway image**
 (`publish.yml` → GHCR), which stays private and serves a different surface on `:8000`.
 
+## The Ouroboros loop (doctrine cross-reference)
+
+The router **is** an instance of the estate's Ouroboros bounded-recursion loop. The
+canonical definition is the receipt-closed kernel
+[`szl-holdings/ouroboros` → `src/loop-kernel.ts`](https://github.com/szl-holdings/ouroboros/blob/main/src/loop-kernel.ts)
+(`runLoop`): *bounded recursion with measurable convergence* that MUST terminate on one
+of four exit conditions — `converged | consistent | aborted | budgetExhausted` — and
+emits a governance receipt for every run.
+
+How the router embodies that same primitive (in `szl_router/core.py`, see **Reliability** above):
+
+- **Bounded.** Each logical model walks an *ordered, finite* route list (sovereign →
+  free-grid → paid-grid); each provider retries at most `SZL_RETRY_MAX_ATTEMPTS` times
+  with exponential backoff + full jitter; a spent provider cools down. There is no
+  unbounded retry — the loop always terminates, either on a working upstream or a loud
+  `HTTP 502` carrying the complete `attempts` trail.
+- **Receipt-closed.** Every answer carries the `x-szl-receipt` envelope; the router's
+  `attempts` trail is the loop's `LoopTrace` — **the trace is the product.**
+- **Metaphor (doctrine, not math):** `receipts.in ≡ receipts.out` — the snake eats its
+  own tail; each answer's provenance is fed back as an auditable input.
+
+**Honesty (Doctrine v11):** Λ (the trust aggregator the kernel references) is
+**Conjecture 1** — advisory, *never* a proven theorem (unconditional uniqueness is
+machine-checked FALSE; only conditional CUT-2 uniqueness is proven in
+[`lutar-lean`](https://github.com/szl-holdings/lutar-lean)). This loop is a *bounded,
+terminating* control primitive — it makes **no** perpetual-motion or zero-cost claim.
+
 ---
 
 **Explore the SZL estate:** [a11oy console](https://a-11-oy.com) · [Receipt format spec](https://github.com/szl-holdings/governed-receipt-spec) · [Lean proofs](https://github.com/szl-holdings/lutar-lean) · [Docs](https://github.com/szl-holdings/docs-site) · [🤗 SZLHOLDINGS](https://huggingface.co/SZLHOLDINGS)
