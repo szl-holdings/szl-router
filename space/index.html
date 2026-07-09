@@ -251,6 +251,26 @@
            never fabricated data and never a false “all green.” The <code>/router/*</code> endpoints have
            no CORS, so a browser sees the honest snapshot here by design.</p>
       </article>
+      <article class="prov-field glass">
+        <div class="prov-key">G5 · honest cost, on the receipt</div>
+        <p>Since 2026-07-09 every receipt carries a per-call <code>cost</code> block: paid tiers show a
+           <strong>labelled estimate</strong> (<code>estimated: true</code>, with its price-table basis and
+           token counts — the same figure the append-only spend ledger records); free and sovereign tiers
+           show <strong>$0.00 vendor charge</strong> with an explicit basis. Never a fabricated energy number.</p>
+      </article>
+      <article class="prov-field glass">
+        <div class="prov-key">G6 · the observer frame is stated</div>
+        <p>Each receipt records the frame it was issued under — endpoint, auth mode, requested model. The
+           verdict is honest <strong>relative to who asked and how they were authenticated</strong>, never a
+           claim about any other vantage point.</p>
+      </article>
+      <article class="prov-field glass">
+        <div class="prov-key">G7 · every skip is on the record</div>
+        <p>A recently-failed upstream cools down briefly, but it is skipped <strong>only while a warm
+           fallback remains</strong> — and the skip lands in the <code>attempts</code> trail as an honest
+           <code>cooldown-skip</code> entry. As the last resort it is always tried: trying loudly beats
+           refusing silently.</p>
+      </article>
     </div>
 
     <div class="section-head" style="margin-top: var(--space-7)">
