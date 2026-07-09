@@ -59,3 +59,13 @@ states **LIVE**, **PARTIAL**, or **SNAPSHOT**. Auto-refresh ≈ every 15s.
 
 Static HTML/CSS/JS. Deep-space dark theme, teal/cyan/violet glow, glassmorphism,
 responsive, WCAG-contrast, `prefers-reduced-motion` aware. No build step required.
+
+---
+
+## ◇ Part of the SZL Holdings estate
+
+- **Live a11oy console:** [szlholdings-a11oy.hf.space](https://szlholdings-a11oy.hf.space) · [a-11-oy.com](https://a-11-oy.com)
+- **Governed-receipt spec + offline verifier:** [governed-receipt-spec](https://github.com/szl-holdings/governed-receipt-spec)
+- **More:** [all HF Spaces](https://huggingface.co/SZLHOLDINGS) · [GitHub org](https://github.com/szl-holdings)
+
+<sub>Doctrine v11 · sovereign = own-metal only · no free-energy · Λ = Conjecture 1 · SLSA L1 honest.</sub>
