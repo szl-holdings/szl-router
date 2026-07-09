@@ -125,6 +125,15 @@ async def chat_completions(request: Request) -> JSONResponse:
         )
     headers: Dict[str, str] = {}
     prov = result.get("x_szl_provenance", {})
+    # Observer frame (R3 doctrine: a receipt is honest RELATIVE to who asked and
+    # how they were authenticated). No PII, no key material — just the frame.
+    observer = {
+        "endpoint": "/v1/chat/completions",
+        "auth_mode": "bearer" if os.environ.get("SZL_ROUTER_TOKEN", "").strip() else "open",
+        "requested_model": model,
+        "note": ("observer frame: what this caller asked for and how they were "
+                 "authenticated — the receipt verdict is relative to this frame"),
+    }
     envelope = receipts.build_envelope(
         provenance=prov,
         model=model,
@@ -133,6 +142,9 @@ async def chat_completions(request: Request) -> JSONResponse:
         # For "szl-auto" this signs the routing decision INTO the receipt; None
         # (hence omitted) for every other model, keeping their receipts unchanged.
         routing=prov.get("routing"),
+        # Honest cost + observer frame, signed when a key is armed (additive).
+        cost=prov.get("cost"),
+        observer=observer,
     )
     if envelope is not None:
         headers["x-szl-receipt"] = receipts.encode_header(envelope)

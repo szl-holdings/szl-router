@@ -168,6 +168,8 @@ def build_envelope(
     usage: Optional[Dict[str, Any]],
     req_digest: str,
     routing: Optional[Dict[str, Any]] = None,
+    cost: Optional[Dict[str, Any]] = None,
+    observer: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Build (and sign, if a key is armed) the inference.route receipt envelope.
 
@@ -196,6 +198,21 @@ def build_envelope(
     # routing decision. Omitted otherwise so existing receipts stay byte-identical.
     if routing is not None:
         body["routing"] = routing
+    # ADDITIVE, honesty-first extensions (each omitted when absent so receipts
+    # from older callers stay byte-identical):
+    #   cost     — per-call USD block for the served route: paid tiers carry the
+    #              spend-guard's auditable ESTIMATE (estimated:true + rate basis
+    #              + token counts, matching the append-only ledger); free and
+    #              sovereign tiers carry $0.00 vendor charge with an explicit
+    #              basis string. Never a fabricated joules/energy figure.
+    #   observer — the observer frame this receipt was issued under (endpoint,
+    #              auth mode, requested model). The verdict is honest RELATIVE
+    #              to this frame: what THIS caller asked and how they were
+    #              authenticated — never a claim about any other vantage point.
+    if cost is not None:
+        body["cost"] = cost
+    if observer is not None:
+        body["observer"] = observer
     receipt = sr.Receipt(kind=RECEIPT_KIND, body=body)
     return sr.sign_receipt(receipt, _STATE.private_pem, organ=ORGAN)
 

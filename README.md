@@ -62,6 +62,24 @@ with `SZL_RECEIPT_EPHEMERAL=0` and no key, receipts are emitted UNSIGNED-honest
 (`signed:false`) — a signature is never fabricated. Signing requires the optional
 `sign` extra (the git-only `szl-receipt` library); the Docker image installs it.
 
+### Receipt fields: `cost` + `observer` (additive)
+
+Beyond provenance, usage and the request digest, every new receipt also carries:
+
+- **`cost`** — an honest per-call USD block for the served route. Paid tiers
+  carry the spend-guard's auditable **estimate** (`estimated:true`, the price-table
+  basis, and the token counts it priced — the *same* figure the append-only spend
+  ledger records, so receipt and ledger always agree). Free and sovereign tiers
+  carry `$0.00` **vendor charge** with an explicit basis string (sovereign metal:
+  "electricity not metered here" — we say so instead of inventing a number).
+- **`observer`** — the observer frame the receipt was issued under: endpoint,
+  auth mode (`bearer`/`open`), and the requested model. A receipt's verdict is
+  honest *relative to this frame* — what this caller asked and how they were
+  authenticated — never a claim about any other vantage point.
+
+Both fields are **additive**: they are simply omitted when absent, so receipts
+produced by older builds stay byte-identical.
+
 ---
 
 Our own unified, OpenAI-compatible LLM router. One endpoint in front of many
@@ -170,6 +188,15 @@ Two layers of resilience, both honest (a real failure is always surfaced in the
   | `SZL_RETRY_MAX_ATTEMPTS` | `3` | total tries per provider |
   | `SZL_RETRY_BASE_DELAY`   | `0.25` | base backoff (seconds) |
   | `SZL_RETRY_MAX_DELAY`    | `4.0` | per-sleep cap (seconds) |
+
+- **Failure cooldown** — after a provider fails a route (retry budget spent or a
+  permanent error), it cools down for `SZL_COOLDOWN_SECONDS` (default `30`, `0`
+  disables) so the very next callers don't pay the same failure latency again.
+  Honest by construction: a cooled provider is skipped **only while a warm
+  fallback remains** — as the last resort it is *always* tried (trying loudly
+  beats refusing silently); every skip is recorded in the `attempts` trail as
+  `cooldown-skip (...)` so the receipt shows exactly why a provider was not
+  consulted; and a single success clears the cooldown immediately.
 
 ## Arm the NVIDIA GPU
 

@@ -308,6 +308,11 @@ class Provenance:
     # routing decision (complexity heuristic + chosen real logical model). Absent
     # for every other model so their provenance shape stays byte-identical.
     routing: Optional[Dict[str, Any]] = None
+    # Honest per-call USD cost block for the SERVED route (see _cost_detail):
+    # paid tier -> the spend-guard's auditable estimate (labelled estimated:true);
+    # free/sovereign tiers -> $0.00 vendor charge with an explicit basis string.
+    # Additive: only present once a route is served.
+    cost: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         d = {
@@ -322,6 +327,8 @@ class Provenance:
         }
         if self.routing is not None:
             d["routing"] = self.routing
+        if self.cost is not None:
+            d["cost"] = self.cost
         return d
 
 
@@ -521,6 +528,83 @@ def _post_with_retry(poster, provider: Provider, payload: Dict[str, Any],
             break
         time.sleep(_backoff_sleep_seconds(attempt))
     raise last_exc
+
+
+# ---------------------------------------------------------------------------
+# Per-upstream failure cooldown (LiteLLM-inspired, made honesty-first).
+#
+# After a provider fails a route (retry budget spent or permanent error) we put
+# it on a SHORT cooldown so the next requests don't pay the same failure
+# latency again. Honesty rules:
+#   * a cooled provider is only SKIPPED while a WARM candidate (available and
+#     not cooling) remains later in the chain — if it is the last real option
+#     we still try it, because trying loudly beats refusing silently;
+#   * every skip is recorded in the attempt trail ("cooldown-skip ...") so the
+#     signed receipt shows exactly why a provider was not consulted;
+#   * a successful call clears that provider's cooldown immediately.
+# SZL_COOLDOWN_SECONDS=0 disables the mechanism (default 30s).
+# ---------------------------------------------------------------------------
+_COOLDOWN_LOCK = threading.Lock()
+_COOLDOWN_UNTIL: Dict[str, float] = {}
+
+
+def _cooldown_seconds() -> float:
+    try:
+        v = os.environ.get("SZL_COOLDOWN_SECONDS", "").strip()
+        return float(v) if v else 30.0
+    except Exception:
+        return 30.0
+
+
+def _cooldown_remaining(provider_name: str) -> float:
+    with _COOLDOWN_LOCK:
+        until = _COOLDOWN_UNTIL.get(provider_name, 0.0)
+    return max(0.0, until - time.time())
+
+
+def _set_cooldown(provider_name: str) -> None:
+    secs = _cooldown_seconds()
+    if secs <= 0:
+        return
+    with _COOLDOWN_LOCK:
+        _COOLDOWN_UNTIL[provider_name] = time.time() + secs
+
+
+def _clear_cooldown(provider_name: str) -> None:
+    with _COOLDOWN_LOCK:
+        _COOLDOWN_UNTIL.pop(provider_name, None)
+
+
+def _warm_candidate_later(routes: List[Route], next_index: int) -> bool:
+    """True if any route at/after next_index is available and NOT cooling —
+    i.e. skipping the current cooled provider still leaves a real candidate."""
+    for provider_name, _up in routes[next_index:]:
+        p = PROVIDERS.get(provider_name)
+        if p is not None and p.available() and _cooldown_remaining(provider_name) <= 0:
+            return True
+    return False
+
+
+def _cost_detail(provider: Provider, result: Dict[str, Any], upstream_model: str) -> Dict[str, Any]:
+    """Honest per-call USD cost block for the served route, signed into the receipt.
+
+    * paid-grid  -> the spend-guard's auditable ESTIMATE (labelled estimated:true,
+                    with rate basis + token counts) — the same figure the
+                    append-only ledger records, so receipt and ledger agree;
+    * free-grid  -> $0.00 vendor charge (free != zero energy; energy stays
+                    labelled elsewhere, never fabricated here);
+    * sovereign  -> $0.00 vendor charge on our own metal (electricity is NOT
+                    metered here — we say so instead of inventing a number).
+    """
+    tier = _tier_of(provider)
+    if tier == "paid-grid":
+        detail = spend_guard.estimate_detail(result, upstream_model)
+        detail["tier"] = tier
+        return detail
+    basis = ("sovereign-owned-metal; no vendor charge; electricity not metered here"
+             if tier == "sovereign" else "free-tier; no vendor charge today")
+    return {"amount_usd": 0.0, "estimated": False, "basis": basis,
+            "model": upstream_model, "tier": tier}
 
 
 # ---------------------------------------------------------------------------
@@ -793,11 +877,22 @@ def chat(
     prov = Provenance(routing=routing_block)
     attempts: List[Attempt] = []
 
-    for provider_name, upstream_model in routes:
+    for _route_i, (provider_name, upstream_model) in enumerate(routes):
         provider = PROVIDERS.get(provider_name)
         if provider is None or not provider.available():
             attempts.append(Attempt(provider_name, upstream_model, ok=False,
                                     error="provider unavailable (no key/url)"))
+            continue
+
+        # FAILURE COOLDOWN: skip a recently-failed upstream ONLY while a warm
+        # candidate (available, not cooling) remains later in the chain. The
+        # skip lands in the attempt trail so the receipt shows why this
+        # provider was not consulted. Last-resort routes are always tried.
+        _cd_left = _cooldown_remaining(provider_name)
+        if _cd_left > 0 and _warm_candidate_later(routes, _route_i + 1):
+            attempts.append(Attempt(provider_name, upstream_model, ok=False,
+                                    error="cooldown-skip (%.0fs left after recent "
+                                          "failure; warm fallback available)" % _cd_left))
             continue
 
         # SPEND GUARD (SZL Sovereign Ops): a PAID tier may never spend past the
@@ -829,9 +924,11 @@ def chat(
                 detail = str(result.get("error") or result.get("detail") or result)[:200]
                 attempts.append(Attempt(provider_name, upstream_model, ok=False,
                                         status=200, error=detail, latency_ms=dt))
+                _set_cooldown(provider_name)
                 continue
             attempts.append(Attempt(provider_name, upstream_model, ok=True,
                                     status=200, latency_ms=dt))
+            _clear_cooldown(provider_name)
             prov.served_by = f"{provider_name}:{upstream_model}"
             prov.provider = provider_name
             prov.upstream_model = upstream_model
@@ -840,6 +937,10 @@ def chat(
             prov.energy_source = provider.energy_source
             prov.tier = _tier_of(provider)
             prov.attempts = attempts
+            # Honest cost block for the served route — same figure the spend
+            # ledger records for paid tiers; $0 vendor charge stated explicitly
+            # for free/sovereign tiers. Signed into the receipt via app.py.
+            prov.cost = _cost_detail(provider, result, upstream_model)
             result["x_szl_provenance"] = prov.to_dict()
             # SPEND GUARD: record estimated USD for a served PAID call so the
             # append-only ledger stays honest (free/sovereign record nothing).
@@ -867,10 +968,12 @@ def chat(
                 err_body = str(e)
             attempts.append(Attempt(provider_name, upstream_model, ok=False,
                                     status=e.code, error=err_body, latency_ms=dt))
+            _set_cooldown(provider_name)
         except Exception as e:  # noqa: BLE001 - honest catch-all, recorded
             dt = int((time.time() - t0) * 1000)
             attempts.append(Attempt(provider_name, upstream_model, ok=False,
                                     error=f"{type(e).__name__}: {e}"[:200], latency_ms=dt))
+            _set_cooldown(provider_name)
 
     _emit_route_receipt(model=model, decision="all-routes-failed",
                         provenance=None, attempts=attempts)
