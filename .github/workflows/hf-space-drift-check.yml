@@ -1,13 +1,15 @@
 name: hf-space-drift-check
 
 # Independently assert the live llm-router-live Space == szl-router/space (sha256).
-# Runs on every push/PR touching space/, and daily, so silent HF-side edits surface.
+# Runs AFTER hf-space-deploy completes (never racing it), and daily, so silent
+# HF-side edits surface. PR-time runs were removed: while a space/** change is
+# un-deployed, live != source is the *expected* state — a guaranteed-red check
+# only trains people to dismiss real drift.
 on:
-  push:
+  workflow_run:
+    workflows: [hf-space-deploy]
+    types: [completed]
     branches: [main]
-    paths: ["space/**", "scripts/hf_space_drift_check.py"]
-  pull_request:
-    paths: ["space/**", "scripts/hf_space_drift_check.py"]
   schedule:
     - cron: "17 6 * * *"
   workflow_dispatch:
@@ -17,6 +19,9 @@ permissions:
 
 jobs:
   drift-check:
+    # For workflow_run triggers, only assert after a *successful* deploy;
+    # a failed deploy already raises its own red.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
