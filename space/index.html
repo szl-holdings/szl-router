@@ -111,25 +111,25 @@
   <!-- ===== KPIs ===== -->
   <section class="section wrap" id="status">
     <div class="section-head">
-      <p class="eyebrow">Live router status</p>
-      <h2>Public status, right now</h2>
-      <p id="data-source-note">Connecting to the live router status endpoints…</p>
+      <p class="eyebrow">Public evidence contract</p>
+      <h2>Reachability without overclaiming</h2>
+      <p id="data-source-note">Reading the public snapshot contracts…</p>
     </div>
     <div class="kpi-grid">
       <article class="kpi glass">
-        <div class="kpi-label">Router health</div>
+        <div class="kpi-label">Status surface</div>
         <div class="kpi-value teal" id="kpi-health">—</div>
         <div class="kpi-meta" id="kpi-service">szl-router</div>
       </article>
       <article class="kpi glass">
-        <div class="kpi-label">Logical models</div>
+        <div class="kpi-label">Configured aliases</div>
         <div class="kpi-value cyan" id="kpi-models">—</div>
-        <div class="kpi-meta">served via the router</div>
+        <div class="kpi-meta">inventory / reported aliases</div>
       </article>
       <article class="kpi glass">
-        <div class="kpi-label">Sovereign providers up</div>
+        <div class="kpi-label">Sovereign configured</div>
         <div class="kpi-value violet" id="kpi-sovereign">—</div>
-        <div class="kpi-meta">own-metal / total sovereign</div>
+        <div class="kpi-meta">configured / inventory; not reachability</div>
       </article>
       <article class="kpi glass">
         <div class="kpi-label">Default model</div>
@@ -163,7 +163,7 @@
         <div class="rung-rank">②</div>
         <div class="rung-body">
           <h3>Free hosted tiers</h3>
-          <p>Third-party free inference (e.g. Groq, NVIDIA NIM, GLM/SiliconFlow). Used when own metal is unavailable. <strong>sovereign = false</strong>.</p>
+          <p>Third-party hosted inference. Used when own metal is unavailable. Public evidence exposes only the provider class and an opaque ID. <strong>sovereign = false</strong>.</p>
         </div>
         <div class="rung-flag" style="color: var(--cyan)">energy: grid</div>
       </div>
@@ -188,7 +188,7 @@
     <div class="prov-grid">
       <article class="prov-field glass">
         <div class="prov-key">served_by</div>
-        <p>The concrete provider that answered (e.g. <code>box_gpu</code>, <code>groq</code>). Names the real backend, not a logical alias.</p>
+        <p>A stable opaque provider ID such as <code>provider-sovereign-01</code>. Public receipts identify the route class without exposing private names or network topology.</p>
       </article>
       <article class="prov-field glass">
         <div class="prov-key">sovereign</div>
@@ -210,7 +210,7 @@
     <div class="section-head">
       <p class="eyebrow">Provider fabric</p>
       <h2>Where requests can land</h2>
-      <p>Live provider posture, ordered by tier. Sovereign providers are SZL-owned; everything else is an explicitly-marked hosted fallback.</p>
+      <p>Configuration inventory, ordered by tier. Sovereign providers are SZL-owned; everything else is an explicitly marked hosted fallback. Reachability is shown only when measured.</p>
     </div>
     <div class="prov-status" id="provider-grid">
       <article class="provider-card glass"><span class="provider-note">loading provider fabric…</span></article>
@@ -298,7 +298,7 @@
       <h3>Doctrine v11 — the honest line</h3>
       <p><strong>Sovereign = own-metal only.</strong> <code>sovereign: true</code> appears only for SZL-owned hardware. Hosted free and paid providers are always <code>sovereign: false</code>.</p>
       <p><strong>No free-energy claims.</strong> <code>energy_source</code> is a plain descriptor (<code>self-hosted</code> / <code>grid</code>), never a joule or zero-cost-energy assertion. <strong>Λ = Conjecture 1.</strong> Builds are SLSA Level 1, honestly stated.</p>
-      <p><strong>Honest-degrade.</strong> When a live status endpoint is unreachable, this page shows a clearly-labeled bundled snapshot — never fabricated data and never a false "all green."</p>
+      <p><strong>Honest evidence.</strong> A reachable public contract proves only that this status surface is reachable. Provider and model reachability remain <code>NOT_MEASURED</code> until a bounded probe emits a public receipt.</p>
     </div>
   </section>
 
@@ -315,7 +315,7 @@
           <span class="brand-sub">sovereign-first · public status</span>
         </span>
       </a>
-      <p style="margin-top: var(--space-3)">Public status &amp; concept view. Router internals stay private. Data is live where reachable, snapshot-labeled otherwise. Nothing here is fabricated.</p>
+      <p style="margin-top: var(--space-3)">Public status &amp; concept view. Router internals and topology stay private. Configuration is snapshot-labeled; runtime reachability is not measured here.</p>
       <p class="footer-doctrine">Doctrine v11 · sovereign = own-metal only · no free-energy · Λ = Conjecture 1 · SLSA L1 honest · no keys</p>
       <p class="stamp" id="updated-stamp" style="margin-top: var(--space-2)">updating…</p>
     </div>
@@ -323,9 +323,9 @@
       <a href="https://a11oy.net" target="_blank" rel="noopener">a11oy.net</a>
       <a href="https://szlholdings-a11oy.hf.space" target="_blank" rel="noopener">a11oy console</a>
       <a href="https://github.com/szl-holdings/governed-receipt-spec" target="_blank" rel="noopener">governed-receipt-spec</a>
-      <a href="https://a11oy.net/api/a11oy/v1/router/health" target="_blank" rel="noopener">router/health</a>
-      <a href="https://a11oy.net/api/a11oy/v1/router/models" target="_blank" rel="noopener">router/models</a>
-      <a href="https://a11oy.net/api/a11oy/v1/router/provenance" target="_blank" rel="noopener">router/provenance</a>
+      <a href="/api/a11oy/v1/router/health" target="_blank" rel="noopener">router/health</a>
+      <a href="/api/a11oy/v1/router/models" target="_blank" rel="noopener">router/models</a>
+      <a href="/api/a11oy/v1/router/provenance" target="_blank" rel="noopener">router/provenance</a>
     </nav>
   </div>
 </footer>
@@ -333,6 +333,6 @@
 <script type="module" src="assets/app.js"></script>
 <!-- Vendored, self-contained verify widget (0 CDN, system fonts, honest fallback) -->
 <script src="assets/szl_verify_widget.js"></script>
-<script>SZLVerify.mount('#szl-verify', { base: 'https://a11oy.net' });</script>
+<script>SZLVerify.mount('#szl-verify', { base: 'https://a-11-oy.com' });</script>
 </body>
 </html>

@@ -15,7 +15,7 @@ short_description: Public status view of SZL sovereign-first LLM router
 A beautiful, honest, investor-grade **public-facing** view of SZL's
 **sovereign-first** LLM router. This is a status / marketing surface only — the
 `szl-router` codebase and its routing logic stay **private**. No internals, no
-scoring heuristics, no provider keys are exposed here.
+scoring heuristics, provider names, network locations, or provider keys are exposed here.
 
 ## The concept
 
@@ -33,27 +33,33 @@ free-energy claims), and `tier`.
 
 - An **animated routing diagram** (own metal → free tiers → paid fallback).
 - A **sovereign-first tier ladder** and a **provenance field explainer**.
-- **Live KPIs** and a **provider fabric** grid fed by the public status endpoints.
+- **Snapshot-labeled inventory KPIs** and a **redacted provider fabric** grid fed by the public status contracts.
 
 ## Data source & honest-degrade
 
-The page live-fetches the public router status endpoints:
+The page reads the Space-local public router status contracts:
 
-- `https://a11oy.net/api/a11oy/v1/router/health`
-- `https://a11oy.net/api/a11oy/v1/router/models`
-- `https://a11oy.net/api/a11oy/v1/router/provenance`
+- `/api/a11oy/v1/router/health`
+- `/api/a11oy/v1/router/models`
+- `/api/a11oy/v1/router/provenance`
 
-When an endpoint is unreachable (network or cross-origin restriction), that panel
-**degrades to a clearly-labeled bundled snapshot** (`assets/snapshot-router-*.json`)
-— never to fabricated data and never to a false "all green." The source badge always
-states **LIVE**, **PARTIAL**, or **SNAPSHOT**. Auto-refresh ≈ every 15s.
+When a contract is unreachable, that panel **degrades to a clearly labeled bundled
+snapshot** (`assets/snapshot-router-*.json`) — never to fabricated data or a false
+"all green." A reachable contract is labeled **REACHABLE · SNAPSHOT**. It proves
+only that the public status surface responded; it does not prove that the private
+router, a provider, or a model is live. Auto-refresh ≈ every 15s.
+
+The v2 contracts separate `configured` inventory from `live_reachable`. Until a
+bounded live probe emits a public receipt, `live_reachable` is `NOT_MEASURED`.
+Provider identities are stable opaque IDs and provider classes; private hostnames,
+URLs, IPs, model targets, credentials, and routing logic are omitted.
 
 ## Honesty / doctrine (v11)
 
 - **Sovereign = own-metal only.** Hosted providers are always `sovereign: false`.
 - **No free-energy / joule claims.** `energy_source` is a plain descriptor.
 - **Λ (Lambda) = Conjecture 1.** Builds are **SLSA Level 1, honestly stated.**
-- **No private routing logic or keys** are exposed — public status + concept only.
+- **No private topology, routing logic, or keys** are exposed — public status + concept only.
 
 ## Tech
 
@@ -67,5 +73,9 @@ responsive, WCAG-contrast, `prefers-reduced-motion` aware. No build step require
 - **Live a11oy console:** [szlholdings-a11oy.hf.space](https://szlholdings-a11oy.hf.space) · [a-11-oy.com](https://a-11-oy.com)
 - **Governed-receipt spec + offline verifier:** [governed-receipt-spec](https://github.com/szl-holdings/governed-receipt-spec)
 - **More:** [all HF Spaces](https://huggingface.co/SZLHOLDINGS) · [GitHub org](https://github.com/szl-holdings)
+
+## Deployment-source attestation
+
+`GET /.well-known/szl-source.json` reports the measured Hugging Face deployment revision. The pinned `szl-router` commit is a verifiable backend-concept reference, explicitly **not** a direct Space mirror; GitHub parity and reproducible builds are `NOT_CLAIMED`.
 
 <sub>Doctrine v11 · sovereign = own-metal only · no free-energy · Λ = Conjecture 1 · SLSA L1 honest.</sub>

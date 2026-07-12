@@ -3,8 +3,10 @@
  * ----------------------------------------------------------------------------
  * 0 runtime CDN · system fonts only · AbortController · honest fallback.
  * Calls the REAL a11oy verify endpoint and renders its REAL honest verdict.
- *   POST {base}/api/a11oy/v1/verify   body = a receipt / DSSE envelope / in-toto stmt
- *   GET  {base}/api/a11oy/v1/verify?url=<public receipt url>
+ *   POST {base}/api/a11oy/v1/verify/receipt
+ *        body = {envelope: <receipt / DSSE envelope / in-toto statement>}
+ *   Public receipt URLs are fetched in-browser, then their JSON is submitted to
+ *   the same canonical verifier endpoint. Cross-origin sources must permit CORS.
  *
  * Doctrine v11: this widget NEVER fabricates a verdict. It shows exactly what
  * the server returns (verdict: VERIFIED | STRUCTURAL-ONLY | FAILED | UNRECOGNISED).
@@ -19,7 +21,8 @@
 (function (global) {
   'use strict';
 
-  var DEFAULT_BASE = 'https://a11oy.net'; // same fabric the estate already talks to
+  var DEFAULT_BASE = 'https://a-11-oy.com';
+  var VERIFY_PATH  = '/api/a11oy/v1/verify/receipt';
   var TIMEOUT_MS   = 12000;
   var SAMPLE = {
     _type: 'https://in-toto.io/Statement/v1',
@@ -187,17 +190,25 @@
 
     go.addEventListener('click', function(){
       go.disabled = true;
-      out.innerHTML = '<span class="szlv-load">calling <code>'+esc(base)+'/api/a11oy/v1/verify</code>\u2026</span>';
+      var verifyUrl = base + VERIFY_PATH;
+      out.innerHTML = '<span class="szlv-load">calling <code>'+esc(verifyUrl)+'</code>\u2026</span>';
       var p, u = url.value.trim(), body = ta.value.trim();
       if(u){
-        p = pull(base+'/api/a11oy/v1/verify?url='+encodeURIComponent(u), {method:'GET'});
+        p = pull(u, {method:'GET'}).then(function(sourceRes){
+          if(!sourceRes.ok || !sourceRes.data) return sourceRes;
+          var source = sourceRes.data;
+          var envelope = source && source.envelope ? source.envelope : source;
+          return pull(verifyUrl, {method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({envelope: envelope})});
+        });
       } else if(body){
         var parsed = null;
         try{ parsed = JSON.parse(body); }catch(e){
           out.innerHTML = '<div class="szlv-state muted">input is not valid JSON — paste a receipt object or use a URL.</div>';
           go.disabled = false; return;
         }
-        p = pull(base+'/api/a11oy/v1/verify', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(parsed)});
+        var requestBody = parsed && parsed.envelope ? parsed : {envelope: parsed};
+        p = pull(verifyUrl, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(requestBody)});
       } else {
         out.innerHTML = '<div class="szlv-state muted">paste a receipt JSON, or enter a public receipt URL.</div>';
         go.disabled = false; return;

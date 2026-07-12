@@ -1,13 +1,9 @@
-/* ===========================================================
-   SZL LLM Router — PUBLIC status & concept view
-   The szl-router internals stay PRIVATE. This page shows only
-   public status + the sovereign-first routing concept.
-   - Live fetch: router/health, router/models, router/provenance
-   - Honest-degrade to clearly-labeled bundled snapshots.
-   Doctrine v11.
-   =========================================================== */
+/* SZL LLM Router — public evidence surface.
+ * The public contracts expose configuration inventory only. A reachable
+ * contract is not evidence that a private router, provider, or model is live.
+ */
 
-const BASE = 'https://a11oy.net/api/a11oy/v1';
+const BASE = window.location.origin + '/api/a11oy/v1';
 const ENDPOINTS = {
   health: { url: BASE + '/router/health', snap: 'assets/snapshot-router-health.json' },
   models: { url: BASE + '/router/models', snap: 'assets/snapshot-router-models.json' },
@@ -15,127 +11,173 @@ const ENDPOINTS = {
 };
 const REFRESH_MS = 15000;
 
-const $ = (s) => document.querySelector(s);
-const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const $ = (selector) => document.querySelector(selector);
+const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+}[char]));
 
 const TIER_ORDER = { sovereign: 0, 'free-grid': 1, 'paid-grid': 2 };
-const TIER_LABEL = { sovereign: 'sovereign · own metal', 'free-grid': 'free tier', 'paid-grid': 'paid fallback' };
+const TIER_LABEL = {
+  sovereign: 'sovereign · own metal',
+  'free-grid': 'hosted · free tier',
+  'paid-grid': 'hosted · paid fallback',
+};
 
-let liveFlags = { health: false, models: false, provenance: false };
+let endpointStates = {
+  health: { source: 'PENDING', transport: 'UNKNOWN', evidence: 'UNKNOWN' },
+  models: { source: 'PENDING', transport: 'UNKNOWN', evidence: 'UNKNOWN' },
+  provenance: { source: 'PENDING', transport: 'UNKNOWN', evidence: 'UNKNOWN' },
+};
 
-/* fetch one endpoint live, degrade to snapshot */
+function evidenceState(response, data) {
+  return String(
+    response.headers.get('X-SZL-Evidence-State')
+      || (data && data.evidence_state)
+      || (data && data.measurement_state)
+      || 'UNKNOWN'
+  ).toUpperCase();
+}
+
 async function fetchOrSnap(name) {
   const { url, snap } = ENDPOINTS[name];
   try {
-    const res = await fetch(url, { cache: 'no-store' });
-    if (!res.ok) throw new Error('status ' + res.status);
-    const data = await res.json();
-    liveFlags[name] = true;
+    const response = await fetch(url, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`status ${response.status}`);
+    const data = await response.json();
+    endpointStates[name] = {
+      source: 'PUBLIC_CONTRACT',
+      transport: String(response.headers.get('X-SZL-Transport-State') || 'REACHABLE').toUpperCase(),
+      evidence: evidenceState(response, data),
+    };
     return data;
-  } catch (e) {
+  } catch (contractError) {
     try {
-      const res = await fetch(snap, { cache: 'no-store' });
-      const data = await res.json();
-      liveFlags[name] = false;
+      const response = await fetch(snap, { cache: 'no-store' });
+      if (!response.ok) throw new Error(`status ${response.status}`);
+      const data = await response.json();
+      endpointStates[name] = {
+        source: 'LOCAL_FALLBACK',
+        transport: 'UNREACHABLE',
+        evidence: evidenceState(response, data),
+      };
       return data;
-    } catch (e2) {
-      liveFlags[name] = null;
+    } catch (snapshotError) {
+      endpointStates[name] = { source: 'UNAVAILABLE', transport: 'UNREACHABLE', evidence: 'UNKNOWN' };
       return null;
     }
   }
 }
 
 function setSourceBadge() {
-  const anyLive = Object.values(liveFlags).some((v) => v === true);
-  const allLive = Object.values(liveFlags).every((v) => v === true);
-  const allDown = Object.values(liveFlags).every((v) => v === null);
+  const states = Object.values(endpointStates);
   const pill = $('#source-pill');
   const dot = pill.querySelector('.dot');
   const label = pill.querySelector('.source-label');
+  const allContractsReachable = states.every(
+    (state) => state.source === 'PUBLIC_CONTRACT' && state.transport === 'REACHABLE'
+  );
+  const allUnavailable = states.every((state) => state.source === 'UNAVAILABLE');
+  const hasMeasuredEvidence = states.some(
+    (state) => state.evidence === 'LIVE' || state.evidence === 'COMPUTED'
+  );
 
-  if (allDown) {
+  if (allUnavailable) {
     dot.className = 'dot down';
     label.textContent = 'OFFLINE';
-    $('#data-source-note').textContent = 'Router status endpoints are unreachable. No data shown is fabricated.';
-  } else if (allLive) {
+    $('#data-source-note').textContent = 'The public contracts and bundled snapshots are unavailable.';
+  } else if (allContractsReachable && !hasMeasuredEvidence) {
+    dot.className = 'dot snapshot';
+    label.textContent = 'REACHABLE · SNAPSHOT';
+    $('#data-source-note').textContent = 'The public status contracts are reachable. Router, provider, and model reachability are not measured by this snapshot.';
+  } else if (allContractsReachable && hasMeasuredEvidence) {
     dot.className = 'dot live';
-    label.textContent = 'LIVE · szl-router';
-    $('#data-source-note').textContent = 'Reading live router status endpoints. This is a public status view — no private routing logic or keys are exposed.';
+    label.textContent = 'LIVE EVIDENCE';
+    $('#data-source-note').textContent = 'The public contracts include current measured evidence.';
   } else {
     dot.className = 'dot snapshot';
-    label.textContent = anyLive ? 'PARTIAL · live + snapshot' : 'SNAPSHOT · live unavailable';
-    $('#data-source-note').textContent = 'Some endpoints were unreachable (network or cross-origin restriction); those panels show a clearly-labeled bundled snapshot — never fabricated data.';
+    label.textContent = 'LOCAL SNAPSHOT';
+    $('#data-source-note').textContent = 'At least one public contract was unreachable; bundled snapshot evidence is shown and labeled.';
   }
 }
 
 function stamp() {
-  $('#updated-stamp').textContent = 'updated ' + new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+  $('#updated-stamp').textContent = `checked ${new Date().toLocaleTimeString([], {
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  })}`;
 }
 
-/* ---------- render health ---------- */
 function renderHealth(data) {
-  const ok = data && data.ok === true;
-  $('#kpi-health').textContent = ok ? 'UP' : (data ? 'DOWN' : '—');
-  $('#kpi-health').className = 'kpi-value ' + (ok ? 'teal' : 'violet');
-  $('#kpi-service').textContent = (data && data.service) ? data.service : 'szl-router';
+  const reachable = data && data.status_surface === 'REACHABLE';
+  $('#kpi-health').textContent = reachable ? 'REACHABLE' : 'UNKNOWN';
+  $('#kpi-health').className = `kpi-value ${reachable ? 'teal' : 'violet'}`;
+  $('#kpi-service').textContent = data && data.router_runtime
+    ? `router runtime: ${String(data.router_runtime).toLowerCase().replace('_', ' ')}`
+    : 'router runtime: not measured';
 }
 
-/* ---------- render models ---------- */
 function renderModels(data) {
-  const list = (data && Array.isArray(data.data)) ? data.data : [];
-  $('#kpi-models').textContent = list.length || '—';
+  const list = data && Array.isArray(data.data) ? data.data : [];
+  const configured = list.filter((model) => model.configured === true).length;
+  $('#kpi-models').textContent = list.length ? `${configured}/${list.length}` : '—';
   const wrap = $('#model-chips');
   wrap.innerHTML = '';
-  if (!list.length) { wrap.innerHTML = '<span class="chip dim">no models reported</span>'; return; }
-  list.forEach((m) => {
+  if (!list.length) {
+    wrap.innerHTML = '<span class="chip dim">no logical aliases reported</span>';
+    return;
+  }
+  list.forEach((model) => {
     const span = document.createElement('span');
-    span.className = 'chip';
-    span.textContent = m.id;
+    span.className = model.configured ? 'chip' : 'chip dim';
+    span.textContent = `${model.id} · ${model.live_reachable || 'NOT_MEASURED'}`;
     wrap.appendChild(span);
   });
 }
 
-/* ---------- render provenance (providers + logical models) ---------- */
+function measuredReachability(provider) {
+  if (provider.live_reachable === true && provider.last_probe_at && provider.probe_receipt_id) {
+    return { label: 'MEASURED REACHABLE', className: 'ok' };
+  }
+  if (provider.live_reachable === false && provider.last_probe_at && provider.probe_receipt_id) {
+    return { label: 'MEASURED UNREACHABLE', className: 'down' };
+  }
+  return { label: 'NOT MEASURED', className: '' };
+}
+
 function renderProvenance(data) {
-  const providers = (data && Array.isArray(data.providers)) ? data.providers.slice() : [];
-  // count sovereign-available
-  const sovUp = providers.filter((p) => p.sovereign && p.available).length;
-  $('#kpi-sovereign').textContent = providers.length ? `${sovUp}/${providers.filter(p=>p.sovereign).length}` : '—';
+  const providers = data && Array.isArray(data.providers) ? data.providers.slice() : [];
+  const sovereign = providers.filter((provider) => provider.sovereign === true);
+  const configuredSovereign = sovereign.filter((provider) => provider.configured === true).length;
+  $('#kpi-sovereign').textContent = providers.length ? `${configuredSovereign}/${sovereign.length}` : '—';
 
-  // sort by tier then availability
   providers.sort((a, b) => (TIER_ORDER[a.tier] ?? 9) - (TIER_ORDER[b.tier] ?? 9));
-
   const grid = $('#provider-grid');
   grid.innerHTML = '';
-  providers.forEach((p) => {
-    const tierCls = p.tier === 'sovereign' ? 'sov' : (p.tier === 'free-grid' ? 'free' : 'paid');
-    const tierTag = p.tier === 'sovereign' ? 'sov' : 'host';
+  providers.forEach((provider) => {
+    const tierTag = provider.tier === 'sovereign' ? 'sov' : 'host';
+    const reachability = measuredReachability(provider);
     const card = document.createElement('article');
     card.className = 'provider-card glass';
     card.innerHTML = `
       <div class="provider-top">
-        <span class="provider-name">${escapeHtml(p.provider)}</span>
-        <span class="tag ${p.available ? 'ok' : 'down'}">${p.available ? 'available' : 'idle'}</span>
+        <span class="provider-name">${escapeHtml(provider.provider_id)}</span>
+        <span class="tag ${reachability.className}">${reachability.label}</span>
       </div>
       <div class="provider-meta">
-        <span class="tag ${tierTag}">${escapeHtml(TIER_LABEL[p.tier] || p.tier)}</span>
-        <span class="badge ${p.sovereign ? 'teal' : ''}">${p.sovereign ? 'sovereign' : 'hosted'}</span>
+        <span class="tag ${tierTag}">${escapeHtml(TIER_LABEL[provider.tier] || provider.tier)}</span>
+        <span class="badge ${provider.sovereign ? 'teal' : ''}">${provider.sovereign ? 'sovereign' : 'hosted'}</span>
       </div>
       <div class="provider-meta">
-        <span class="badge">energy: ${escapeHtml(p.energy_source || 'n/a')}</span>
+        <span class="badge">${provider.configured ? 'CONFIGURED' : 'NOT CONFIGURED'}</span>
+        <span class="badge">${escapeHtml(provider.provider_class || 'redacted')}</span>
       </div>
-      <p class="provider-note">${escapeHtml(p.note || '')}</p>
+      <p class="provider-note">Provider identity and network topology are intentionally redacted.</p>
     `;
     grid.appendChild(card);
   });
 
-  // default model readout
-  if (data && data.default_model) {
-    $('#default-model').textContent = data.default_model;
-  }
+  if (data && data.default_model) $('#default-model').textContent = data.default_model;
 }
 
-/* ---------- main cycle ---------- */
 async function cycle() {
   const [health, models, provenance] = await Promise.all([
     fetchOrSnap('health'),
