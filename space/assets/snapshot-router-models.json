@@ -1,1 +1,18 @@
-{"object":"list","data":[{"id":"szl-large","object":"model","created":1782981826,"owned_by":"szl-router"},{"id":"szl-fast","object":"model","created":1782981826,"owned_by":"szl-router"},{"id":"szl-coder","object":"model","created":1782981826,"owned_by":"szl-router"},{"id":"szl-auto","object":"model","created":1782981826,"owned_by":"szl-router"},{"id":"bge-large","object":"model","created":1782981826,"owned_by":"szl-router"}]}
+{
+  "schema_version": "szl.router.public-models/v2",
+  "object": "list",
+  "evidence_state": "SNAPSHOT",
+  "measurement_state": "NOT_MEASURED",
+  "captured_at": "2026-07-11T16:15:47Z",
+  "data": [
+    {"id": "szl-large", "object": "logical_model", "configured": true, "live_reachable": "NOT_MEASURED"},
+    {"id": "szl-fast", "object": "logical_model", "configured": true, "live_reachable": "NOT_MEASURED"},
+    {"id": "szl-coder", "object": "logical_model", "configured": true, "live_reachable": "NOT_MEASURED"},
+    {"id": "szl-auto", "object": "logical_model", "configured": true, "live_reachable": "NOT_MEASURED"},
+    {"id": "bge-large", "object": "logical_model", "configured": true, "live_reachable": "NOT_MEASURED"}
+  ],
+  "limits": [
+    "Logical aliases are configuration inventory, not proof of model availability.",
+    "Private model identifiers and provider routing targets are intentionally omitted."
+  ]
+}

@@ -1,1 +1,33 @@
-{"providers":[{"provider":"box_gpu","available":true,"sovereign":true,"tier":"sovereign","energy_source":"self-hosted","base_url":"http://betterwithage:11434/v1","needs_key":true,"note":"Tailscale Ollama on our own GPU node."},{"provider":"nvidia_gpu","available":false,"sovereign":true,"tier":"sovereign","energy_source":"self-hosted","base_url":null,"needs_key":true,"note":"Founder's rented NVIDIA GPU (vLLM/NIM/Ollama). Set the two envs to arm."},{"provider":"omen_gpu","available":false,"sovereign":true,"tier":"sovereign","energy_source":"self-hosted","base_url":null,"needs_key":true,"note":"Always-on HOME node (OMEN RTX 4060 Ti 8GB) on the founder tailnet. Set OMEN_GPU_BASE_URL=http://<omen-host>:11434/v1 to arm. Preferred for low-latency small jobs + embeddings so the TRAVELING laptop is not the sole worker. Each sovereign node is a SEPARATE worker — placement + sequential failover only; VRAM is NEVER fused/combined."},{"provider":"groq","available":true,"sovereign":false,"tier":"free-grid","energy_source":"grid","base_url":"https://api.groq.com/openai/v1","needs_key":true,"note":"Free, very fast."},{"provider":"nvidia_nim","available":true,"sovereign":false,"tier":"free-grid","energy_source":"grid","base_url":"https://integrate.api.nvidia.com/v1","needs_key":true,"note":"NVIDIA-hosted NIM catalog."},{"provider":"zhipu","available":false,"sovereign":false,"tier":"free-grid","energy_source":"grid","base_url":"https://open.bigmodel.cn/api/paas/v4","needs_key":true,"note":"GLM family; free flash tier."},{"provider":"siliconflow","available":false,"sovereign":false,"tier":"free-grid","energy_source":"grid","base_url":"https://api.siliconflow.com/v1","needs_key":true,"note":"Free Qwen3-8B and DeepSeek-R1 distills."},{"provider":"moonshot","available":false,"sovereign":false,"tier":"paid-grid","energy_source":"grid","base_url":"https://api.moonshot.ai/v1","needs_key":true,"note":"Kimi K2. Paid; used as a strong fallback."}],"logical_models":{"szl-large":[["box_gpu","llama3.1:8b"],["nvidia_gpu","llama3.1:8b"],["omen_gpu","llama3.1:8b"],["groq","llama-3.3-70b-versatile"],["nvidia_nim","meta/llama-3.3-70b-instruct"],["moonshot","kimi-k2-0905-preview"]],"szl-fast":[["omen_gpu","llama3.1:8b"],["box_gpu","llama3.1:8b"],["nvidia_gpu","llama3.1:8b"],["groq","llama-3.1-8b-instant"],["nvidia_nim","meta/llama-3.1-8b-instruct"]],"szl-coder":[["box_gpu","qwen2.5-coder:7b"],["nvidia_gpu","qwen2.5-coder:7b"],["omen_gpu","qwen2.5-coder:7b"],["nvidia_nim","deepseek-ai/deepseek-coder-6.7b-instruct"],["groq","llama-3.3-70b-versatile"]]},"embed_models":{"bge-large":[["omen_gpu","bge-large"],["box_gpu","bge-large"],["nvidia_gpu","bge-large"]]},"default_model":"szl-large"}
+{
+  "schema_version": "szl.router.public-provenance/v2",
+  "evidence_state": "SNAPSHOT",
+  "measurement_state": "NOT_MEASURED",
+  "captured_at": "2026-07-11T16:15:47Z",
+  "providers": [
+    {"provider_id": "provider-sovereign-01", "provider_class": "self_hosted_inference", "tier": "sovereign", "sovereign": true, "configured": true, "live_reachable": "NOT_MEASURED", "last_probe_at": null, "probe_receipt_id": null},
+    {"provider_id": "provider-sovereign-02", "provider_class": "self_hosted_inference", "tier": "sovereign", "sovereign": true, "configured": false, "live_reachable": "NOT_MEASURED", "last_probe_at": null, "probe_receipt_id": null},
+    {"provider_id": "provider-sovereign-03", "provider_class": "self_hosted_inference", "tier": "sovereign", "sovereign": true, "configured": false, "live_reachable": "NOT_MEASURED", "last_probe_at": null, "probe_receipt_id": null},
+    {"provider_id": "provider-free-01", "provider_class": "hosted_inference", "tier": "free-grid", "sovereign": false, "configured": true, "live_reachable": "NOT_MEASURED", "last_probe_at": null, "probe_receipt_id": null},
+    {"provider_id": "provider-free-02", "provider_class": "hosted_inference", "tier": "free-grid", "sovereign": false, "configured": true, "live_reachable": "NOT_MEASURED", "last_probe_at": null, "probe_receipt_id": null},
+    {"provider_id": "provider-free-03", "provider_class": "hosted_inference", "tier": "free-grid", "sovereign": false, "configured": false, "live_reachable": "NOT_MEASURED", "last_probe_at": null, "probe_receipt_id": null},
+    {"provider_id": "provider-free-04", "provider_class": "hosted_inference", "tier": "free-grid", "sovereign": false, "configured": false, "live_reachable": "NOT_MEASURED", "last_probe_at": null, "probe_receipt_id": null},
+    {"provider_id": "provider-paid-01", "provider_class": "hosted_inference", "tier": "paid-grid", "sovereign": false, "configured": false, "live_reachable": "NOT_MEASURED", "last_probe_at": null, "probe_receipt_id": null}
+  ],
+  "logical_models": {
+    "szl-large": ["provider-sovereign-01", "provider-sovereign-02", "provider-sovereign-03", "provider-free-01", "provider-free-02", "provider-paid-01"],
+    "szl-fast": ["provider-sovereign-03", "provider-sovereign-01", "provider-sovereign-02", "provider-free-01", "provider-free-02"],
+    "szl-coder": ["provider-sovereign-01", "provider-sovereign-02", "provider-sovereign-03", "provider-free-02", "provider-free-01"]
+  },
+  "embed_models": {
+    "bge-large": ["provider-sovereign-03", "provider-sovereign-01", "provider-sovereign-02"]
+  },
+  "default_model": "szl-large",
+  "redaction": {
+    "state": "APPLIED",
+    "policy": "Provider names, network locations, endpoints, credentials, and private model targets are not public."
+  },
+  "limits": [
+    "configured is inventory state only; it does not mean reachable or available.",
+    "Every provider is NOT_MEASURED until a bounded live probe emits a public receipt."
+  ]
+}

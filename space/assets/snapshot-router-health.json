@@ -1,1 +1,14 @@
-{"ok":true,"service":"szl-router","ts":1782981826}
+{
+  "schema_version": "szl.router.public-health/v2",
+  "service": "szl-router-public-status",
+  "transport_state": "REACHABLE",
+  "evidence_state": "SNAPSHOT",
+  "status_surface": "REACHABLE",
+  "router_runtime": "NOT_MEASURED",
+  "provider_reachability": "NOT_MEASURED",
+  "captured_at": "2026-07-11T16:15:47Z",
+  "limits": [
+    "This response proves only that the public status contract is reachable.",
+    "It does not probe or attest the private router, providers, models, or inference path."
+  ]
+}
