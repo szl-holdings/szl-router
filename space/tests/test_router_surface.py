@@ -4,6 +4,7 @@ import re
 import sys
 import threading
 import unittest
+from datetime import datetime, timezone
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from urllib.request import urlopen
@@ -11,7 +12,11 @@ from urllib.request import urlopen
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from server import HardenedHandler  # noqa: E402
+from server import (  # noqa: E402
+    SNAPSHOT_MAX_AGE_SECONDS,
+    HardenedHandler,
+    classify_snapshot_freshness,
+)
 
 
 CONTRACTS = {
@@ -123,11 +128,30 @@ class RouterSurfaceTests(unittest.TestCase):
         app = (ROOT / "assets" / "app.js").read_text(encoding="utf-8")
         page = (ROOT / "index.html").read_text(encoding="utf-8").lower()
         self.assertIn("REACHABLE · SNAPSHOT", app)
+        self.assertIn("STALE SNAPSHOT", app)
+        self.assertIn("SNAPSHOT AGE UNKNOWN", app)
+        self.assertIn("SNAPSHOT_MAX_AGE_MS", app)
         self.assertIn("live_reachable", app)
         self.assertNotIn("p.available", app)
         self.assertNotIn("LIVE · szl-router", app)
         for forbidden in FORBIDDEN_TOPOLOGY_TERMS:
             self.assertNotIn(forbidden, page)
+
+    def test_snapshot_freshness_is_fail_closed(self):
+        now = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+        fresh = classify_snapshot_freshness("2026-07-15T11:00:00Z", now=now)
+        stale = classify_snapshot_freshness("2026-07-14T11:59:59Z", now=now)
+        malformed = classify_snapshot_freshness("not-a-timestamp", now=now)
+        future = classify_snapshot_freshness("2026-07-15T12:00:01Z", now=now)
+
+        self.assertEqual("FRESH", fresh["freshness_state"])
+        self.assertEqual(3600, fresh["snapshot_age_seconds"])
+        self.assertEqual("STALE", stale["freshness_state"])
+        self.assertEqual(SNAPSHOT_MAX_AGE_SECONDS + 1, stale["snapshot_age_seconds"])
+        self.assertEqual("UNKNOWN", malformed["freshness_state"])
+        self.assertIsNone(malformed["snapshot_age_seconds"])
+        self.assertEqual("UNKNOWN", future["freshness_state"])
+        self.assertIsNone(future["snapshot_age_seconds"])
 
     def test_http_contract_headers_are_explicit_and_uncacheable(self):
         handler = functools.partial(HardenedHandler, directory=str(ROOT))
@@ -142,7 +166,11 @@ class RouterSurfaceTests(unittest.TestCase):
                     self.assertEqual(response.headers["Cache-Control"], "no-store")
                     self.assertEqual(response.headers["X-SZL-Transport-State"], "REACHABLE")
                     self.assertEqual(response.headers["X-SZL-Evidence-State"], "SNAPSHOT")
-                    json.loads(response.read())
+                    self.assertEqual(response.headers["X-SZL-Freshness-State"], "STALE")
+                    payload = json.loads(response.read())
+                    self.assertEqual(payload["freshness_state"], "STALE")
+                    self.assertGreater(payload["snapshot_age_seconds"], SNAPSHOT_MAX_AGE_SECONDS)
+                    self.assertEqual(payload["stale_after_seconds"], SNAPSHOT_MAX_AGE_SECONDS)
         finally:
             server.shutdown()
             server.server_close()

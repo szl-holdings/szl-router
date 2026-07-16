@@ -54,6 +54,14 @@ bounded live probe emits a public receipt, `live_reachable` is `NOT_MEASURED`.
 Provider identities are stable opaque IDs and provider classes; private hostnames,
 URLs, IPs, model targets, credentials, and routing logic are omitted.
 
+Snapshot freshness fails closed. The server derives `freshness_state`,
+`snapshot_age_seconds`, and `stale_after_seconds` from each contract's
+`captured_at` timestamp and returns the same state in `X-SZL-Freshness-State`.
+A snapshot older than 24 hours is labeled **STALE SNAPSHOT** in the UI; a missing,
+malformed, timezone-naive, or future timestamp is **SNAPSHOT AGE UNKNOWN**. The
+15-second browser refresh checks surface reachability only and never resets the
+age of the underlying evidence.
+
 ## Honesty / doctrine (v11)
 
 - **Sovereign = own-metal only.** Hosted providers are always `sovereign: false`.
