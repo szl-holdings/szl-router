@@ -14,11 +14,12 @@ on:
 # without this the workflow is rejected at startup (startup_failure). actions:
 # read is required for the SARIF/code-scanning upload action.
 permissions:
-  contents: write
-  security-events: write
-  actions: read
+  contents: read
 
 jobs:
   sbom:
+    permissions:
+      contents: write
+      security-events: write
     uses: szl-holdings/.github/.github/workflows/reusable-sbom.yml@ebd2128c691b850c84438b671fbb512945933776
     secrets: inherit

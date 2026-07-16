@@ -9,10 +9,10 @@ on:
 # must grant at least these or the run is rejected at startup (startup_failure).
 permissions:
   contents: read
-  security-events: write
-  id-token: write
-  actions: read
 jobs:
   scorecard:
+    permissions:
+      security-events: write
+      id-token: write
     uses: szl-holdings/.github/.github/workflows/reusable-scorecard.yml@0c06506cba0f9d87f8bf25e37ebc1b53b3121523
     secrets: inherit
