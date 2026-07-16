@@ -11,9 +11,9 @@ on:
 # without this the run is rejected at startup (startup_failure).
 permissions:
   contents: read
-  security-events: write
-  actions: read
 jobs:
   trivy:
+    permissions:
+      security-events: write
     uses: szl-holdings/.github/.github/workflows/reusable-trivy.yml@0c06506cba0f9d87f8bf25e37ebc1b53b3121523
     secrets: inherit
