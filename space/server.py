@@ -21,6 +21,7 @@ and the verify widget keep working.
 import functools
 import json
 import urllib.parse
+from datetime import datetime, timezone
 from pathlib import Path
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
@@ -29,6 +30,7 @@ from szl_source_attestation import build_attestation
 PORT = 7860
 DIRECTORY = "/app"
 SPACE_ID = "SZLHOLDINGS/llm-router-live"
+SNAPSHOT_MAX_AGE_SECONDS = 24 * 60 * 60
 SOURCE_OBSERVATION = {
     "repository": "szl-holdings/szl-router",
     "commit": "df23a589f0365afa5bdd71da2997941301065535",
@@ -49,6 +51,43 @@ CONTENT_SECURITY_POLICY = (
     "connect-src 'self' https://a-11-oy.com; "
     "frame-ancestors 'self' https://huggingface.co https://*.hf.space https://*.huggingface.co"
 )
+
+
+def classify_snapshot_freshness(captured_at, *, now=None):
+    """Return an explicit freshness boundary for a snapshot timestamp.
+
+    Missing, malformed, timezone-naive, or future timestamps are UNKNOWN rather
+    than optimistically treated as fresh.
+    """
+    result = {
+        "freshness_state": "UNKNOWN",
+        "snapshot_age_seconds": None,
+        "stale_after_seconds": SNAPSHOT_MAX_AGE_SECONDS,
+    }
+    if not isinstance(captured_at, str) or not captured_at.strip():
+        return result
+
+    try:
+        captured = datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
+    except ValueError:
+        return result
+    if captured.tzinfo is None:
+        return result
+
+    observed_now = now or datetime.now(timezone.utc)
+    if observed_now.tzinfo is None:
+        raise ValueError("now must be timezone-aware")
+    age_seconds = int(
+        (observed_now.astimezone(timezone.utc) - captured.astimezone(timezone.utc)).total_seconds()
+    )
+    if age_seconds < 0:
+        return result
+
+    result["snapshot_age_seconds"] = age_seconds
+    result["freshness_state"] = (
+        "FRESH" if age_seconds <= SNAPSHOT_MAX_AGE_SECONDS else "STALE"
+    )
+    return result
 
 
 class HardenedHandler(SimpleHTTPRequestHandler):
@@ -77,6 +116,27 @@ class HardenedHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_snapshot_json(self, path):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("snapshot root must be an object")
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError):
+            self.send_error(503, "snapshot unavailable")
+            return
+
+        payload.update(classify_snapshot_freshness(payload.get("captured_at")))
+        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-SZL-Transport-State", "REACHABLE")
+        self.send_header("X-SZL-Evidence-State", "SNAPSHOT")
+        self.send_header("X-SZL-Freshness-State", payload["freshness_state"])
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self):
         parsed = urllib.parse.urlsplit(self.path)
         if parsed.path == "/.well-known/szl-source.json":
@@ -97,19 +157,7 @@ class HardenedHandler(SimpleHTTPRequestHandler):
         }
         if parsed.path in routes:
             path = Path(self.directory or DIRECTORY) / "assets" / routes[parsed.path]
-            try:
-                payload = path.read_bytes()
-            except OSError:
-                self.send_error(503, "snapshot unavailable")
-                return
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("X-SZL-Transport-State", "REACHABLE")
-            self.send_header("X-SZL-Evidence-State", "SNAPSHOT")
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
+            self._send_snapshot_json(path)
             return
         super().do_GET()
 

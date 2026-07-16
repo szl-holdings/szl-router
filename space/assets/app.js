@@ -10,6 +10,7 @@ const ENDPOINTS = {
   provenance: { url: BASE + '/router/provenance', snap: 'assets/snapshot-router-provenance.json' },
 };
 const REFRESH_MS = 15000;
+const SNAPSHOT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 const $ = (selector) => document.querySelector(selector);
 const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (char) => ({
@@ -24,9 +25,9 @@ const TIER_LABEL = {
 };
 
 let endpointStates = {
-  health: { source: 'PENDING', transport: 'UNKNOWN', evidence: 'UNKNOWN' },
-  models: { source: 'PENDING', transport: 'UNKNOWN', evidence: 'UNKNOWN' },
-  provenance: { source: 'PENDING', transport: 'UNKNOWN', evidence: 'UNKNOWN' },
+  health: { source: 'PENDING', transport: 'UNKNOWN', evidence: 'UNKNOWN', freshness: 'UNKNOWN' },
+  models: { source: 'PENDING', transport: 'UNKNOWN', evidence: 'UNKNOWN', freshness: 'UNKNOWN' },
+  provenance: { source: 'PENDING', transport: 'UNKNOWN', evidence: 'UNKNOWN', freshness: 'UNKNOWN' },
 };
 
 function evidenceState(response, data) {
@@ -38,16 +39,42 @@ function evidenceState(response, data) {
   ).toUpperCase();
 }
 
+function snapshotFreshness(response, data) {
+  const reported = String(
+    response.headers.get('X-SZL-Freshness-State')
+      || (data && data.freshness_state)
+      || ''
+  ).toUpperCase();
+  const capturedAt = data && typeof data.captured_at === 'string' ? data.captured_at : null;
+  if (reported === 'FRESH' || reported === 'STALE') {
+    return { state: reported, capturedAt };
+  }
+  if (!capturedAt) return { state: 'UNKNOWN', capturedAt: null };
+
+  const capturedMs = Date.parse(capturedAt);
+  const ageMs = Date.now() - capturedMs;
+  if (!Number.isFinite(capturedMs) || ageMs < 0) {
+    return { state: 'UNKNOWN', capturedAt };
+  }
+  return {
+    state: ageMs <= SNAPSHOT_MAX_AGE_MS ? 'FRESH' : 'STALE',
+    capturedAt,
+  };
+}
+
 async function fetchOrSnap(name) {
   const { url, snap } = ENDPOINTS[name];
   try {
     const response = await fetch(url, { cache: 'no-store' });
     if (!response.ok) throw new Error(`status ${response.status}`);
     const data = await response.json();
+    const freshness = snapshotFreshness(response, data);
     endpointStates[name] = {
       source: 'PUBLIC_CONTRACT',
       transport: String(response.headers.get('X-SZL-Transport-State') || 'REACHABLE').toUpperCase(),
       evidence: evidenceState(response, data),
+      freshness: freshness.state,
+      capturedAt: freshness.capturedAt,
     };
     return data;
   } catch (contractError) {
@@ -55,10 +82,13 @@ async function fetchOrSnap(name) {
       const response = await fetch(snap, { cache: 'no-store' });
       if (!response.ok) throw new Error(`status ${response.status}`);
       const data = await response.json();
+      const freshness = snapshotFreshness(response, data);
       endpointStates[name] = {
         source: 'LOCAL_FALLBACK',
         transport: 'UNREACHABLE',
         evidence: evidenceState(response, data),
+        freshness: freshness.state,
+        capturedAt: freshness.capturedAt,
       };
       return data;
     } catch (snapshotError) {
@@ -80,11 +110,30 @@ function setSourceBadge() {
   const hasMeasuredEvidence = states.some(
     (state) => state.evidence === 'LIVE' || state.evidence === 'COMPUTED'
   );
+  const hasStaleSnapshot = states.some(
+    (state) => state.evidence === 'SNAPSHOT' && state.freshness === 'STALE'
+  );
+  const hasUnknownSnapshotAge = states.some(
+    (state) => state.evidence === 'SNAPSHOT' && state.freshness === 'UNKNOWN'
+  );
+  const capturedAt = states.map((state) => state.capturedAt).find(Boolean);
+  const capturedLabel = capturedAt ? new Date(capturedAt).toLocaleString() : 'an unknown time';
 
   if (allUnavailable) {
     dot.className = 'dot down';
     label.textContent = 'OFFLINE';
     $('#data-source-note').textContent = 'The public contracts and bundled snapshots are unavailable.';
+  } else if (hasStaleSnapshot && !hasMeasuredEvidence) {
+    dot.className = 'dot down';
+    label.textContent = 'STALE SNAPSHOT';
+    const transportNote = allContractsReachable
+      ? 'The public status contracts are reachable, but'
+      : 'At least one public status contract is unreachable, and';
+    $('#data-source-note').textContent = `${transportNote} the snapshot was captured ${capturedLabel} and is older than 24 hours. Router, provider, and model reachability remain unmeasured.`;
+  } else if (hasUnknownSnapshotAge && !hasMeasuredEvidence) {
+    dot.className = 'dot down';
+    label.textContent = 'SNAPSHOT AGE UNKNOWN';
+    $('#data-source-note').textContent = 'The status surface is reachable, but snapshot freshness cannot be verified. Router, provider, and model reachability remain unmeasured.';
   } else if (allContractsReachable && !hasMeasuredEvidence) {
     dot.className = 'dot snapshot';
     label.textContent = 'REACHABLE · SNAPSHOT';
