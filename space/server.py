@@ -20,6 +20,7 @@ and the verify widget keep working.
 """
 import functools
 import json
+import re
 import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,14 +32,9 @@ PORT = 7860
 DIRECTORY = "/app"
 SPACE_ID = "SZLHOLDINGS/llm-router-live"
 SNAPSHOT_MAX_AGE_SECONDS = 24 * 60 * 60
-SOURCE_OBSERVATION = {
-    "repository": "szl-holdings/szl-router",
-    "commit": "df23a589f0365afa5bdd71da2997941301065535",
-    "path": "",
-    "relation": "backend-concept-not-space-mirror",
-    "state": "VERIFIED_REFERENCE",
-    "evidence_url": "https://github.com/szl-holdings/szl-router/commit/df23a589f0365afa5bdd71da2997941301065535",
-}
+SOURCE_BINDING_FILENAME = "SOURCE_BINDING.json"
+_SHA = re.compile(r"^[0-9a-f]{40}$")
+_REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 CONTENT_SECURITY_POLICY = (
     "default-src 'self'; "
@@ -90,6 +86,64 @@ def classify_snapshot_freshness(captured_at, *, now=None):
     return result
 
 
+def load_source_binding(directory):
+    unavailable = {
+        "repository": None,
+        "commit": None,
+        "path": "space",
+        "relation": "exact-deployed-subtree",
+        "state": "UNAVAILABLE",
+        "evidence_url": None,
+    }
+    try:
+        payload = json.loads(
+            (Path(directory) / SOURCE_BINDING_FILENAME).read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return unavailable
+
+    repository = str(payload.get("source_repository", "")).strip()
+    revision = str(payload.get("source_revision", "")).strip().lower()
+    if (
+        payload.get("schema") != "szl.source-binding/v1"
+        or not _REPOSITORY.fullmatch(repository)
+        or not _SHA.fullmatch(revision)
+        or payload.get("source_path") != "space"
+        or payload.get("relation") != "exact-deployed-subtree"
+    ):
+        return unavailable
+    return {
+        "repository": repository,
+        "commit": revision,
+        "path": "space",
+        "relation": "exact-deployed-subtree",
+        "state": "SOURCE_BOUND",
+        "evidence_url": (
+            f"https://github.com/{repository}/tree/{revision}/space"
+        ),
+    }
+
+
+def build_source_attestation(directory, *, force=False):
+    source = load_source_binding(directory)
+    source_bound = source["state"] == "SOURCE_BOUND"
+    payload = build_attestation(
+        SPACE_ID,
+        source,
+        "SOURCE_BOUND_DEPLOYMENT" if source_bound else "UNAVAILABLE",
+        force=force,
+    )
+    if source_bound:
+        payload["verification_state"] = "SOURCE_BOUND"
+        payload["claims"]["github_parity"] = "EXACT_DEPLOYED_SUBTREE"
+        payload["limits"] = [
+            "GitHub parity is scoped to the szl-router/space subtree.",
+            "The deployment workflow verifies each shipped subtree file by SHA-256.",
+            "No reproducible-build or router-gateway runtime claim is made.",
+        ]
+    return payload
+
+
 class HardenedHandler(SimpleHTTPRequestHandler):
     def version_string(self):
         return "SZL"
@@ -103,9 +157,9 @@ class HardenedHandler(SimpleHTTPRequestHandler):
         self.send_header("Referrer-Policy", "strict-origin-when-cross-origin")
         super().end_headers()
 
-    def _send_json(self, payload):
+    def _send_json(self, payload, *, status=200):
         body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
@@ -139,16 +193,56 @@ class HardenedHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urllib.parse.urlsplit(self.path)
+        directory = self.directory or DIRECTORY
         if parsed.path == "/.well-known/szl-source.json":
             force = urllib.parse.parse_qs(parsed.query).get("refresh") == ["1"]
             self._send_json(
-                build_attestation(
-                    SPACE_ID,
-                    SOURCE_OBSERVATION,
-                    "NOT_A_DIRECT_MIRROR",
-                    force=force,
-                )
+                build_source_attestation(directory, force=force)
             )
+            return
+        if parsed.path in {"/healthz", "/readyz", "/api/build-info"}:
+            source = load_source_binding(directory)
+            source_bound = source["state"] == "SOURCE_BOUND"
+            common = {
+                "transport_state": "REACHABLE",
+                "evidence_state": "OBSERVED" if source_bound else "UNAVAILABLE",
+                "verification_state": "SOURCE_BOUND" if source_bound else "UNAVAILABLE",
+                "authority_state": "READ_ONLY",
+            }
+            if parsed.path == "/api/build-info":
+                self._send_json(
+                    {
+                        **common,
+                        "service": "llm-router-live",
+                        "version": "1.0",
+                        "build": {
+                            "state": "OBSERVED" if source_bound else "UNAVAILABLE",
+                            "revision": source["commit"],
+                            "repository": source["repository"],
+                            "path": source["path"],
+                        },
+                        "source_revision": source["commit"],
+                        "source_revision_state": (
+                            "OBSERVED" if source_bound else "UNAVAILABLE"
+                        ),
+                        "github_huggingface_alignment": (
+                            "SOURCE_BOUND_DEPLOYMENT" if source_bound else "UNAVAILABLE"
+                        ),
+                        "receipt_minted": False,
+                    },
+                    status=200 if source_bound else 503,
+                )
+                return
+            payload = {
+                **common,
+                "status": "ready" if source_bound else "degraded",
+                "service": "llm-router-live",
+                "access_mode": "PUBLIC_READONLY",
+                "router_runtime": "NOT_MEASURED",
+                "source_binding": source["state"],
+            }
+            status = 200 if parsed.path == "/healthz" or source_bound else 503
+            self._send_json(payload, status=status)
             return
         routes = {
             "/api/a11oy/v1/router/health": "snapshot-router-health.json",

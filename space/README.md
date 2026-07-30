@@ -84,6 +84,12 @@ responsive, WCAG-contrast, `prefers-reduced-motion` aware. No build step require
 
 ## Deployment-source attestation
 
-`GET /.well-known/szl-source.json` reports the measured Hugging Face deployment revision. The pinned `szl-router` commit is a verifiable backend-concept reference, explicitly **not** a direct Space mirror; GitHub parity and reproducible builds are `NOT_CLAIMED`.
+`GET /.well-known/szl-source.json` reports the measured Hugging Face deployment revision and the exact `szl-router/space` source revision injected by the protected deploy workflow. The workflow verifies every shipped subtree file by SHA-256 before reporting `SOURCE_BOUND_DEPLOYMENT`. This scoped parity does not claim that the public status Space is the private router gateway, and reproducible builds remain `NOT_CLAIMED`.
+
+Runtime evidence routes:
+
+- `GET /healthz` — process reachability and source-binding state.
+- `GET /readyz` — fails closed until an exact source binding is present.
+- `GET /api/build-info` — exact GitHub repository, revision, subtree, and deployment-alignment state.
 
 <sub>Doctrine v11 · sovereign = own-metal only · no free-energy · Λ = Conjecture 1 · SLSA L1 honest.</sub>
