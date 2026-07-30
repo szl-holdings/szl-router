@@ -34,4 +34,4 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: python scripts/hf_space_deploy.py --token "$HF_TOKEN"
       - name: Attest live == source
-        run: python scripts/hf_space_drift_check.py
+        run: python scripts/hf_space_drift_check.py --source-revision "$GITHUB_SHA"

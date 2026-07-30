@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
+import re
 import sys
 import urllib.request
 from pathlib import Path
 
 RESOLVE = "https://huggingface.co/spaces/{repo}/resolve/main/{path}"
+_SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
 def _sha256_bytes(b: bytes) -> str:
@@ -25,6 +28,7 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--space-dir", default="space")
     ap.add_argument("--repo-id", default="SZLHOLDINGS/llm-router-live")
+    ap.add_argument("--source-revision")
     args = ap.parse_args()
 
     space_dir = Path(args.space_dir).resolve()
@@ -51,6 +55,33 @@ def main() -> None:
 
     if not ok:
         sys.exit("Drift detected: live Space != szl-router/space.")
+    if args.source_revision:
+        expected_revision = args.source_revision.strip().lower()
+        if not _SHA.fullmatch(expected_revision):
+            sys.exit("Expected source revision is not an exact Git SHA.")
+        binding_url = RESOLVE.format(repo=args.repo_id, path="SOURCE_BINDING.json")
+        try:
+            with urllib.request.urlopen(binding_url, timeout=30) as response:
+                binding = json.load(response)
+        except Exception as exc:  # noqa: BLE001
+            sys.exit(f"Source binding unavailable: {exc}")
+        expected = {
+            "schema": "szl.source-binding/v1",
+            "source_repository": "szl-holdings/szl-router",
+            "source_revision": expected_revision,
+            "source_path": "space",
+            "relation": "exact-deployed-subtree",
+        }
+        for key, value in expected.items():
+            if binding.get(key) != value:
+                sys.exit(
+                    f"Source binding mismatch for {key}: "
+                    f"expected {value!r}, observed {binding.get(key)!r}."
+                )
+        print(
+            "Source binding aligned: "
+            f"szl-holdings/szl-router@{expected_revision}/space"
+        )
     print(f"\nAll {len(files)} files aligned: live llm-router-live == szl-router/space.")
 
 
