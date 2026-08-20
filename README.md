@@ -249,8 +249,21 @@ is a **static** surface (no internals, no keys) and is now governed from this re
 under [`space/`](space/) — previously it was hand-built on HF with no GitHub source.
 It is deployed whole-context (`hf-space-deploy.yml`, `huggingface_hub.upload_folder`)
 because its `COPY . /app` Dockerfile is intentionally excluded by the org's per-file
-deployer. `hf-space-drift-check.yml` re-fetches every file from the live Space and
-asserts `sha256 == space/`. This is distinct from the **router gateway image**
+deployer. Publication acceptance is deliberately stricter than matching bytes:
+`hf-space-drift-check.yml` verifies the complete remote file set and every byte at
+one immutable HF revision, validates its exact GitHub source binding, requires the
+provider API to report `RUNNING` at that same runtime SHA, and requires nonce-fresh,
+`no-store`, no-redirect HTTP 200 witnesses from `/readyz` and
+`/.well-known/szl-source.json`. The latter must bind the same exact GitHub SHA
+and HF revision before acceptance. `PAUSED`, build/start/stop/error or unknown
+stages, stale revisions, missing token or endpoint configuration, malformed provider
+data, redirects, auth/error pages, and non-200 readiness all fail closed.
+
+Each run preserves `hf-space-parity-evidence.json` as a workflow artifact. Its
+`source`, `publication`, `deployment`, and `runtime` sections are separate:
+source checkout, published bytes, provider stage, and a live readiness witness are
+never interchangeable claims. The verifier is read-only and does not restart, wake,
+pause, publish, or otherwise mutate the Space. This is distinct from the **router gateway image**
 (`publish.yml` → GHCR), which stays private and serves a different surface on `:8000`.
 
 ## The Ouroboros loop (doctrine cross-reference)

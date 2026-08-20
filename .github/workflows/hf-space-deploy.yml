@@ -11,8 +11,7 @@ on:
       - "space/**"
       - ".github/workflows/hf-space-deploy.yml"
       - "scripts/hf_space_deploy.py"
-  workflow_dispatch:
-
+      - "scripts/hf_space_drift_check.py"
 permissions:
   contents: read
 
@@ -23,15 +22,37 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      HF_SPACE_REPO_ID: SZLHOLDINGS/llm-router-live
+      HF_SPACE_ENDPOINT: https://szlholdings-llm-router-live.hf.space
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v5
         with:
           python-version: "3.12"
-      - run: pip install "huggingface_hub>=0.24"
+      - run: pip install "huggingface_hub>=0.24,<2"
       - name: Deploy status Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: python scripts/hf_space_deploy.py --token "$HF_TOKEN"
-      - name: Attest live == source
-        run: python scripts/hf_space_drift_check.py --source-revision "$GITHUB_SHA"
+      - name: Verify publication, deployment, and runtime parity
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          python scripts/hf_space_drift_check.py \
+            --repo-id "$HF_SPACE_REPO_ID" \
+            --endpoint "$HF_SPACE_ENDPOINT" \
+            --source-revision "$GITHUB_SHA" \
+            --token "$HF_TOKEN" \
+            --evidence-file hf-space-parity-evidence.json \
+            --witness-timeout-seconds 600 \
+            --poll-interval-seconds 10 \
+            --request-timeout-seconds 15
+      - name: Preserve publication/runtime parity evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hf-space-parity-${{ github.run_id }}-${{ github.run_attempt }}
+          path: hf-space-parity-evidence.json
+          if-no-files-found: error
+          retention-days: 30
