@@ -17,16 +17,62 @@ on:
 permissions:
   contents: read
 
+env:
+  HF_SPACE_REPO_ID: SZLHOLDINGS/llm-router-live
+  HF_SPACE_ENDPOINT: https://szlholdings-llm-router-live.hf.space
+
 jobs:
   drift-check:
-    # For workflow_run triggers, only assert after a *successful* deploy;
-    # a failed deploy already raises its own red.
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v5
         with:
           python-version: "3.12"
-      - name: Assert live Space == source tree
-        run: python scripts/hf_space_drift_check.py
+      - name: Resolve the intended source revision
+        shell: bash
+        env:
+          WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_run" ]]; then
+            revision="$WORKFLOW_RUN_HEAD_SHA"
+          else
+            revision="$(git log -1 --format=%H -- \
+              space \
+              .github/workflows/hf-space-deploy.yml \
+              scripts/hf_space_deploy.py \
+              scripts/hf_space_drift_check.py)"
+          fi
+          if [[ ! "$revision" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Unable to resolve an exact intended source revision." >&2
+            exit 1
+          fi
+          git checkout --detach "$revision"
+          echo "EXPECTED_SOURCE_REVISION=$revision" >> "$GITHUB_ENV"
+      - name: Verify publication, deployment, and runtime parity
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          UPSTREAM_DEPLOY_CONCLUSION: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion || 'success' }}
+        run: |
+          python scripts/hf_space_drift_check.py \
+            --repo-id "$HF_SPACE_REPO_ID" \
+            --endpoint "$HF_SPACE_ENDPOINT" \
+            --source-revision "$EXPECTED_SOURCE_REVISION" \
+            --upstream-conclusion "$UPSTREAM_DEPLOY_CONCLUSION" \
+            --token "$HF_TOKEN" \
+            --evidence-file hf-space-parity-evidence.json \
+            --witness-timeout-seconds 300 \
+            --poll-interval-seconds 10 \
+            --request-timeout-seconds 15
+      - name: Preserve publication/runtime parity evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hf-space-parity-${{ github.run_id }}-${{ github.run_attempt }}
+          path: hf-space-parity-evidence.json
+          if-no-files-found: error
+          retention-days: 30
