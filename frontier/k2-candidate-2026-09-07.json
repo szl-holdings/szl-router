@@ -1,0 +1,34 @@
+{
+  "schema": "szl.frontier.router-candidate.v1",
+  "observed_at": "2026-09-07T13:31:00Z",
+  "owner": "szl-router",
+  "canonical_frontier_contract": "https://github.com/szl-holdings/szl-frontier/blob/94a039d086d1343d1fcfe5bca617f601006ca05b/public/frontier/top-choice-integration-matrix.v1.json",
+  "canonical_frontier_revision": "94a039d086d1343d1fcfe5bca617f601006ca05b",
+  "serve_contract_revision": "74c2fa12ee3cd17cc8d80ac85801f11683912176",
+  "default_effect": "DENY",
+  "routing_eligibility": false,
+  "production_promotion": false,
+  "candidate": {
+    "id": "k2-horizon-mova-36b-a4b-2026-09-03",
+    "source": "https://huggingface.co/IFM/K2-Horizon-MoVA-36B-A4B",
+    "source_revision": "05cab0a4d7150c1c460a000b37ff40cc1af2feaa",
+    "artifact_fingerprint": "259e31e5a7143d4f6cca70ed238296e9374b0a51aa497563f62e10af990ec9e2",
+    "route_class": "sovereign-evaluation-only",
+    "status": "CANDIDATE_DISABLED",
+    "qualification_receipt_required": true,
+    "production_authority": false,
+    "required_receipts": [
+      "szl-frontier source-and-policy assessment receipt",
+      "szl-nemo held-out task/tool/governance witness receipt",
+      "szl-serve pinned-runtime performance and rollback receipt",
+      "A11oy production authorization receipt"
+    ],
+    "fallback": "current qualified sovereign route",
+    "prohibited": [
+      "automatic enablement from an upstream model release or benchmark claim",
+      "production routing before all required receipts are verified",
+      "silent model/revision/quantization/runtime substitution",
+      "model output bypassing A11oy policy, approval, execution, or receipt authority"
+    ]
+  }
+}
