@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <meta name="description" content="Sovereign-first routing policy, provider readiness, and exact inference receipts.">
+  <title>SZL Sovereign Router</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header>
+    <a class="brand" href="/" aria-label="SZL Sovereign Router home"><span aria-hidden="true">⟡</span><strong>SZL</strong> Router</a>
+    <div id="runtime" class="runtime" role="status" aria-live="polite">CONTROL PLANE · CHECKING</div>
+  </header>
+
+  <main id="main">
+    <section class="hero">
+      <p class="eyebrow">SOVEREIGN-FIRST · OPENAI-COMPATIBLE · RECEIPT-BOUND</p>
+      <h1>Route by policy.<br><i>Prove every hop.</i></h1>
+      <p class="lede">A fail-closed inference gateway where sovereignty, priority, cost, classification, credential readiness, provider attempts, and response identity become inspectable evidence—not hidden routing folklore.</p>
+      <div class="actions">
+        <button id="run-plan" class="primary" type="button">Compute route plan</button>
+        <a href="/api/docs">API contract</a>
+      </div>
+    </section>
+
+    <section class="telemetry" aria-label="Router evidence summary">
+      <article><span>Registry</span><strong id="registry-state">—</strong></article>
+      <article><span>Providers</span><strong id="provider-count">—</strong></article>
+      <article><span>Egress</span><strong id="egress-state">—</strong></article>
+      <article><span>Plan receipt</span><strong id="receipt-short">—</strong></article>
+    </section>
+
+    <section class="route-stage" aria-label="Routing stage">
+      <article class="panel policy-panel">
+        <div class="panel-head"><div><p class="eyebrow">POLICY INPUT</p><h2>Plan a route</h2></div><button id="refresh" type="button">Refresh registry</button></div>
+        <form id="plan-form">
+          <label><span>Public model alias</span><input id="model" value="szl-default" required maxlength="96" pattern="[A-Za-z0-9][A-Za-z0-9._:-]{0,95}"></label>
+          <label><span>Data classification</span><select id="classification"><option>public</option><option>internal</option><option>confidential</option><option>restricted</option></select></label>
+          <label><span>Maximum cost tier</span><input id="cost" type="number" min="0" max="10" value="10"></label>
+          <button class="primary" type="submit">Generate deterministic plan</button>
+        </form>
+      </article>
+
+      <article class="panel plan-panel">
+        <div class="panel-head"><div><p class="eyebrow">SELECTION EVIDENCE</p><h2>Candidate ladder</h2></div><span id="plan-state" class="pill">NOT RUN</span></div>
+        <div id="candidates" class="candidates empty">No route plan has been computed.</div>
+      </article>
+    </section>
+
+    <section class="panel registry-panel">
+      <div class="panel-head"><div><p class="eyebrow">ALLOWLISTED REGISTRY</p><h2>Provider readiness</h2></div><span class="pill">SECRETS NEVER SHOWN</span></div>
+      <div id="providers" class="providers" role="list" aria-live="polite"></div>
+    </section>
+
+    <section class="panel proof-panel">
+      <div class="panel-head"><div><p class="eyebrow">EXACT JSON</p><h2>Plan receipt</h2></div></div>
+      <pre id="output" tabindex="0">Waiting for a policy input.</pre>
+    </section>
+
+    <section class="principles">
+      <article><small>01</small><h3>Default deny</h3><p>Egress is off until an exact provider registry, hostname allowlist, named credential, and explicit enable flag all converge.</p></article>
+      <article><small>02</small><h3>Sovereignty first</h3><p>Eligible candidates sort by sovereignty, priority, cost, then stable provider identity. Arrival order never chooses the route.</p></article>
+      <article><small>03</small><h3>Receipt per answer</h3><p>Request, plan, attempts, provider, upstream model, response, and elapsed time are committed without recording secret material.</p></article>
+    </section>
+  </main>
+
+  <footer><span>SZL Holdings · Routing capability surface</span><span id="revision">revision unavailable</span></footer>
+</body>
+</html>

@@ -1,0 +1,20 @@
+# syntax=docker/dockerfile:1.7
+FROM python:3.12.10-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PORT=7860 \
+    SZL_ROUTER_ENABLE_EGRESS=0
+
+WORKDIR /app
+RUN addgroup --system --gid 10001 szl \
+    && adduser --system --uid 10001 --ingroup szl --home /nonexistent --no-create-home szl
+COPY requirements-router-control.txt ./
+RUN python -m pip install --no-cache-dir --requirement requirements-router-control.txt
+COPY --chown=10001:10001 router_control ./router_control
+USER 10001:10001
+EXPOSE 7860
+HEALTHCHECK --interval=30s --timeout=3s --start-period=12s --retries=3 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7860/healthz', timeout=2).read()"
+CMD ["sh", "-c", "exec uvicorn router_control.app:app --host 0.0.0.0 --port ${PORT:-7860} --workers 1 --no-access-log"]
