@@ -11,7 +11,6 @@ on:
       - ".github/workflows/hf-space-deploy.yml"
       - "scripts/hf_space_deploy.py"
       - "scripts/hf_space_drift_check.py"
-  workflow_dispatch: {}
 
 permissions:
   contents: read
