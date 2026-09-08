@@ -1,95 +1,120 @@
 ---
-title: SZL LLM Router
+title: SZL Router — Sovereign LLM Gateway
 emoji: 🛰️
-colorFrom: indigo
-colorTo: gray
+colorFrom: teal
+colorTo: indigo
 sdk: docker
 app_port: 7860
-pinned: false
-license: mit
-short_description: Public status view of SZL sovereign-first LLM router
+pinned: true
+license: apache-2.0
+short_description: Sovereign-first OpenAI-compatible routing with per-answer receipts.
 ---
 
-# SZL LLM Router — public status & concept
+# SZL Router — flagship LLM gateway
 
-A beautiful, honest, investor-grade **public-facing** view of SZL's
-**sovereign-first** LLM router. This is a status / marketing surface only — the
-`szl-router` codebase and its routing logic stay **private**. No internals, no
-scoring heuristics, provider names, network locations, or provider keys are exposed here.
+**One OpenAI-compatible endpoint across owned compute and bounded hosted fallback, with an evidence-bearing receipt for every routed answer.**
 
-## The concept
+SZL Router is the source-owned gateway for the SZL inference estate. It prefers operator-owned compute, falls back through explicitly configured hosted tiers, and records the route, model, observer frame, estimated vendor cost, and receipt state without exposing credentials or private network topology.
 
-The router prefers compute in strict order:
+[**Open the public status surface**](https://szlholdings-llm-router-live.hf.space) · [**Inspect the source**](https://github.com/szl-holdings/szl-router) · [**Use the integrated A11oy view**](https://a-11-oy.com/code) · [**Verify evidence**](https://a11oy.net)
 
-1. **Own metal (sovereign)** — SZL-owned GPUs, self-hosted. `sovereign: true` only here.
-2. **Free hosted tiers** — third-party free inference. `sovereign: false`, `energy_source: grid`.
-3. **Paid fallback** — paid hosted models, last resort. `sovereign: false`.
+## Flagship boundary
 
-Every response carries an honest **`x_szl_provenance`** stamp: `served_by`,
-`sovereign` (true only on own metal), `energy_source` (plain descriptor — no
-free-energy claims), and `tier`.
+This Space is the public product and status surface for the router. The actual gateway is built from [`szl-holdings/szl-router`](https://github.com/szl-holdings/szl-router), published separately as an OpenAI-compatible service, and configured at deployment with operator-controlled secrets.
 
-## What's on the page
+The Space does **not** expose provider keys, private hosts, internal addresses, model weights, or private topology. A green status on this page proves only the state named by the accompanying evidence. It does not prove that every provider is configured, reachable, performant, compliant, or authorized for a consequential workload.
 
-- An **animated routing diagram** (own metal → free tiers → paid fallback).
-- A **sovereign-first tier ladder** and a **provenance field explainer**.
-- **Snapshot-labeled inventory KPIs** and a **redacted provider fabric** grid fed by the public status contracts.
+## Core contract
 
-## Data source & honest-degrade
+```text
+request
+  → deterministic intent and capability classification
+  → operator-owned compute first
+  → bounded free hosted fallback
+  → bounded paid fallback
+  → provenance block
+  → signed receipt when a persistent key is armed
+  → UNSIGNED-honest receipt otherwise
+```
 
-The page reads the Space-local public router status contracts:
+The public gateway contract is OpenAI-compatible:
 
-- `/api/a11oy/v1/router/health`
-- `/api/a11oy/v1/router/models`
-- `/api/a11oy/v1/router/provenance`
+```text
+POST /v1/chat/completions
+GET  /v1/models
+GET  /v1/receipt/pubkey
+POST /v1/receipt/verify
+```
 
-When a contract is unreachable, that panel **degrades to a clearly labeled bundled
-snapshot** (`assets/snapshot-router-*.json`) — never to fabricated data or a false
-"all green." A reachable contract is labeled **REACHABLE · SNAPSHOT**. It proves
-only that the public status surface responded; it does not prove that the private
-router, a provider, or a model is live. Auto-refresh ≈ every 15s.
+Logical routes:
 
-The v2 contracts separate `configured` inventory from `live_reachable`. Until a
-bounded live probe emits a public receipt, `live_reachable` is `NOT_MEASURED`.
-Provider identities are stable opaque IDs and provider classes; private hostnames,
-URLs, IPs, model targets, credentials, and routing logic are omitted.
+| Route | Purpose | Default ordering |
+|---|---|---|
+| `szl-auto` | deterministic prompt-aware dispatch | selects a logical route, then applies its provider order |
+| `szl-fast` | low-latency bounded work | owned compute → configured hosted fallback |
+| `szl-large` | general synthesis and reasoning | owned compute → configured free tier → paid fallback |
+| `szl-coder` | code and repository work | owned compute → configured coding-capable fallback |
 
-Snapshot freshness fails closed. The server derives `freshness_state`,
-`snapshot_age_seconds`, and `stale_after_seconds` from each contract's
-`captured_at` timestamp and returns the same state in `X-SZL-Freshness-State`.
-A snapshot older than 24 hours is labeled **STALE SNAPSHOT** in the UI; a missing,
-malformed, timezone-naive, or future timestamp is **SNAPSHOT AGE UNKNOWN**. The
-15-second browser refresh checks surface reachability only and never resets the
-age of the underlying evidence.
+Provider availability is environment-bound. Missing credentials or endpoints are skipped and recorded; they are never represented as live.
 
-## Honesty / doctrine (v11)
+## What makes it an SZL flagship
 
-- **Sovereign = own-metal only.** Hosted providers are always `sovereign: false`.
-- **No free-energy / joule claims.** `energy_source` is a plain descriptor.
-- **Λ (Lambda) = Conjecture 1.** Builds are **SLSA Level 1, honestly stated.**
-- **No private topology, routing logic, or keys** are exposed — public status + concept only.
+- **Sovereign-first:** `sovereign: true` is reserved for compute the operator actually owns or controls.
+- **Receipted routing:** the routing decision and serving route are carried into the answer receipt.
+- **Deterministic `szl-auto`:** the same prompt characteristics produce the same logical-route decision under the same policy revision.
+- **Failover with evidence:** retries, cooldown skips, provider failures, and the final serving route remain visible in the attempt trail.
+- **Honest cost semantics:** hosted vendor cost may be estimated from a declared price table; unmetered electricity is never fabricated.
+- **A11oy integration:** A11oy consumes and visualizes the router contract, while this repository remains the gateway source authority.
 
-## Tech
+## Public evidence surface
 
-Static HTML/CSS/JS. Deep-space dark theme, teal/cyan/violet glow, glassmorphism,
-responsive, WCAG-contrast, `prefers-reduced-motion` aware. No build step required.
+The page reads Space-local redacted status contracts:
+
+```text
+/api/a11oy/v1/router/health
+/api/a11oy/v1/router/models
+/api/a11oy/v1/router/provenance
+```
+
+When a contract is unreachable, the UI uses a bundled, timestamped snapshot and labels it `LOCAL SNAPSHOT`, `STALE SNAPSHOT`, or `SNAPSHOT AGE UNKNOWN`. A reachable snapshot is not relabeled as live inference.
+
+The public contracts expose stable opaque provider IDs and provider classes. They intentionally omit credentials, hostnames, URLs, IP addresses, private model targets, and routing secrets.
+
+## Source and deployment identity
+
+`GET /.well-known/szl-source.json` and `GET /api/build-info` bind the served Space to:
+
+- GitHub repository `szl-holdings/szl-router`;
+- an exact 40-character source revision;
+- source path `space/`;
+- the immutable Hugging Face deployment revision.
+
+The protected publication workflow verifies the deployed file set and live readiness witness before accepting the Space as source-bound.
+
+## Run the gateway
+
+```bash
+git clone https://github.com/szl-holdings/szl-router.git
+cd szl-router
+docker build -t szl-router .
+docker run --rm -p 8000:8000 \
+  -e SZL_ROUTER_TOKEN='set-in-a-secret-manager' \
+  -e GROQ_API_KEY='optional-provider-key' \
+  szl-router
+```
+
+Then point an OpenAI client at `http://localhost:8000/v1`.
+
+No provider secret is required to inspect or test the deterministic routing and receipt contracts offline. Provider-backed inference becomes available only when an operator explicitly arms an approved route.
+
+## Authority boundary
+
+- A routing score is an estimate, not a quality guarantee.
+- A receipt establishes scoped integrity and provenance; it does not prove factual truth.
+- Lambda uniqueness remains **Conjecture 1**.
+- No model, router, Space, signature, or polished interface authorizes consequential action by itself.
+- Human and deployment policy remain authoritative.
 
 ---
 
-## ◇ Part of the SZL Holdings estate
-
-- **Live a11oy console:** [szlholdings-a11oy.hf.space](https://szlholdings-a11oy.hf.space) · [a-11-oy.com](https://a-11-oy.com)
-- **Governed-receipt spec + offline verifier:** [governed-receipt-spec](https://github.com/szl-holdings/governed-receipt-spec)
-- **More:** [all HF Spaces](https://huggingface.co/SZLHOLDINGS) · [GitHub org](https://github.com/szl-holdings)
-
-## Deployment-source attestation
-
-`GET /.well-known/szl-source.json` reports the measured Hugging Face deployment revision and the exact `szl-router/space` source revision injected by the protected deploy workflow. The workflow verifies every shipped subtree file by SHA-256 before reporting `SOURCE_BOUND_DEPLOYMENT`. This scoped parity does not claim that the public status Space is the private router gateway, and reproducible builds remain `NOT_CLAIMED`.
-
-Runtime evidence routes:
-
-- `GET /healthz` — process reachability and source-binding state.
-- `GET /readyz` — fails closed until an exact source binding is present.
-- `GET /api/build-info` — exact GitHub repository, revision, subtree, and deployment-alignment state.
-
-<sub>Doctrine v11 · sovereign = own-metal only · no free-energy · Λ = Conjecture 1 · SLSA L1 honest.</sub>
+**GitHub is the source of truth → Hugging Face is the public runtime mirror → A11oy is the integrated product interface → a11oy.net preserves proof and known bounds.**
