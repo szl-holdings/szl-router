@@ -1,9 +1,8 @@
-name: hf-space-deploy
+name: Deploy SZL Router flagship Space
 
-# Deploy the public status Space (space/) to HF SZLHOLDINGS/llm-router-live.
-# Whole-context surface (static index.html + assets, http.server Dockerfile) — the
-# org per-file-COPY deployer deliberately skips `COPY . /app`, so this is the
-# honest whole-context variant. The router GATEWAY image is separate (publish.yml -> GHCR).
+# GitHub is the source authority. This single writer restores and publishes only
+# the existing SZLHOLDINGS/llm-router-live Space. It never creates another Space
+# and never publishes provider credentials or gateway runtime configuration.
 on:
   push:
     branches: [main]
@@ -12,47 +11,98 @@ on:
       - ".github/workflows/hf-space-deploy.yml"
       - "scripts/hf_space_deploy.py"
       - "scripts/hf_space_drift_check.py"
+  workflow_dispatch: {}
+
 permissions:
   contents: read
 
 concurrency:
-  group: hf-space-deploy
+  group: szl-router-flagship-publication
   cancel-in-progress: false
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    name: Publish, restore, and prove exact router Space
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: production
     env:
       HF_SPACE_REPO_ID: SZLHOLDINGS/llm-router-live
       HF_SPACE_ENDPOINT: https://szlholdings-llm-router-live.hf.space
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v5
+      - name: Harden runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
         with:
-          python-version: "3.12"
-      - run: pip install "huggingface_hub>=0.24,<2"
-      - name: Deploy status Space
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: python scripts/hf_space_deploy.py --token "$HF_TOKEN"
-      - name: Verify publication, deployment, and runtime parity
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          egress-policy: audit
+
+      - name: Checkout exact protected-main source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Set up exact Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12.10"
+
+      - name: Verify exact checkout and source contract
+        shell: bash
         run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python -m py_compile \
+            scripts/hf_space_deploy.py \
+            scripts/hf_space_drift_check.py \
+            space/server.py \
+            space/szl_source_attestation.py
+          python -m unittest discover -s space/tests -p 'test_*.py'
+          git diff --check
+
+      - name: Install exact Hub client
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check "huggingface_hub==1.10.1"
+
+      - name: Publish existing Space, restore public visibility, and restart
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$HF_TOKEN"
+          python scripts/hf_space_deploy.py \
+            --repo-id "$HF_SPACE_REPO_ID" \
+            --source-repository "$GITHUB_REPOSITORY" \
+            --source-revision "$GITHUB_SHA" \
+            --token "$HF_TOKEN" \
+            > router-flagship-publication.json
+
+      - name: Verify publication, deployment, runtime, and source parity
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
           python scripts/hf_space_drift_check.py \
             --repo-id "$HF_SPACE_REPO_ID" \
             --endpoint "$HF_SPACE_ENDPOINT" \
             --source-revision "$GITHUB_SHA" \
             --token "$HF_TOKEN" \
             --evidence-file hf-space-parity-evidence.json \
-            --witness-timeout-seconds 600 \
+            --witness-timeout-seconds 900 \
             --poll-interval-seconds 10 \
             --request-timeout-seconds 15
-      - name: Preserve publication/runtime parity evidence
+
+      - name: Preserve immutable flagship publication evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: hf-space-parity-${{ github.run_id }}-${{ github.run_attempt }}
-          path: hf-space-parity-evidence.json
-          if-no-files-found: error
-          retention-days: 30
+          name: szl-router-flagship-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            router-flagship-publication.json
+            hf-space-parity-evidence.json
+          if-no-files-found: warn
+          retention-days: 90
