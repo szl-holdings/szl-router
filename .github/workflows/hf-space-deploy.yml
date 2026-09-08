@@ -1,14 +1,15 @@
 name: Deploy SZL Router flagship Space
 
-# GitHub is the source authority. This single writer restores and publishes only
-# the existing SZLHOLDINGS/llm-router-live Space. It never creates another Space
-# and never publishes provider credentials or gateway runtime configuration.
+# GitHub is the source authority. This single writer publishes only the fixed
+# SZLHOLDINGS/llm-router-live target. A bounded bootstrap may create that exact
+# canonical Space when absent; no alternate or duplicate target is accepted.
 on:
   push:
     branches: [main]
     paths:
       - "space/**"
       - ".github/workflows/hf-space-deploy.yml"
+      - "scripts/hf_space_bootstrap.py"
       - "scripts/hf_space_deploy.py"
       - "scripts/hf_space_drift_check.py"
 
@@ -52,6 +53,7 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           python -m py_compile \
+            scripts/hf_space_bootstrap.py \
             scripts/hf_space_deploy.py \
             scripts/hf_space_drift_check.py \
             space/server.py \
@@ -65,7 +67,20 @@ jobs:
           set -euo pipefail
           python -m pip install --disable-pip-version-check "huggingface_hub==1.10.1"
 
-      - name: Publish existing Space, restore public visibility, and restart
+      - name: Resolve or bootstrap only the canonical Router Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$HF_TOKEN"
+          python scripts/hf_space_bootstrap.py \
+            --repo-id "$HF_SPACE_REPO_ID" \
+            --source-revision "$GITHUB_SHA" \
+            --token "$HF_TOKEN" \
+            > router-space-bootstrap.json
+
+      - name: Publish canonical Space, restore public visibility, and restart
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         shell: bash
@@ -101,6 +116,7 @@ jobs:
         with:
           name: szl-router-flagship-${{ github.sha }}-${{ github.run_attempt }}
           path: |
+            router-space-bootstrap.json
             router-flagship-publication.json
             hf-space-parity-evidence.json
           if-no-files-found: warn

@@ -9,6 +9,7 @@ SPACE = Path(__file__).resolve().parents[1]
 ROOT = SPACE.parent
 README = SPACE / "README.md"
 INDEX = SPACE / "index.html"
+BOOTSTRAP = ROOT / "scripts" / "hf_space_bootstrap.py"
 DEPLOY = ROOT / "scripts" / "hf_space_deploy.py"
 WORKFLOW = ROOT / ".github" / "workflows" / "hf-space-deploy.yml"
 
@@ -69,7 +70,7 @@ class RouterFlagshipContractTests(unittest.TestCase):
         self.assertNotIn("codebase and its routing logic stay private", lowered)
         self.assertNotRegex(lowered, r"https?://(?:10|127|169\.254|192\.168)\.")
 
-    def test_publisher_restores_only_the_existing_router_space(self) -> None:
+    def test_publisher_and_bootstrap_are_single_target(self) -> None:
         source = DEPLOY.read_text(encoding="utf-8")
         ast.parse(source)
         required = (
@@ -87,6 +88,25 @@ class RouterFlagshipContractTests(unittest.TestCase):
         self.assertNotIn("delete_repo", source)
         self.assertNotIn("delete_space", source)
 
+        bootstrap = BOOTSTRAP.read_text(encoding="utf-8")
+        ast.parse(bootstrap)
+        for marker in (
+            'TARGET_REPO_ID = "SZLHOLDINGS/llm-router-live"',
+            'ref != "refs/heads/main"',
+            'api.create_repo(',
+            'repo_id=TARGET_REPO_ID',
+            'repo_type="space"',
+            'private=False',
+            'exist_ok=True',
+            'space_sdk="docker"',
+            '"exact_target_only": True',
+            '"hardware_changed": False',
+            '"credential_value_recorded": False',
+        ):
+            self.assertIn(marker, bootstrap)
+        self.assertNotIn("delete_repo", bootstrap)
+        self.assertNotIn("delete_space", bootstrap)
+
     def test_workflow_uses_exact_source_and_terminal_readback(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
         required = (
@@ -96,13 +116,16 @@ class RouterFlagshipContractTests(unittest.TestCase):
             "ref: ${{ github.sha }}",
             'test "$(git rev-parse HEAD)" = "$GITHUB_SHA"',
             'huggingface_hub==1.10.1',
+            "scripts/hf_space_bootstrap.py",
             "scripts/hf_space_deploy.py",
             "scripts/hf_space_drift_check.py",
+            "router-space-bootstrap.json",
             "witness-timeout-seconds 900",
             "environment: production",
         )
         for marker in required:
             self.assertIn(marker, workflow)
+        self.assertNotIn("workflow_dispatch", workflow)
 
         uses = re.findall(
             r"^\s*uses:\s*(\S+)\s*(?:#.*)?$",
