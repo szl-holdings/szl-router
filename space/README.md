@@ -18,6 +18,8 @@ SZL Router is the source-owned gateway for the SZL inference estate. It prefers 
 
 [**Open the public status surface**](https://szlholdings-llm-router-live.hf.space) · [**Inspect the source**](https://github.com/szl-holdings/szl-router) · [**Use the integrated A11oy view**](https://a-11-oy.com/code) · [**Verify evidence**](https://a11oy.net)
 
+**Hugging Face Space repository:** `SZLHOLDINGS/llm-router-live`
+
 ## Flagship boundary
 
 This Space is the public product and status surface for the router. The actual gateway is built from [`szl-holdings/szl-router`](https://github.com/szl-holdings/szl-router), published separately as an OpenAI-compatible service, and configured at deployment with operator-controlled secrets.
