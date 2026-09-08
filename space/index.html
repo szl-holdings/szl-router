@@ -1,31 +1,66 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="dark" data-szl-surface="router-flagship">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-<title>SZL LLM Router — sovereign-first routing (public status)</title>
-<meta name="description" content="Public status & concept view of the SZL sovereign-first LLM router: own metal first, then free tiers, then paid fallback — with honest x_szl_provenance. Router internals stay private." />
-<meta property="og:title" content="SZL LLM Router" />
-<meta property="og:description" content="Sovereign-first routing: own metal → free tiers → paid fallback. Public status only — no private logic, no keys." />
+<meta name="color-scheme" content="dark" />
+<title>SZL Router — Sovereign LLM Gateway</title>
+<meta name="description" content="Flagship public evidence surface for the SZL sovereign-first, OpenAI-compatible LLM router with bounded fallback and per-answer receipts." />
+<meta property="og:title" content="SZL Router — Sovereign LLM Gateway" />
+<meta property="og:description" content="Owned compute first. Bounded fallback. Provenance and a receipt on every routed answer." />
 <meta property="og:type" content="website" />
 <link rel="icon" type="image/svg+xml" href="assets/logo.svg" />
-<!-- SOVEREIGN: 0 runtime CDN · system fonts only (declared in style.css). No Google Fonts. -->
 <link rel="stylesheet" href="assets/style.css" />
+<style>
+  .skip-link{position:fixed;left:1rem;top:-5rem;z-index:1000;padding:.75rem 1rem;border-radius:.5rem;background:var(--text);color:var(--bg);font-weight:700}.skip-link:focus{top:1rem}
+  .topbar{background:color-mix(in srgb,var(--bg) 82%,transparent);backdrop-filter:blur(22px) saturate(125%)}
+  .topbar-inner{min-height:70px}.topbar-nav{display:flex;align-items:center;gap:.35rem;flex-wrap:wrap}.topbar-nav a{min-height:44px;display:inline-flex;align-items:center;padding:.45rem .72rem;border-radius:999px;color:var(--text-muted);font-size:.78rem}.topbar-nav a:hover,.topbar-nav a:focus-visible{color:var(--text);background:rgba(255,255,255,.04)}
+  .flagship-pill{border-color:rgba(154,107,255,.48);background:linear-gradient(120deg,rgba(43,217,200,.1),rgba(154,107,255,.13));box-shadow:0 0 32px rgba(154,107,255,.12)}
+  .hero{padding-top:clamp(4rem,10vw,8rem)}.hero-grid{grid-template-columns:minmax(0,1.03fr) minmax(310px,.97fr);gap:clamp(2.2rem,7vw,7rem)}
+  .hero h1{max-width:12ch;font-size:clamp(3.2rem,7vw,6.9rem);font-weight:520;line-height:.88;letter-spacing:-.065em}.hero-lede{max-width:58ch;font-size:clamp(1rem,1.4vw,1.24rem)}
+  .hero-kicker{display:flex;align-items:center;gap:.7rem;flex-wrap:wrap;margin-bottom:1.25rem}.micro{font:700 .66rem/1.35 var(--font-mono);letter-spacing:.13em;text-transform:uppercase;color:var(--text-faint)}
+  .holo-router{position:relative;min-height:490px;overflow:hidden;border:1px solid var(--border-strong);border-radius:28px;background:radial-gradient(circle at 50% 45%,rgba(43,217,200,.12),transparent 24%),radial-gradient(circle at 70% 25%,rgba(154,107,255,.13),transparent 31%),linear-gradient(145deg,rgba(12,22,38,.88),rgba(4,7,14,.96));box-shadow:0 40px 110px rgba(0,0,0,.45),0 0 65px rgba(43,217,200,.08)}
+  .holo-router:before{content:"";position:absolute;inset:0;background:linear-gradient(rgba(56,224,255,.055) 1px,transparent 1px),linear-gradient(90deg,rgba(56,224,255,.055) 1px,transparent 1px);background-size:42px 42px;mask-image:radial-gradient(circle,#000 15%,transparent 78%)}
+  .holo-router:after{content:"";position:absolute;inset:8%;border:1px solid rgba(56,224,255,.17);border-radius:50%;box-shadow:0 0 0 42px transparent,0 0 0 43px rgba(154,107,255,.12),0 0 0 86px transparent,0 0 0 87px rgba(43,217,200,.09);animation:holo-breathe 5s ease-in-out infinite}
+  .holo-core{position:absolute;left:50%;top:46%;z-index:3;transform:translate(-50%,-50%);width:152px;aspect-ratio:1;display:grid;place-content:center;text-align:center;border:1px solid var(--teal-bright);border-radius:50%;background:rgba(5,8,15,.82);box-shadow:0 0 38px rgba(43,217,200,.22),inset 0 0 32px rgba(43,217,200,.08)}.holo-core span,.holo-core strong,.holo-core small{display:block}.holo-core span{font:800 .66rem/1 var(--font-mono);letter-spacing:.18em;color:var(--teal-bright)}.holo-core strong{margin:.55rem 0 .25rem;font-size:1.1rem}.holo-core small{color:var(--text-muted);font:600 .62rem var(--font-mono)}
+  .orbit-node{position:absolute;z-index:4;min-width:125px;padding:.72rem .82rem;border:1px solid var(--border-strong);border-radius:12px;background:rgba(6,12,22,.86);box-shadow:0 0 24px rgba(56,224,255,.08)}.orbit-node small,.orbit-node strong{display:block}.orbit-node small{font:700 .58rem/1.3 var(--font-mono);letter-spacing:.1em;text-transform:uppercase;color:var(--text-faint)}.orbit-node strong{margin-top:.22rem;font-size:.86rem}.orbit-node.one{left:7%;top:14%}.orbit-node.two{right:6%;top:21%}.orbit-node.three{left:9%;bottom:21%}.orbit-node.four{right:8%;bottom:16%}
+  .holo-line{position:absolute;z-index:2;left:50%;top:46%;height:1px;transform-origin:left;background:linear-gradient(90deg,var(--cyan),transparent);filter:drop-shadow(0 0 5px var(--cyan))}.holo-line.l1{width:37%;transform:rotate(208deg)}.holo-line.l2{width:35%;transform:rotate(-31deg)}.holo-line.l3{width:36%;transform:rotate(151deg)}.holo-line.l4{width:34%;transform:rotate(31deg)}
+  .holo-footer{position:absolute;z-index:5;left:1rem;right:1rem;bottom:1rem;display:grid;grid-template-columns:repeat(3,1fr);gap:1px;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--border)}.holo-footer div{padding:.75rem;background:rgba(5,8,15,.91)}.holo-footer small,.holo-footer strong{display:block}.holo-footer small{font:700 .56rem var(--font-mono);letter-spacing:.1em;text-transform:uppercase;color:var(--text-faint)}.holo-footer strong{margin-top:.25rem;font-size:.75rem}
+  .proof-rail{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin-top:2rem;border:1px solid var(--border);border-radius:16px;overflow:hidden;background:var(--border)}.proof-rail article{padding:1rem;background:rgba(8,13,23,.94)}.proof-rail article+article{border-left:1px solid var(--border)}.proof-rail small,.proof-rail strong{display:block}.proof-rail small{font:700 .58rem var(--font-mono);letter-spacing:.11em;text-transform:uppercase;color:var(--text-faint)}.proof-rail strong{margin-top:.35rem;font-size:.85rem}
+  .section{border-top:1px solid rgba(120,170,200,.09)}.section-wide{max-width:none}.section-number{display:inline-grid;place-content:center;width:2rem;height:2rem;margin-bottom:1rem;border:1px solid var(--border-strong);border-radius:50%;font:700 .64rem var(--font-mono);color:var(--teal-bright)}
+  .kpi-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.kpi{min-height:150px;display:flex;flex-direction:column}.kpi-value{margin-top:auto}
+  .route-grid{display:grid;grid-template-columns:minmax(0,.82fr) minmax(0,1.18fr);gap:1rem}.route-stack{display:grid;gap:.75rem}.route-card{position:relative;padding:1rem 1.1rem;overflow:hidden}.route-card:before{content:"";position:absolute;inset:0 auto 0 0;width:3px;background:var(--teal-bright)}.route-card.hosted:before{background:var(--cyan)}.route-card.fallback:before{background:var(--violet)}.route-card small,.route-card strong,.route-card span{display:block}.route-card small{font:700 .6rem var(--font-mono);letter-spacing:.1em;text-transform:uppercase;color:var(--text-faint)}.route-card strong{margin:.35rem 0;font-size:1.05rem}.route-card span{color:var(--text-muted);font-size:.85rem}
+  .logic-board{position:relative;min-height:380px;padding:1.25rem}.logic-board h3{font-size:1rem}.logic-board p{color:var(--text-muted);font-size:.86rem;max-width:52ch}.logic-flow{display:grid;grid-template-columns:repeat(4,1fr);gap:.6rem;margin-top:2.4rem}.logic-step{position:relative;min-height:126px;padding:.85rem;border:1px solid var(--border);border-radius:12px;background:rgba(5,8,15,.6)}.logic-step:not(:last-child):after{content:"→";position:absolute;right:-.58rem;top:46%;z-index:2;color:var(--cyan)}.logic-step b,.logic-step small{display:block}.logic-step b{font-size:.82rem}.logic-step small{margin-top:1.6rem;color:var(--text-faint);font:600 .58rem var(--font-mono);text-transform:uppercase}.model-chips{margin-top:1.3rem}
+  .evidence-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1rem}.evidence-card{min-height:225px;padding:1.2rem;display:flex;flex-direction:column}.evidence-card .index{font:800 .62rem var(--font-mono);color:var(--teal-bright)}.evidence-card h3{margin:.85rem 0 .55rem;font-size:1.05rem}.evidence-card p{color:var(--text-muted);font-size:.86rem}.evidence-card code{margin-top:auto;padding-top:1rem;color:var(--cyan);font-size:.72rem;overflow-wrap:anywhere}
+  .source-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.source-card{padding:1.25rem}.source-card h3{font-size:1.05rem}.source-card p{color:var(--text-muted);font-size:.88rem}.source-card a{display:inline-flex;min-height:44px;align-items:center;margin-top:.75rem;font-weight:650}
+  .boundary{padding:1.25rem;border:1px solid rgba(232,181,74,.26);border-radius:16px;background:rgba(232,181,74,.055)}.boundary strong{color:var(--warn)}.boundary p{color:var(--text-muted);font-size:.88rem}
+  .footer-grid{grid-template-columns:1fr auto}.footer-links a{min-height:44px;display:flex;align-items:center}
+  @keyframes holo-breathe{50%{transform:scale(1.025);opacity:.78}}
+  @media(max-width:960px){.hero-grid,.route-grid,.source-grid{grid-template-columns:1fr}.hero h1{max-width:14ch}.proof-rail{grid-template-columns:repeat(2,1fr)}.proof-rail article:nth-child(3){border-left:0}.proof-rail article:nth-child(n+3){border-top:1px solid var(--border)}.kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.evidence-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+  @media(max-width:680px){.topbar-nav{display:none}.holo-router{min-height:420px}.holo-router:after{inset:16%}.orbit-node{min-width:102px;padding:.58rem}.orbit-node.one{left:3%;top:16%}.orbit-node.two{right:3%;top:20%}.orbit-node.three{left:3%;bottom:24%}.orbit-node.four{right:3%;bottom:20%}.holo-core{width:118px}.holo-footer{grid-template-columns:1fr}.holo-footer div{padding:.48rem .7rem}.holo-footer div+div{border-top:1px solid var(--border)}.proof-rail,.kpi-grid,.evidence-grid{grid-template-columns:1fr}.proof-rail article+article{border-left:0;border-top:1px solid var(--border)}.logic-flow{grid-template-columns:1fr 1fr}.logic-step:nth-child(2):after{display:none}.footer-grid{grid-template-columns:1fr}.footer-links{align-items:flex-start}}
+  @media(prefers-reduced-motion:reduce){.holo-router:after{animation:none}.flow-edge,.dot.live{animation:none!important}}
+  @media(forced-colors:active){.holo-router:before,.holo-router:after,.holo-line{display:none}.orbit-node,.holo-core,.route-card,.logic-step{border:1px solid CanvasText}}
+</style>
 </head>
 <body>
-
-<!-- ===== Top bar ===== -->
+<a class="skip-link" href="#main">Skip to router evidence</a>
 <header class="topbar">
   <div class="wrap topbar-inner">
-    <a class="brand" href="#top" aria-label="SZL LLM Router home">
+    <a class="brand" href="#top" aria-label="SZL Router home">
       <img class="brand-mark" src="assets/logo.svg" alt="" width="38" height="38" />
       <span class="brand-text">
-        <span class="brand-name">SZL · LLM Router</span>
-        <span class="brand-sub">sovereign-first · public status</span>
+        <span class="brand-name">SZL / ROUTER</span>
+        <span class="brand-sub">sovereign inference gateway</span>
       </span>
     </a>
+    <nav class="topbar-nav" aria-label="Router sections">
+      <a href="#status">Status</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#evidence">Evidence</a>
+      <a href="#source">Source</a>
+    </nav>
     <div class="topbar-status">
-      <span class="badge teal">sovereign = own-metal only</span>
+      <span class="badge flagship-pill">FLAGSHIP · LLM GATEWAY</span>
       <span class="live-pill" id="source-pill">
         <span class="dot snapshot"></span>
         <span class="source-label">connecting…</span>
@@ -34,86 +69,61 @@
   </div>
 </header>
 
-<main id="top">
-
-  <!-- ===== Hero ===== -->
-  <section class="hero wrap">
+<main id="main">
+  <section class="hero wrap" id="top">
     <div class="hero-grid">
       <div>
-        <p class="eyebrow">Sovereign-first inference routing</p>
-        <h1>Route to <span class="accent">your own metal</span> first. Fall back honestly.</h1>
-        <p class="hero-lede">
-          The SZL router prefers SZL-owned GPUs, then free hosted tiers, then paid
-          fallback — and stamps every response with honest provenance so you always
-          know where it ran.
-        </p>
+        <div class="hero-kicker">
+          <span class="eyebrow" style="margin:0">Sovereign-first inference</span>
+          <span class="micro">OpenAI-compatible</span>
+        </div>
+        <h1>One gateway. <span class="accent">Many brains.</span> Every route accounted for.</h1>
+        <p class="hero-lede">SZL Router sends work to operator-owned compute first, crosses only explicitly configured fallback tiers, and emits provenance plus a verifiable receipt for the route that answered.</p>
         <div class="hero-badges">
-          <span class="badge teal">sovereign = own-metal only</span>
-          <span class="badge">no free-energy claims</span>
+          <span class="badge teal">owned compute first</span>
+          <span class="badge">bounded fallback</span>
+          <span class="badge">per-answer receipt</span>
           <span class="badge warn">Λ = Conjecture 1</span>
-          <span class="badge teal">SLSA L1 honest</span>
         </div>
         <div class="hero-cta">
-          <a class="btn btn-primary" href="#status">Live status</a>
-          <a class="btn btn-ghost" href="#provenance">Provenance explainer</a>
+          <a class="btn btn-primary" href="#status">Inspect live evidence</a>
+          <a class="btn btn-ghost" href="https://github.com/szl-holdings/szl-router" target="_blank" rel="noopener">Build from source</a>
+          <a class="btn btn-ghost" href="https://a-11-oy.com/code" target="_blank" rel="noopener">Open in A11oy</a>
         </div>
       </div>
 
-      <!-- Animated routing diagram -->
-      <div class="router-shell" aria-label="Sovereign-first routing diagram">
-        <svg class="router-svg" viewBox="0 0 520 300" role="img"
-             aria-label="A request enters the router, which tries sovereign own-metal GPUs first, then free hosted tiers, then paid fallback.">
-          <!-- request source -->
-          <g>
-            <rect class="node-box src" x="8" y="125" width="92" height="50" rx="10"/>
-            <text class="node-label" x="54" y="148" text-anchor="middle">request</text>
-            <text class="node-sub" x="54" y="164" text-anchor="middle">szl-large</text>
-          </g>
+      <aside class="holo-router" aria-label="Holographic model-routing topology">
+        <div class="holo-line l1" aria-hidden="true"></div>
+        <div class="holo-line l2" aria-hidden="true"></div>
+        <div class="holo-line l3" aria-hidden="true"></div>
+        <div class="holo-line l4" aria-hidden="true"></div>
+        <div class="orbit-node one"><small>route 01</small><strong>Owned compute</strong></div>
+        <div class="orbit-node two"><small>route 02</small><strong>Hosted free tier</strong></div>
+        <div class="orbit-node three"><small>route 03</small><strong>Paid fallback</strong></div>
+        <div class="orbit-node four"><small>proof plane</small><strong>Receipt verifier</strong></div>
+        <div class="holo-core"><span>SZL</span><strong>ROUTER</strong><small>policy before provider</small></div>
+        <div class="holo-footer">
+          <div><small>Model authority</small><strong>ADVISORY</strong></div>
+          <div><small>Secrets exposed</small><strong>NONE</strong></div>
+          <div><small>Human bind</small><strong>REQUIRED WHEN CONSEQUENTIAL</strong></div>
+        </div>
+      </aside>
+    </div>
 
-          <!-- router pivot -->
-          <g>
-            <rect class="node-box sov" x="150" y="120" width="96" height="60" rx="12"/>
-            <text class="node-label" x="198" y="146" text-anchor="middle">router</text>
-            <text class="node-sub" x="198" y="162" text-anchor="middle">sovereign-first</text>
-          </g>
-
-          <!-- edges source -> router -->
-          <path class="flow-edge" d="M100 150 H150" stroke="#38e0ff" stroke-width="2.5" fill="none"/>
-
-          <!-- tier 1 sovereign -->
-          <g>
-            <rect class="node-box sov" x="352" y="30" width="160" height="56" rx="12"/>
-            <text class="node-label" x="432" y="54" text-anchor="middle">① own metal</text>
-            <text class="node-sub" x="432" y="70" text-anchor="middle">sovereign · self-hosted</text>
-          </g>
-          <path class="flow-edge" d="M246 138 C300 110, 320 70, 360 60" stroke="#2bd9c8" stroke-width="2.5" fill="none"/>
-
-          <!-- tier 2 free -->
-          <g>
-            <rect class="node-box free" x="352" y="122" width="160" height="56" rx="12"/>
-            <text class="node-label" x="432" y="146" text-anchor="middle">② free tiers</text>
-            <text class="node-sub" x="432" y="162" text-anchor="middle">hosted · grid</text>
-          </g>
-          <path class="flow-edge cool" d="M246 150 H360" stroke="#38e0ff" stroke-width="2" fill="none" opacity="0.7"/>
-
-          <!-- tier 3 paid -->
-          <g>
-            <rect class="node-box paid" x="352" y="214" width="160" height="56" rx="12"/>
-            <text class="node-label" x="432" y="238" text-anchor="middle">③ paid fallback</text>
-            <text class="node-sub" x="432" y="254" text-anchor="middle">hosted · last resort</text>
-          </g>
-          <path class="flow-edge cool" d="M246 162 C300 190, 320 230, 360 244" stroke="#9a6bff" stroke-width="2" fill="none" opacity="0.7"/>
-        </svg>
-      </div>
+    <div class="proof-rail" aria-label="Flagship contract">
+      <article><small>Source owner</small><strong>szl-holdings/szl-router</strong></article>
+      <article><small>Public mirror</small><strong>SZLHOLDINGS/llm-router-live</strong></article>
+      <article><small>Product integration</small><strong>A11oy / Code</strong></article>
+      <article><small>Evidence origin</small><strong>a11oy.net</strong></article>
     </div>
   </section>
 
-  <!-- ===== KPIs ===== -->
   <section class="section wrap" id="status">
-    <div class="section-head">
+    <span class="section-number">01</span>
+    <div class="section-head section-wide">
       <p class="eyebrow">Public evidence contract</p>
-      <h2>Reachability without overclaiming</h2>
-      <p id="data-source-note">Reading the public snapshot contracts…</p>
+      <h2>Reachability without theater.</h2>
+      <p id="data-source-note">Reading the public status contracts…</p>
     </div>
     <div class="kpi-grid">
       <article class="kpi glass">
@@ -124,214 +134,140 @@
       <article class="kpi glass">
         <div class="kpi-label">Configured aliases</div>
         <div class="kpi-value cyan" id="kpi-models">—</div>
-        <div class="kpi-meta">inventory / reported aliases</div>
+        <div class="kpi-meta">configured / declared</div>
       </article>
       <article class="kpi glass">
-        <div class="kpi-label">Sovereign configured</div>
+        <div class="kpi-label">Owned routes configured</div>
         <div class="kpi-value violet" id="kpi-sovereign">—</div>
-        <div class="kpi-meta">configured / inventory; not reachability</div>
+        <div class="kpi-meta">configuration is not reachability</div>
       </article>
       <article class="kpi glass">
-        <div class="kpi-label">Default model</div>
-        <div class="kpi-value teal" id="default-model" style="font-size: var(--text-lg)">—</div>
-        <div class="kpi-meta">routed sovereign-first</div>
-      </article>
-    </div>
-    <div style="margin-top: var(--space-6)">
-      <p class="kpi-label" style="margin-bottom: var(--space-3)">Logical models exposed</p>
-      <div class="model-chips" id="model-chips"><span class="chip dim">loading…</span></div>
-    </div>
-  </section>
-
-  <!-- ===== Sovereign-first tier ladder ===== -->
-  <section class="section wrap">
-    <div class="section-head">
-      <p class="eyebrow">The routing order</p>
-      <h2>Sovereign-first, by design</h2>
-      <p>The router walks tiers in strict preference order. It only leaves your own metal when it has to — and it tells you when it did.</p>
-    </div>
-    <div class="ladder">
-      <div class="rung sov glass">
-        <div class="rung-rank">①</div>
-        <div class="rung-body">
-          <h3>Own metal — sovereign</h3>
-          <p>SZL-owned GPUs (self-hosted, e.g. the RTX node + box). First choice. <strong>sovereign = true</strong> only here.</p>
-        </div>
-        <div class="rung-flag" style="color: var(--teal-bright)">energy: self-hosted</div>
-      </div>
-      <div class="rung free glass">
-        <div class="rung-rank">②</div>
-        <div class="rung-body">
-          <h3>Free hosted tiers</h3>
-          <p>Third-party hosted inference. Used when own metal is unavailable. Public evidence exposes only the provider class and an opaque ID. <strong>sovereign = false</strong>.</p>
-        </div>
-        <div class="rung-flag" style="color: var(--cyan)">energy: grid</div>
-      </div>
-      <div class="rung paid glass">
-        <div class="rung-rank">③</div>
-        <div class="rung-body">
-          <h3>Paid fallback</h3>
-          <p>Paid hosted models (e.g. Kimi K2) as a strong last resort. Only reached when both tiers above fail. <strong>sovereign = false</strong>.</p>
-        </div>
-        <div class="rung-flag" style="color: var(--violet-bright)">energy: grid</div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ===== Provenance explainer ===== -->
-  <section class="section wrap" id="provenance">
-    <div class="section-head">
-      <p class="eyebrow">Honest provenance</p>
-      <h2>The <code>x_szl_provenance</code> stamp</h2>
-      <p>Every routed response carries a provenance object so you can audit where it actually ran. No marketing gloss — the fields say exactly what happened.</p>
-    </div>
-    <div class="prov-grid">
-      <article class="prov-field glass">
-        <div class="prov-key">served_by</div>
-        <p>A stable opaque provider ID such as <code>provider-sovereign-01</code>. Public receipts identify the route class without exposing private names or network topology.</p>
-      </article>
-      <article class="prov-field glass">
-        <div class="prov-key">sovereign</div>
-        <p><code>true</code> <strong>only</strong> when served on SZL-owned metal. Hosted tiers are always <code>false</code> — never overstated.</p>
-      </article>
-      <article class="prov-field glass">
-        <div class="prov-key">energy_source</div>
-        <p><code>self-hosted</code> for own metal, <code>grid</code> for hosted providers. A plain descriptor — <strong>no</strong> joule or free-energy claims.</p>
-      </article>
-      <article class="prov-field glass">
-        <div class="prov-key">tier</div>
-        <p>Which preference rung answered: <code>sovereign</code>, <code>free-grid</code>, or <code>paid-grid</code>. Shows exactly how far down the ladder the request fell.</p>
+        <div class="kpi-label">Default logical route</div>
+        <div class="kpi-value teal" id="default-model" style="font-size:var(--text-lg)">—</div>
+        <div class="kpi-meta">selected before provider traversal</div>
       </article>
     </div>
   </section>
 
-  <!-- ===== Live provider status ===== -->
-  <section class="section wrap">
+  <section class="section wrap" id="architecture">
+    <span class="section-number">02</span>
     <div class="section-head">
-      <p class="eyebrow">Provider fabric</p>
-      <h2>Where requests can land</h2>
-      <p>Configuration inventory, ordered by tier. Sovereign providers are SZL-owned; everything else is an explicitly marked hosted fallback. Reachability is shown only when measured.</p>
+      <p class="eyebrow">Routing architecture</p>
+      <h2>Owned compute first. Fallback with an audit trail.</h2>
+      <p>The router separates logical-model choice from provider traversal. It records skipped, failed, cooled-down, and successful attempts instead of hiding the path behind a single answer.</p>
+    </div>
+    <div class="route-grid">
+      <div class="route-stack" aria-label="Provider preference order">
+        <article class="route-card glass">
+          <small>Priority 01 · sovereign</small>
+          <strong>Operator-owned compute</strong>
+          <span>First route when explicitly configured and reachable. `sovereign: true` is reserved for this class.</span>
+        </article>
+        <article class="route-card hosted glass">
+          <small>Priority 02 · hosted</small>
+          <strong>Configured free tier</strong>
+          <span>Used only after the owned route is unavailable or unsuitable. Always labeled `sovereign: false`.</span>
+        </article>
+        <article class="route-card fallback glass">
+          <small>Priority 03 · paid</small>
+          <strong>Bounded paid fallback</strong>
+          <span>Last resort with an explicit cost basis, attempt record, and provider-class provenance.</span>
+        </article>
+      </div>
+      <article class="logic-board glass">
+        <h3>Decision path</h3>
+        <p>A deterministic classifier chooses the logical route; independent runtime policy decides which configured provider may serve it.</p>
+        <div class="logic-flow" aria-label="Router decision flow">
+          <div class="logic-step"><b>Intent</b><small>prompt characteristics</small></div>
+          <div class="logic-step"><b>Logical route</b><small>fast · large · coder</small></div>
+          <div class="logic-step"><b>Provider walk</b><small>bounded attempts</small></div>
+          <div class="logic-step"><b>Receipt</b><small>route + observer + cost</small></div>
+        </div>
+        <p class="kpi-label" style="margin-top:1.6rem">Logical models exposed</p>
+        <div class="model-chips" id="model-chips"><span class="chip dim">loading…</span></div>
+      </article>
+    </div>
+  </section>
+
+  <section class="section wrap" id="providers">
+    <span class="section-number">03</span>
+    <div class="section-head">
+      <p class="eyebrow">Redacted provider fabric</p>
+      <h2>Configuration is visible. Private topology is not.</h2>
+      <p>Public contracts expose stable opaque provider IDs, provider class, tier, and measured reachability only when a bounded probe produced evidence.</p>
     </div>
     <div class="prov-status" id="provider-grid">
       <article class="provider-card glass"><span class="provider-note">loading provider fabric…</span></article>
     </div>
   </section>
 
-  <!-- ===== What the router guarantees (agentic explainer) ===== -->
-  <section class="section wrap" id="guarantees">
+  <section class="section wrap" id="evidence">
+    <span class="section-number">04</span>
     <div class="section-head">
-      <p class="eyebrow">What the router guarantees</p>
-      <h2>Promises you can check, not take on faith</h2>
-      <p>The router internals stay <strong>private</strong>, but its <em>guarantees</em> are public and
-         auditable. Each promise below is enforceable by the honest <code>x_szl_provenance</code> stamp
-         on every routed response — and any signed routing receipt can be re-checked live in the box at
-         the foot of this section.</p>
+      <p class="eyebrow">Receipted inference</p>
+      <h2>What the gateway records.</h2>
+      <p>Every field is scoped to the observer and evidence available for that request. A receipt proves integrity and provenance under that scope—not factual truth.</p>
     </div>
-    <div class="prov-grid">
-      <article class="prov-field glass">
-        <div class="prov-key">G1 · sovereign-first</div>
-        <p>Own metal is tried <strong>first</strong>, every time. The router only leaves your hardware
-           when it must — and the <code>tier</code> field records exactly how far down the ladder a
-           request fell.</p>
-      </article>
-      <article class="prov-field glass">
-        <div class="prov-key">G2 · sovereign is never overstated</div>
-        <p><code>sovereign: true</code> appears <strong>only</strong> for SZL-owned metal. Every hosted
-           free/paid provider is stamped <code>sovereign: false</code>. We never claim hosted compute
-           as ours.</p>
-      </article>
-      <article class="prov-field glass">
-        <div class="prov-key">G3 · no free-energy</div>
-        <p><code>energy_source</code> is a plain descriptor (<code>self-hosted</code> / <code>grid</code>)
-           — never a joule count or zero-cost-energy assertion. Λ remains <strong>Conjecture 1</strong>.</p>
-      </article>
-      <article class="prov-field glass">
-        <div class="prov-key">G4 · honest degrade</div>
-        <p>When a status endpoint is unreachable this page shows a clearly-labeled <strong>SNAPSHOT</strong>,
-           never fabricated data and never a false “all green.” The <code>/router/*</code> endpoints have
-           no CORS, so a browser sees the honest snapshot here by design.</p>
-      </article>
-      <article class="prov-field glass">
-        <div class="prov-key">G5 · honest cost, on the receipt</div>
-        <p>Since 2026-07-09 every receipt carries a per-call <code>cost</code> block: paid tiers show a
-           <strong>labelled estimate</strong> (<code>estimated: true</code>, with its price-table basis and
-           token counts — the same figure the append-only spend ledger records); free and sovereign tiers
-           show <strong>$0.00 vendor charge</strong> with an explicit basis. Never a fabricated energy number.</p>
-      </article>
-      <article class="prov-field glass">
-        <div class="prov-key">G6 · the observer frame is stated</div>
-        <p>Each receipt records the frame it was issued under — endpoint, auth mode, requested model. The
-           verdict is honest <strong>relative to who asked and how they were authenticated</strong>, never a
-           claim about any other vantage point.</p>
-      </article>
-      <article class="prov-field glass">
-        <div class="prov-key">G7 · every skip is on the record</div>
-        <p>A recently-failed upstream cools down briefly, but it is skipped <strong>only while a warm
-           fallback remains</strong> — and the skip lands in the <code>attempts</code> trail as an honest
-           <code>cooldown-skip</code> entry. As the last resort it is always tried: trying loudly beats
-           refusing silently.</p>
-      </article>
+    <div class="evidence-grid">
+      <article class="evidence-card glass"><span class="index">E01</span><h3>Serving route</h3><p>Logical model, selected tier, opaque provider identity, final state, and the complete bounded attempt trail.</p><code>x_szl_provenance</code></article>
+      <article class="evidence-card glass"><span class="index">E02</span><h3>Model identity</h3><p>Requested model, served model when available, and revision evidence supplied by the configured runtime.</p><code>model · model_revision</code></article>
+      <article class="evidence-card glass"><span class="index">E03</span><h3>Observer frame</h3><p>Endpoint, auth mode, requested route, and the vantage point under which the receipt was issued.</p><code>observer</code></article>
+      <article class="evidence-card glass"><span class="index">E04</span><h3>Cost basis</h3><p>Hosted vendor charge estimate with its declared price-table basis; unmetered electricity remains unavailable.</p><code>cost · estimated</code></article>
+      <article class="evidence-card glass"><span class="index">E05</span><h3>Signature state</h3><p>Persistent signing identity when armed; otherwise an explicitly unsigned, structurally verifiable receipt.</p><code>signed: true | false</code></article>
+      <article class="evidence-card glass"><span class="index">E06</span><h3>Decision boundary</h3><p>The model and router can propose and route. They do not mint consequential authority.</p><code>human_bind_required</code></article>
     </div>
+  </section>
 
-    <div class="section-head" style="margin-top: var(--space-7)">
-      <p class="eyebrow">Ask the fabric — verify a routing receipt</p>
-      <h2>Re-check a signed receipt yourself</h2>
-      <p>Paste a routing / DSSE / in-toto receipt (or load the sample) and submit it to the
-         <strong>live</strong> a11oy verify endpoint. The verdict is the fabric's real, honest output:
-         unsigned receipts return <strong>STRUCTURAL-ONLY</strong> (advisory amber, never a false green).
-         The endpoint verifies <strong>receipts / DSSE / in-toto statements</strong>, not arbitrary text
-         — and never exposes any router internals or keys.</p>
+  <section class="section wrap" id="verify">
+    <span class="section-number">05</span>
+    <div class="section-head">
+      <p class="eyebrow">Independent verification</p>
+      <h2>Re-check a receipt yourself.</h2>
+      <p>Load a receipt into the verifier. Unsigned material returns structural-only evidence; malformed or altered material fails closed.</p>
     </div>
     <div id="szl-verify"></div>
   </section>
 
-  <!-- ===== Private notice + honesty ===== -->
-  <section class="section wrap">
-    <div class="private-note glass" style="margin-bottom: var(--space-6)">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-      <div>
-        <h3 style="font-size: var(--text-base); margin-bottom: var(--space-2)">This is a public view only</h3>
-        <p>The <code>szl-router</code> codebase and its routing logic stay <strong>private</strong>. Nothing here exposes provider keys, weights, scoring heuristics, or internal source — only the public status endpoints and the sovereign-first concept.</p>
-      </div>
+  <section class="section wrap" id="source">
+    <span class="section-number">06</span>
+    <div class="section-head">
+      <p class="eyebrow">One authority chain</p>
+      <h2>Source, runtime, product, proof.</h2>
+      <p>The gateway source remains independent and inspectable. A11oy integrates the product view without replacing the router’s source authority.</p>
     </div>
-    <div class="callout glass">
-      <h3>Doctrine v11 — the honest line</h3>
-      <p><strong>Sovereign = own-metal only.</strong> <code>sovereign: true</code> appears only for SZL-owned hardware. Hosted free and paid providers are always <code>sovereign: false</code>.</p>
-      <p><strong>No free-energy claims.</strong> <code>energy_source</code> is a plain descriptor (<code>self-hosted</code> / <code>grid</code>), never a joule or zero-cost-energy assertion. <strong>Λ = Conjecture 1.</strong> Builds are SLSA Level 1, honestly stated.</p>
-      <p><strong>Honest evidence.</strong> A reachable public contract proves only that this status surface is reachable. Provider and model reachability remain <code>NOT_MEASURED</code> until a bounded probe emits a public receipt.</p>
+    <div class="source-grid">
+      <article class="source-card glass"><h3>GitHub · source of truth</h3><p>Gateway code, tests, Dockerfiles, release workflow, status surface, and exact-source publication live in `szl-holdings/szl-router`.</p><a href="https://github.com/szl-holdings/szl-router" target="_blank" rel="noopener">Inspect the repository →</a></article>
+      <article class="source-card glass"><h3>Hugging Face · public mirror</h3><p>`SZLHOLDINGS/llm-router-live` is the generated public flagship surface. Its served revision must bind back to the GitHub source revision.</p><a href="https://huggingface.co/spaces/SZLHOLDINGS/llm-router-live" target="_blank" rel="noopener">Open the Space card →</a></article>
+      <article class="source-card glass"><h3>A11oy · product integration</h3><p>A11oy exposes the model registry, router visualization, governance context, and integrated operator path.</p><a href="https://a-11-oy.com/code" target="_blank" rel="noopener">Open the A11oy route →</a></article>
+      <article class="source-card glass"><h3>a11oy.net · proof and bounds</h3><p>The proof origin preserves evidence, exact revisions, historical state, and known limitations separately from product presentation.</p><a href="https://a11oy.net" target="_blank" rel="noopener">Inspect the evidence origin →</a></article>
     </div>
+    <div class="boundary" style="margin-top:1rem"><strong>Operational boundary.</strong><p>This Space is a public status and evidence surface. Provider-backed inference is available only when an operator explicitly configures an approved route. A running page, HTTP 200, signature, or routing score does not certify model quality, factual correctness, regulatory compliance, or permission for a consequential action.</p></div>
   </section>
-
 </main>
 
-<!-- ===== Footer ===== -->
 <footer class="footer">
   <div class="wrap footer-grid">
     <div>
-      <a class="brand" href="#top" aria-label="SZL LLM Router">
+      <a class="brand" href="#top" aria-label="SZL Router">
         <img class="brand-mark" src="assets/logo.svg" alt="" width="32" height="32" />
-        <span class="brand-text">
-          <span class="brand-name">SZL Holdings · LLM Router</span>
-          <span class="brand-sub">sovereign-first · public status</span>
-        </span>
+        <span class="brand-text"><span class="brand-name">SZL Router</span><span class="brand-sub">flagship sovereign LLM gateway</span></span>
       </a>
-      <p style="margin-top: var(--space-3)">Public status &amp; concept view. Router internals and topology stay private. Configuration is snapshot-labeled; runtime reachability is not measured here.</p>
-      <p class="footer-doctrine">Doctrine v11 · sovereign = own-metal only · no free-energy · Λ = Conjecture 1 · SLSA L1 honest · no keys</p>
-      <p class="stamp" id="updated-stamp" style="margin-top: var(--space-2)">updating…</p>
+      <p style="margin-top:var(--space-3)">Owned compute first · bounded fallback · provenance and receipts.</p>
+      <p class="footer-doctrine">Doctrine v11 · Λ = Conjecture 1 · no credentials exposed · no silent authority</p>
+      <p class="stamp" id="updated-stamp" style="margin-top:var(--space-2)">updating…</p>
     </div>
-    <nav class="footer-links" aria-label="resources">
-      <a href="https://a11oy.net" target="_blank" rel="noopener">a11oy.net</a>
-      <a href="https://szlholdings-a11oy.hf.space" target="_blank" rel="noopener">a11oy console</a>
-      <a href="https://github.com/szl-holdings/governed-receipt-spec" target="_blank" rel="noopener">governed-receipt-spec</a>
-      <a href="/api/a11oy/v1/router/health" target="_blank" rel="noopener">router/health</a>
-      <a href="/api/a11oy/v1/router/models" target="_blank" rel="noopener">router/models</a>
-      <a href="/api/a11oy/v1/router/provenance" target="_blank" rel="noopener">router/provenance</a>
+    <nav class="footer-links" aria-label="Router resources">
+      <a href="https://github.com/szl-holdings/szl-router" target="_blank" rel="noopener">Source</a>
+      <a href="/api/build-info" target="_blank" rel="noopener">Build info</a>
+      <a href="/.well-known/szl-source.json" target="_blank" rel="noopener">Source binding</a>
+      <a href="/api/a11oy/v1/router/health" target="_blank" rel="noopener">Status contract</a>
+      <a href="https://a-11-oy.com/code" target="_blank" rel="noopener">A11oy integration</a>
+      <a href="https://a11oy.net" target="_blank" rel="noopener">Proof</a>
     </nav>
   </div>
 </footer>
 
 <script type="module" src="assets/app.js"></script>
-<!-- Vendored, self-contained verify widget (0 CDN, system fonts, honest fallback) -->
 <script src="assets/szl_verify_widget.js"></script>
 <script>SZLVerify.mount('#szl-verify', { base: 'https://a-11-oy.com' });</script>
 </body>

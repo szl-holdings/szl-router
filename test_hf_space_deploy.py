@@ -15,7 +15,7 @@ class DeployAdmissionTests(unittest.TestCase):
 
     def test_exact_top_level_front_matter_is_accepted(self):
         temporary, space = self._space(
-            "---\nsdk: docker # required runtime\napp_port: '7860'\n---\n"
+            "---\nsdk: docker # required runtime\napp_port: '7860'\npinned: true\nlicense: apache-2.0\n---\n"
         )
         self.addCleanup(temporary.cleanup)
         deploy._validate_readme(space)
