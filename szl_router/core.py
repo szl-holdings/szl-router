@@ -18,12 +18,16 @@ zero install and is trivially testable. The HTTP server wrapper lives in app.py.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import http.client
 import io
 import json
+import math
 import os
 import random
+import struct
 import threading
 import time
 import urllib.error
@@ -630,6 +634,102 @@ def _post_chat(provider: Provider, payload: Dict[str, Any], timeout: float) -> D
     return _UPSTREAM_POOL.request_json(url, data, _upstream_headers(provider), timeout)
 
 
+def _chat_response_error(result: Any) -> Optional[str]:
+    """Check the answer shape before declaring a route served.
+
+    Empty text, filtered replies and tool-only replies are valid completions.
+    Error bodies and malformed choices are failures even when HTTP was 200.
+    Diagnostics describe the schema only; upstream content is never echoed.
+    """
+    if not isinstance(result, dict):
+        return "invalid chat response: expected an object"
+    if result.get("error") is not None:
+        return "invalid chat response: upstream returned an error"
+    choices = result.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return "invalid chat response: choices must be a non-empty array"
+    for choice in choices:
+        message = choice.get("message") if isinstance(choice, dict) else None
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            return "invalid chat response: every choice must contain an assistant message"
+        if message.get("content") is not None and not isinstance(message["content"], str):
+            return "invalid chat response: message content must be a string or null"
+        if not any(key in message for key in
+                   ("content", "tool_calls", "function_call", "refusal", "audio")):
+            return "invalid chat response: assistant message has no output field"
+        tool_calls = message.get("tool_calls")
+        if tool_calls is not None and (
+            not isinstance(tool_calls, list)
+            or any(not isinstance(call, dict) or not call for call in tool_calls)
+        ):
+            return "invalid chat response: tool_calls must contain call objects"
+        if message.get("refusal") is not None and not isinstance(message["refusal"], str):
+            return "invalid chat response: refusal must be a string or null"
+        for key in ("function_call", "audio"):
+            if message.get(key) is not None and not isinstance(message[key], dict):
+                return "invalid chat response: function_call and audio must be objects"
+    return None
+
+
+def _embedding_response_error(result: Any, payload: Dict[str, Any]) -> Optional[str]:
+    """Reject unusable or incomplete vectors before they enter the cache.
+
+    A token array is one input; text arrays and arrays of token arrays are
+    batches. Batch order may vary, but every input needs exactly one index.
+    Both float vectors and the requested base64 float32 encoding are supported.
+    """
+    if not isinstance(result, dict):
+        return "invalid embeddings response: expected an object"
+    if result.get("error") is not None:
+        return "invalid embeddings response: upstream returned an error"
+    data = result.get("data")
+    if not isinstance(data, list) or not data:
+        return "invalid embeddings response: data must be a non-empty array"
+    input_ = payload.get("input")
+    expected_count = (len(input_) if isinstance(input_, list) and input_
+                      and isinstance(input_[0], (str, list)) else 1)
+    if len(data) != expected_count:
+        return "invalid embeddings response: vector count does not match input count"
+    indices = set()
+    vector_size = None
+    for row in data:
+        if not isinstance(row, dict):
+            return "invalid embeddings response: every vector must be an object"
+        index = row.get("index")
+        if type(index) is not int or index < 0 or index >= expected_count or index in indices:
+            return "invalid embeddings response: indices must cover each input exactly once"
+        indices.add(index)
+        vector = row.get("embedding")
+        if payload.get("encoding_format") == "base64":
+            if not isinstance(vector, str) or not vector:
+                return "invalid embeddings response: expected a base64 vector"
+            try:
+                raw = base64.b64decode(vector, validate=True)
+            except (ValueError, binascii.Error):
+                return "invalid embeddings response: invalid base64 vector"
+            if not raw or len(raw) % 4:
+                return "invalid embeddings response: invalid float32 vector length"
+            size = len(raw) // 4
+            finite = all(math.isfinite(value[0]) for value in struct.iter_unpack("<f", raw))
+        else:
+            if not isinstance(vector, list) or not vector:
+                return "invalid embeddings response: expected a non-empty numeric vector"
+            size = len(vector)
+            try:
+                finite = all(type(value) in (int, float) and math.isfinite(value) for value in vector)
+            except OverflowError:
+                finite = False
+        if not finite:
+            return "invalid embeddings response: vector values must be finite numbers"
+        if vector_size is not None and size != vector_size:
+            return "invalid embeddings response: vector dimensions differ within the batch"
+        dimensions = payload.get("dimensions")
+        if type(dimensions) is int and dimensions > 0 and size != dimensions:
+            return "invalid embeddings response: vector dimensions do not match the request"
+        vector_size = size
+    return None
+
+
 def resolve_routes(model: str) -> List[Route]:
     """Map a requested model to its ordered fallback routes.
 
@@ -918,10 +1018,8 @@ def chat(
         try:
             result = _post_with_retry(_post_chat, provider, payload, timeout)
             dt = int((time.time() - t0) * 1000)
-            # An upstream can return 200 with an error body; treat missing
-            # choices as a failure so we fall through honestly.
-            if "choices" not in result:
-                detail = str(result.get("error") or result.get("detail") or result)[:200]
+            detail = _chat_response_error(result)
+            if detail is not None:
                 attempts.append(Attempt(provider_name, upstream_model, ok=False,
                                         status=200, error=detail, latency_ms=dt))
                 _set_cooldown(provider_name)
@@ -1130,8 +1228,8 @@ def embed(
         try:
             result = _post_with_retry(_post_embeddings, provider, payload, timeout)
             dt = int((time.time() - t0) * 1000)
-            if "data" not in result:
-                detail = str(result.get("error") or result.get("detail") or result)[:200]
+            detail = _embedding_response_error(result, payload)
+            if detail is not None:
                 attempts.append(Attempt(provider_name, upstream_model, ok=False,
                                         status=200, error=detail, latency_ms=dt))
                 continue

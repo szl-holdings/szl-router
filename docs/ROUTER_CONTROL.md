@@ -18,7 +18,7 @@ Without a valid registry and hostname allowlist, `/api/plan` remains available f
 
 ## Configuration
 
-Three controls must converge before egress is possible:
+The registry, hostname allowlist, explicit egress enablement and caller authentication must converge before a caller can invoke a provider:
 
 ```bash
 export SZL_ROUTER_ALLOWED_HOSTS="provider-a.example,provider-b.example"
@@ -38,12 +38,20 @@ export SZL_ROUTER_PROVIDERS_JSON='{
   ]
 }'
 export PROVIDER_A_TOKEN="..."
+export SZL_ROUTER_TOKEN="<separate gateway client credential>"
 export SZL_ROUTER_ENABLE_EGRESS=1
 ```
 
 Provider endpoints must use HTTPS, the default port, an exact hostname in `SZL_ROUTER_ALLOWED_HOSTS`, and no embedded credentials, query, fragment, literal IP, or localhost name. The configured `base_url` should include the provider's OpenAI-compatible API prefix, commonly `/v1`; the router appends `/chat/completions`.
 
 Secrets are resolved only from each provider's named environment variable. The public registry reports `AVAILABLE` or `UNAVAILABLE`, never the variable name, endpoint, or credential value.
+
+Callers must send `Authorization: Bearer <SZL_ROUTER_TOKEN>` on completion requests.
+This credential is separate from upstream provider credentials. Missing caller
+configuration returns 503; a missing or incorrect request credential returns 401
+before any upstream call. Planner and source inspection remain available without
+spending inference credits. Configuration validation errors never echo registry
+input, which may contain accidentally supplied credentials.
 
 ## Deterministic policy
 
@@ -71,6 +79,16 @@ This stable ordering prevents transport arrival or registry insertion order from
 |---|---|
 | `GET /v1/models` | public model aliases from the validated registry |
 | `POST /v1/chat/completions` | bounded, non-streaming completion forwarding |
+| `GET /readyz` | control interface readiness; includes separate inference configuration state |
+| `GET /readyz/inference` | 503 until registry, egress, caller token and an enabled credentialed provider are configured |
+| `GET /.well-known/szl-source.json` | exact GitHub source identity; equivalent to `/api/source` |
+
+An inference readiness 200 means `LOCAL_CONFIGURATION_ONLY`. It does not probe
+the provider or prove a completed answer. Consumers must separately verify an
+answer and its receipt. Operational responses use `Cache-Control: no-store`.
+Set `SOURCE_REVISION` to the exact GitHub commit deployed (or `GIT_COMMIT`).
+`SPACE_COMMIT_SHA` identifies a different repository and cannot establish GitHub
+source identity.
 
 The v1 receipt-verified route intentionally rejects streaming. It limits message count, individual and total content, stop sequences, output bytes, redirects, timeout, and connection pool size. `httpx` environment proxy inheritance is disabled.
 
@@ -91,6 +109,25 @@ Every successful response adds `szl_receipt` and the `X-SZL-Receipt` header. The
 - `secret_material_recorded: false`.
 
 An exhausted route returns a bounded failure receipt without including response bodies, URLs, tokens, environment variable names, or raw exception messages.
+
+These `sha256` receipts bind content for replay and integrity checking; they are
+unsigned and do not prove signer identity. The older `szl_router.app` application
+uses a different DSSE receipt envelope. Consumers must explicitly select a
+contract and must never treat a SHA256 digest as a digital signature.
+
+## Ecosystem integration
+
+Use `SZL_ROUTER_BASE_URL` in consuming services to identify this gateway. Keep it
+separate from `A11OY_MODEL_BASE_URL`, which the older gateway consumes as an
+upstream GPU address. Reusing the upstream setting for the gateway can create a
+routing loop. A11oy remains the model and policy authority; configure only
+reviewed model aliases, data classifications and cost tiers in this registry.
+Preserve refusal and upstream failure outcomes through consumer adapters.
+
+The restored `szl-build-env` repository owns runtime acceptance tooling and
+`vsp-otel` owns its telemetry exporter. Their existence does not prove a deployed
+gateway or an exported production trace. Keep source, configuration admission,
+completed inference and observed telemetry as separate results.
 
 ## Local operation
 
