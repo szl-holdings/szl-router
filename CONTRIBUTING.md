@@ -25,21 +25,21 @@ All contributions must comply with **Doctrine v11 LOCKED** (749/14/163):
 
 ## How to Contribute
 
-1. Fork the repository.
-2. Create a feature branch (`git checkout -b feature/your-change`).
+1. Fork the repository or create a branch in the organization.
+2. Create a focused branch (`git checkout -b feature/your-change`).
 3. Run the tests locally (`pytest`).
-4. Commit with a DCO sign-off (see below).
-5. Open a Pull Request — one reviewer required.
+4. Commit using accurate GitHub-authenticated authorship; DCO and
+   `Signed-off-by` trailers are not required.
+5. Open a pull request. Founder-maintainer changes are admitted by exact-head
+   checks without an unavailable second human; external changes require
+   maintainer review.
 
-## DCO Sign-off
+## Source Provenance
 
-All commits require a DCO sign-off trailer:
-
-```bash
-git commit --signoff -m "your message"
-```
-
-This certifies the [Developer Certificate of Origin](https://developercertificate.org).
+Repository attribution is preserved through GitHub-authenticated authorship,
+pull-request history, current-base and exact-head checks, and the immutable merge
+record. Every contributor remains responsible for submitting only material they
+wrote or have the legal right to contribute under the repository license.
 
 ## Security
 
