@@ -1,0 +1,20 @@
+{
+  "schema": "szl.router-flagship/v1",
+  "classification": "FLAGSHIP",
+  "canonical_source": "szl-holdings/szl-router",
+  "runtime_mirror": "SZLHOLDINGS/llm-router-live",
+  "product_interface": "https://a-11-oy.com/code",
+  "proof_surface": "https://a11oy.net",
+  "logical_models": ["szl-auto", "szl-fast", "szl-large", "szl-coder"],
+  "sovereign_first": true,
+  "routing_receipts": true,
+  "provider_secrets_committed": false,
+  "public_effect_authority": false,
+  "honest_runtime_states": [
+    "LIVE",
+    "CONFIGURED_UNVERIFIED",
+    "OFFLINE_UNTIL_KEYED",
+    "UNAVAILABLE"
+  ],
+  "lambda_uniqueness": "CONJECTURE_1_OPEN"
+}

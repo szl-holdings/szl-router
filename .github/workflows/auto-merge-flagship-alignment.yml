@@ -1,0 +1,49 @@
+name: Auto-merge router flagship alignment
+
+"on":
+  pull_request:
+    branches: [main]
+    paths:
+      - FLAGSHIP.json
+      - .github/workflows/auto-merge-flagship-alignment.yml
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  validate-and-enable:
+    name: Validate contract and enable protected auto-merge
+    if: github.event.pull_request.head.ref == 'fix/flagship-alignment-20260908'
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+      - name: Checkout exact PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate the machine-readable flagship contract
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          value = json.loads(Path('FLAGSHIP.json').read_text(encoding='utf-8'))
+          assert value['classification'] == 'FLAGSHIP'
+          assert value['canonical_source'] == 'szl-holdings/szl-router'
+          assert value['runtime_mirror'] == 'SZLHOLDINGS/llm-router-live'
+          assert value['provider_secrets_committed'] is False
+          assert value['public_effect_authority'] is False
+          assert value['lambda_uniqueness'] == 'CONJECTURE_1_OPEN'
+          print('router flagship contract valid')
+          PY
+      - name: Enable auto-merge for the exact pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --auto --squash "$PR_URL"
