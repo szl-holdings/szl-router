@@ -12,6 +12,7 @@ INDEX = SPACE / "index.html"
 BOOTSTRAP = ROOT / "scripts" / "hf_space_bootstrap.py"
 DEPLOY = ROOT / "scripts" / "hf_space_deploy.py"
 WORKFLOW = ROOT / ".github" / "workflows" / "hf-space-deploy.yml"
+HF_CARD_COLORS = {"red", "yellow", "green", "blue", "indigo", "purple", "pink", "gray"}
 
 
 class RouterFlagshipContractTests(unittest.TestCase):
@@ -21,10 +22,13 @@ class RouterFlagshipContractTests(unittest.TestCase):
         front_matter = text.split("---", 2)[1]
         expected = {
             "title": "SZL Router — Sovereign LLM Gateway",
+            "colorFrom": "blue",
+            "colorTo": "indigo",
             "sdk": "docker",
             "app_port": "7860",
             "pinned": "true",
             "license": "apache-2.0",
+            "short_description": "Sovereign LLM routing with per-answer receipts.",
         }
         observed = {}
         for line in front_matter.splitlines():
@@ -34,6 +38,9 @@ class RouterFlagshipContractTests(unittest.TestCase):
             observed[key.strip()] = value.strip()
         for key, value in expected.items():
             self.assertEqual(value, observed.get(key), key)
+        self.assertIn(observed["colorFrom"], HF_CARD_COLORS)
+        self.assertIn(observed["colorTo"], HF_CARD_COLORS)
+        self.assertLessEqual(len(observed["short_description"]), 60)
 
         self.assertIn("# SZL Router — flagship LLM gateway", text)
         self.assertIn("https://github.com/szl-holdings/szl-router", text)

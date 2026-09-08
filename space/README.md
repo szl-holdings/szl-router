@@ -1,13 +1,13 @@
 ---
 title: SZL Router — Sovereign LLM Gateway
 emoji: 🛰️
-colorFrom: teal
+colorFrom: blue
 colorTo: indigo
 sdk: docker
 app_port: 7860
 pinned: true
 license: apache-2.0
-short_description: Sovereign-first OpenAI-compatible routing with per-answer receipts.
+short_description: Sovereign LLM routing with per-answer receipts.
 ---
 
 # SZL Router — flagship LLM gateway
