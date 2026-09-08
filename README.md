@@ -4,6 +4,13 @@
 
 **Sovereign, OpenAI-compatible LLM gateway with a receipt on every answer — signed when a key is armed, else UNSIGNED-honest.**
 
+The governed control gateway in `router_control.app` has its own
+[operation and ecosystem integration contract](docs/ROUTER_CONTROL.md), including
+mandatory caller authentication, explicit provider allowlisting and separate
+inference configuration readiness. Build it with `Dockerfile.router-control`.
+Its SHA256 receipts are unsigned content commitments. The legacy DSSE gateway
+described below is `szl_router.app`; the two receipt formats are distinct.
+
 One endpoint in front of many brains — our own GPU first, then free grid tiers,
 then a paid fallback — and every answer comes with a **verifiable receipt**
 (signed when a key is armed, else UNSIGNED-honest) of which model served it, on
@@ -134,8 +141,7 @@ question to `szl-large`, anything with code to `szl-coder`.
 
 What makes it *ours*: the routing decision is recorded honestly in
 `x_szl_provenance.routing` **and signed into the inference receipt** — a
-governed, independently-verifiable record of *why* a given brain answered. No
-competitor ships a signed routing-decision receipt.
+governed, independently-verifiable record of *why* a given brain answered.
 
 It is honest by construction: the score is a **routing estimate, never a quality
 guarantee**, it makes **no extra upstream call**, and it is **pure** — the same
@@ -211,7 +217,7 @@ Two layers of resilience, both honest (a real failure is always surfaced in the
 
 ## Arm the NVIDIA GPU
 
-When the rented GPU is reachable on an OpenAI-compatible URL (vLLM / NIM /
+When the owned GPU is reachable on an OpenAI-compatible URL (vLLM / NIM /
 Ollama), set:
 
 ```bash
@@ -219,8 +225,9 @@ export NVIDIA_GPU_BASE_URL="https://<gpu-host>:<port>/v1"
 export NVIDIA_GPU_TOKEN="<token>"
 ```
 
-It immediately becomes the top sovereign route for every logical model — no code
-change needed.
+This legacy provider is classified as sovereign and must be used only for owned
+hardware. Rented or third-party hardware needs an explicitly non-sovereign
+provider record; a reachable URL alone does not establish ownership.
 
 ## Test
 
@@ -270,7 +277,7 @@ pause, publish, or otherwise mutate the Space. This is distinct from the **route
 
 The router **is** an instance of the estate's Ouroboros bounded-recursion loop. The
 canonical definition is the receipt-closed kernel
-[`szl-holdings/ouroboros` → `src/loop-kernel.ts`](https://github.com/szl-holdings/ouroboros/blob/main/src/loop-kernel.ts)
+[`szl-holdings/platform`](https://github.com/szl-holdings/platform)
 (`runLoop`): *bounded recursion with measurable convergence* that MUST terminate on one
 of four exit conditions — `converged | consistent | aborted | budgetExhausted` — and
 emits a governance receipt for every run.
@@ -295,4 +302,4 @@ terminating* control primitive — it makes **no** perpetual-motion or zero-cost
 
 ---
 
-**Explore the SZL estate:** [a11oy console](https://a-11-oy.com) · [Receipt format spec](https://github.com/szl-holdings/governed-receipt-spec) · [Lean proofs](https://github.com/szl-holdings/lutar-lean) · [Docs](https://github.com/szl-holdings/docs-site) · [🤗 SZLHOLDINGS](https://huggingface.co/SZLHOLDINGS)
+**Explore the SZL estate:** [a11oy console](https://a-11-oy.com) · [Receipt format spec](https://github.com/szl-holdings/governed-receipt-spec) · [Lean proofs](https://github.com/szl-holdings/lutar-lean) · [Public proof site](https://github.com/szl-holdings/a11oy-net) · [Build acceptance](https://github.com/szl-holdings/szl-build-env) · [Telemetry](https://github.com/szl-holdings/vsp-otel) · [🤗 SZLHOLDINGS](https://huggingface.co/SZLHOLDINGS)

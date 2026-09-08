@@ -9,11 +9,15 @@ from fastapi.testclient import TestClient
 
 from router_control import app as module
 
-client = TestClient(module.app)
+client = TestClient(module.app, headers={"Authorization": "Bearer test-router-client"})
 CONFIG_VARS = (
     "SZL_ROUTER_ALLOWED_HOSTS",
     "SZL_ROUTER_PROVIDERS_JSON",
     "SZL_ROUTER_ENABLE_EGRESS",
+    "SZL_ROUTER_TOKEN",
+    "SOURCE_REVISION",
+    "GIT_COMMIT",
+    "SPACE_COMMIT_SHA",
     "SOVEREIGN_TOKEN",
     "REGIONAL_TOKEN",
 )
@@ -64,6 +68,7 @@ def configure(monkeypatch: pytest.MonkeyPatch, *, egress: bool = False, tokens: 
         json.dumps(registry_payload()),
     )
     monkeypatch.setenv("SZL_ROUTER_ENABLE_EGRESS", "1" if egress else "0")
+    monkeypatch.setenv("SZL_ROUTER_TOKEN", "test-router-client")
     if tokens:
         monkeypatch.setenv("REGIONAL_TOKEN", "regional-test-secret")
         monkeypatch.setenv("SOVEREIGN_TOKEN", "sovereign-test-secret")
@@ -270,3 +275,105 @@ def test_deployment_contract_does_not_claim_hub_publication() -> None:
     payload = client.get("/deployment.json").json()
     assert payload["runtime_state"] == "MEASURED_BY_THIS_RESPONSE"
     assert payload["hub_publication"].startswith("UNAVAILABLE")
+
+
+@pytest.mark.parametrize("authorization", ["", "Bearer incorrect", "Basic test-router-client"])
+def test_unauthorized_requests_never_reach_provider(monkeypatch, authorization):
+    configure(monkeypatch, egress=True, tokens=True)
+
+    async def forbidden(*args, **kwargs):
+        pytest.fail("unauthorized caller reached provider")
+
+    monkeypatch.setattr(module, "call_provider", forbidden)
+    response = client.post("/v1/chat/completions", json=chat_request(), headers={"Authorization": authorization})
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
+    assert "test-router-client" not in response.text
+
+
+def test_egress_without_caller_auth_configuration_is_unavailable(monkeypatch):
+    configure(monkeypatch, egress=True, tokens=True)
+    monkeypatch.delenv("SZL_ROUTER_TOKEN")
+    response = client.post("/v1/chat/completions", json=chat_request())
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "CALLER_AUTH_NOT_CONFIGURED"
+
+
+def test_control_plane_readiness_is_separate_from_inference():
+    control = client.get("/readyz")
+    inference = client.get("/readyz/inference")
+    assert control.status_code == 200
+    assert control.json()["scope"] == "CONTROL_PLANE"
+    assert control.json()["inference"]["ready_for_requests"] is False
+    assert inference.status_code == 503
+    assert inference.json()["inference_witness"] == "UNAVAILABLE"
+
+
+def test_configured_inference_does_not_claim_provider_reachability(monkeypatch):
+    configure(monkeypatch, egress=True, tokens=True)
+    response = client.get("/readyz/inference")
+    assert response.status_code == 200
+    assert response.json()["basis"] == "LOCAL_CONFIGURATION_ONLY"
+    assert response.json()["provider_reachability"] == "UNVERIFIED"
+    monkeypatch.delenv("SOVEREIGN_TOKEN")
+    monkeypatch.delenv("REGIONAL_TOKEN")
+    assert client.get("/readyz/inference").status_code == 503
+
+
+def test_disabled_providers_do_not_satisfy_readiness(monkeypatch):
+    configure(monkeypatch, egress=True, tokens=True)
+    registry = registry_payload()
+    for provider in registry["providers"]:
+        provider["enabled"] = False
+    monkeypatch.setenv("SZL_ROUTER_PROVIDERS_JSON", json.dumps(registry))
+    assert client.get("/readyz/inference").status_code == 503
+
+
+def test_invalid_configuration_does_not_echo_secret_input(monkeypatch):
+    configure(monkeypatch, egress=True, tokens=True)
+    registry = registry_payload()
+    registry["accidental_private_value"] = "fixture-secret-never-echo"
+    monkeypatch.setenv("SZL_ROUTER_PROVIDERS_JSON", json.dumps(registry))
+    for path in ("/api/routes", "/readyz", "/deployment.json"):
+        response = client.get(path)
+        assert "fixture-secret-never-echo" not in response.text
+        assert "accidental_private_value" not in response.text
+    response = client.post("/v1/chat/completions", json=chat_request())
+    assert response.status_code == 503
+    assert "fixture-secret-never-echo" not in response.text
+
+
+def test_hub_revision_cannot_impersonate_github_source(monkeypatch):
+    monkeypatch.setenv("SPACE_COMMIT_SHA", "a" * 40)
+    assert client.get("/api/source").json()["revision"] == "UNAVAILABLE"
+    monkeypatch.setenv("SOURCE_REVISION", "b" * 40)
+    response = client.get("/.well-known/szl-source.json")
+    assert response.json()["revision"] == "b" * 40
+    assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize("path", ["/readyz", "/readyz/inference", "/deployment.json", "/api/routes"])
+def test_operational_evidence_is_not_cacheable(path):
+    assert client.get(path).headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize("bad", [{"choices": []}, {"choices": None}, {"error": "private diagnostic"}, {"choices": [{}]}])
+def test_malformed_upstream_answers_fail_over_before_receipting(monkeypatch, bad):
+    configure(monkeypatch, egress=True, tokens=True)
+    calls = []
+
+    async def fake_call(provider, payload):
+        calls.append(provider.id)
+        if provider.id == "sovereign":
+            return bad, 200
+        return {"choices": [{"message": {"role": "assistant", "refusal": "Request declined."}}]}, 200
+
+    monkeypatch.setattr(module, "call_provider", fake_call)
+    response = client.post("/v1/chat/completions", json=chat_request())
+    assert response.status_code == 200
+    assert calls == ["sovereign", "regional"]
+    payload = response.json()
+    assert payload["choices"][0]["message"]["refusal"] == "Request declined."
+    assert payload["szl_receipt"]["provider_id"] == "regional"
+    assert payload["szl_receipt"]["attempts"][0]["state"] == "TRANSPORT_OR_CONTRACT_ERROR"
+    assert "private diagnostic" not in response.text

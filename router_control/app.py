@@ -13,6 +13,7 @@ import ipaddress
 import json
 import os
 import re
+import secrets
 import time
 import urllib.parse
 from dataclasses import dataclass
@@ -20,7 +21,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -63,7 +64,6 @@ def source_revision() -> str:
     value = (
         os.getenv("SOURCE_REVISION")
         or os.getenv("GIT_COMMIT")
-        or os.getenv("SPACE_COMMIT_SHA")
         or ""
     ).strip().lower()
     return value if re.fullmatch(r"[0-9a-f]{40,64}", value) else "UNAVAILABLE"
@@ -185,13 +185,13 @@ def load_settings() -> Settings:
             egress,
             "VALIDATED",
         )
-    except (json.JSONDecodeError, ValueError) as exc:
+    except (json.JSONDecodeError, ValueError):
         return Settings(
             Registry(),
             allowed_hosts,
             False,
             "INVALID_FAIL_CLOSED",
-            str(exc)[:500],
+            "Provider configuration is invalid; check the registry schema and hostname allowlist.",
         )
 
 
@@ -407,6 +407,73 @@ app = FastAPI(
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 
+@app.middleware("http")
+async def no_store_evidence(request: Request, call_next):
+    response = await call_next(request)
+    if not request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+def inference_readiness(settings: Settings) -> dict[str, Any]:
+    """Configuration admission only: no network call or inference proof."""
+    checks = {
+        "registry_valid": settings.config_state == "VALIDATED",
+        "egress_enabled": settings.egress_enabled,
+        "caller_auth_configured": bool(os.getenv("SZL_ROUTER_TOKEN", "").strip()),
+        "credentialed_provider": any(
+            provider.enabled and bool(os.getenv(provider.token_env, "").strip())
+            for provider in settings.registry.providers
+        ),
+    }
+    admitted = all(checks.values())
+    return {
+        "status": "configured" if admitted else "unavailable",
+        "checks": checks,
+        "ready_for_requests": admitted,
+        "basis": "LOCAL_CONFIGURATION_ONLY",
+        "provider_reachability": "UNVERIFIED",
+        "inference_witness": "UNAVAILABLE",
+    }
+
+
+def check_caller_auth(request: Request) -> None:
+    expected = os.getenv("SZL_ROUTER_TOKEN", "").strip()
+    if not expected:
+        raise HTTPException(status_code=503, detail={"code": "CALLER_AUTH_NOT_CONFIGURED"})
+    received = request.headers.get("Authorization", "")
+    if not secrets.compare_digest(received.encode("utf-8"), f"Bearer {expected}".encode("utf-8")):
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "INVALID_ROUTER_CREDENTIAL"},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+def validate_completion(value: Any) -> None:
+    """An HTTP success alone cannot establish a usable completion."""
+    if not isinstance(value, dict) or value.get("error") is not None:
+        raise RuntimeError("upstream completion must be an answer object")
+    choices = value.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise RuntimeError("upstream completion requires nonempty choices")
+    for choice in choices:
+        message = choice.get("message") if isinstance(choice, dict) else None
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            raise RuntimeError("upstream completion requires assistant messages")
+        if not any(key in message for key in ("content", "refusal", "tool_calls", "function_call", "audio")):
+            raise RuntimeError("upstream assistant message has no output")
+        for key in ("content", "refusal"):
+            if message.get(key) is not None and not isinstance(message[key], str):
+                raise RuntimeError("upstream output has invalid text fields")
+        calls = message.get("tool_calls")
+        if calls is not None and (
+            not isinstance(calls, list)
+            or any(not isinstance(call, dict) or not call for call in calls)
+        ):
+            raise RuntimeError("upstream output has invalid tool calls")
+
+
 @app.get("/healthz")
 def healthz() -> dict[str, Any]:
     return {"status": "ok", "service": "szl-router", "version": APP_VERSION}
@@ -436,10 +503,19 @@ def readyz() -> JSONResponse:
             "checks": checks,
             "registry_state": settings.config_state,
             "egress_enabled": settings.egress_enabled,
+            "scope": "CONTROL_PLANE",
+            "inference": inference_readiness(settings),
         },
     )
 
 
+@app.get("/readyz/inference")
+def readyz_inference() -> JSONResponse:
+    admission = inference_readiness(load_settings())
+    return JSONResponse(status_code=200 if admission["ready_for_requests"] else 503, content=admission)
+
+
+@app.get("/.well-known/szl-source.json")
 @app.get("/api/source")
 def source() -> dict[str, Any]:
     controlled = [
@@ -510,12 +586,14 @@ def models() -> dict[str, Any]:
 
 
 @app.post("/v1/chat/completions")
-async def chat(request: ChatRequest) -> JSONResponse:
+async def chat(request: ChatRequest, http_request: Request) -> JSONResponse:
     settings = load_settings()
     if settings.config_state == "INVALID_FAIL_CLOSED":
         raise HTTPException(status_code=503, detail={"code": "INVALID_ROUTER_CONFIGURATION", "message": settings.config_error})
     if not settings.egress_enabled:
         raise HTTPException(status_code=503, detail={"code": "EGRESS_DISABLED", "message": "Set an allowlisted registry and SZL_ROUTER_ENABLE_EGRESS=1."})
+
+    check_caller_auth(http_request)
 
     request_plan = plan(
         settings,
@@ -542,6 +620,7 @@ async def chat(request: ChatRequest) -> JSONResponse:
                 provider,
                 upstream_payload(request, candidate["upstream_model"]),
             )
+            validate_completion(upstream)
             elapsed_ms = round((time.monotonic() - started) * 1000, 3)
             attempts.append({"provider_id": provider.id, "state": "SUCCESS", "status_code": status_code})
             receipt_body = {
@@ -598,6 +677,7 @@ def deployment() -> dict[str, Any]:
         "runtime_state": "MEASURED_BY_THIS_RESPONSE",
         "registry_state": settings.config_state,
         "egress_enabled": settings.egress_enabled,
+        "inference": inference_readiness(settings),
         "hub_publication": "UNAVAILABLE_UNLESS_PROVIDER_READBACK_EXISTS",
     }
 
