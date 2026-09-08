@@ -12,6 +12,8 @@ on:
       - "scripts/hf_space_bootstrap.py"
       - "scripts/hf_space_deploy.py"
       - "scripts/hf_space_drift_check.py"
+      - "scripts/wait_hf_space_runtime.py"
+      - "test_hf_runtime_convergence.py"
 
 permissions:
   contents: read
@@ -56,9 +58,12 @@ jobs:
             scripts/hf_space_bootstrap.py \
             scripts/hf_space_deploy.py \
             scripts/hf_space_drift_check.py \
+            scripts/wait_hf_space_runtime.py \
+            test_hf_runtime_convergence.py \
             space/server.py \
             space/szl_source_attestation.py
           python -m unittest discover -s space/tests -p 'test_*.py'
+          python -m unittest test_hf_runtime_convergence.py
           git diff --check
 
       - name: Install exact Hub client
@@ -94,6 +99,21 @@ jobs:
             --token "$HF_TOKEN" \
             > router-flagship-publication.json
 
+      - name: Wait for coherent provider runtime metadata
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$HF_TOKEN"
+          python scripts/wait_hf_space_runtime.py \
+            --repo-id "$HF_SPACE_REPO_ID" \
+            --token "$HF_TOKEN" \
+            --timeout-seconds 900 \
+            --poll-interval-seconds 10 \
+            --request-timeout-seconds 15 \
+            --receipt hf-runtime-convergence.json
+
       - name: Verify publication, deployment, runtime, and source parity
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -118,6 +138,7 @@ jobs:
           path: |
             router-space-bootstrap.json
             router-flagship-publication.json
+            hf-runtime-convergence.json
             hf-space-parity-evidence.json
           if-no-files-found: warn
           retention-days: 90
