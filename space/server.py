@@ -200,7 +200,23 @@ class HardenedHandler(SimpleHTTPRequestHandler):
                 build_source_attestation(directory, force=force)
             )
             return
-        if parsed.path in {"/healthz", "/readyz", "/api/build-info"}:
+        if parsed.path in {"/health", "/healthz"}:
+            self._send_json(
+                {
+                    "schema": "szl.router-health/v1",
+                    "transport_state": "REACHABLE",
+                    "evidence_state": "OBSERVED",
+                    "verification_state": "PROCESS_ALIVE",
+                    "authority_state": "READ_ONLY",
+                    "status": "RUNNING",
+                    "service": "llm-router-live",
+                    "access_mode": "PUBLIC_READONLY",
+                    "router_runtime": "NOT_MEASURED",
+                    "credential_value_recorded": False,
+                }
+            )
+            return
+        if parsed.path in {"/ready", "/readyz", "/api/build-info"}:
             source = load_source_binding(directory)
             source_bound = source["state"] == "SOURCE_BOUND"
             common = {
@@ -235,14 +251,58 @@ class HardenedHandler(SimpleHTTPRequestHandler):
                 return
             payload = {
                 **common,
+                "schema": "szl.router-ready/v1",
                 "status": "ready" if source_bound else "degraded",
                 "service": "llm-router-live",
                 "access_mode": "PUBLIC_READONLY",
+                "surface": "STATUS_SURFACE",
                 "router_runtime": "NOT_MEASURED",
                 "source_binding": source["state"],
+                "credential_value_recorded": False,
             }
             status = 200 if parsed.path == "/healthz" or source_bound else 503
             self._send_json(payload, status=status)
+            return
+        if parsed.path in {"/inference/ready", "/readyz/inference"}:
+            self._send_json(
+                {
+                    "schema": "szl.router-inference-ready/v1",
+                    "transport_state": "REACHABLE",
+                    "evidence_state": "OBSERVED",
+                    "verification_state": "PUBLIC_SPACE",
+                    "authority_state": "READ_ONLY",
+                    "status": "OFFLINE_UNTIL_KEYED",
+                    "http_ok": False,
+                    "reason": "Public Space is a redacted status surface, not a credential-bearing gateway.",
+                    "credential_value_recorded": False,
+                },
+                status=503,
+            )
+            return
+        if parsed.path == "/v1/models":
+            now = int(datetime.now(timezone.utc).timestamp())
+            self._send_json(
+                {
+                    "object": "list",
+                    "data": [
+                        {
+                            "id": name,
+                            "object": "model",
+                            "created": now,
+                            "owned_by": "szl-router",
+                            "available": False,
+                            "reason": "OFFLINE_UNTIL_KEYED",
+                        }
+                        for name in ("szl-auto", "szl-fast", "szl-large", "szl-coder")
+                    ],
+                    "inference_state": "OFFLINE_UNTIL_KEYED",
+                    "credential_value_recorded": False,
+                    "transport_state": "REACHABLE",
+                    "evidence_state": "OBSERVED",
+                    "verification_state": "PUBLIC_SPACE",
+                    "authority_state": "READ_ONLY",
+                }
+            )
             return
         routes = {
             "/api/a11oy/v1/router/health": "snapshot-router-health.json",
@@ -254,6 +314,27 @@ class HardenedHandler(SimpleHTTPRequestHandler):
             self._send_snapshot_json(path)
             return
         super().do_GET()
+
+    def do_POST(self):
+        parsed = urllib.parse.urlsplit(self.path)
+        if parsed.path == "/v1/chat/completions":
+            self._send_json(
+                {
+                    "error": {
+                        "message": "Public Space inference is OFFLINE_UNTIL_KEYED.",
+                        "type": "offline_until_keyed",
+                    },
+                    "inference_state": "OFFLINE_UNTIL_KEYED",
+                    "credential_value_recorded": False,
+                    "transport_state": "REACHABLE",
+                    "evidence_state": "OBSERVED",
+                    "verification_state": "PUBLIC_SPACE",
+                    "authority_state": "READ_ONLY",
+                },
+                status=503,
+            )
+            return
+        self.send_error(405, "Method Not Allowed")
 
 
 if __name__ == "__main__":

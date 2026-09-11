@@ -474,11 +474,13 @@ def validate_completion(value: Any) -> None:
             raise RuntimeError("upstream output has invalid tool calls")
 
 
+@app.get("/health")
 @app.get("/healthz")
 def healthz() -> dict[str, Any]:
     return {"status": "ok", "service": "szl-router", "version": APP_VERSION}
 
 
+@app.get("/ready")
 @app.get("/readyz")
 def readyz() -> JSONResponse:
     settings = load_settings()
@@ -509,6 +511,7 @@ def readyz() -> JSONResponse:
     )
 
 
+@app.get("/inference/ready")
 @app.get("/readyz/inference")
 def readyz_inference() -> JSONResponse:
     admission = inference_readiness(load_settings())
