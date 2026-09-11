@@ -11,10 +11,19 @@
   "provider_secrets_committed": false,
   "public_effect_authority": false,
   "honest_runtime_states": [
-    "LIVE",
+    "RUNNING_ALIGNED",
+    "RUNNING_STALE",
+    "BUILDING",
+    "STARTING",
+    "RESTARTING",
+    "PAUSED",
+    "BUILD_ERROR",
+    "RUNTIME_ERROR",
+    "METADATA_PENDING",
     "CONFIGURED_UNVERIFIED",
     "OFFLINE_UNTIL_KEYED",
-    "UNAVAILABLE"
+    "UNAVAILABLE",
+    "NOT_VERIFIED"
   ],
   "lambda_uniqueness": "CONJECTURE_1_OPEN"
 }
