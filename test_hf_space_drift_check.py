@@ -90,13 +90,7 @@ class DriftVerifierTests(unittest.TestCase):
             "witness_nonce": "unit-test-nonce",
         }
         info = {"sha": HF_SHA, "subdomain": "szlholdings-llm-router-live"}
-        binding = {
-            "schema": "szl.source-binding/v1",
-            "source_repository": drift.SOURCE_REPOSITORY,
-            "source_revision": source_sha,
-            "source_path": "space",
-            "relation": "exact-deployed-subtree",
-        }
+        binding = deploy._source_binding(drift.SOURCE_REPOSITORY, source_sha)
         readiness = {
             "transport_state": "REACHABLE",
             "evidence_state": "OBSERVED",
@@ -144,7 +138,7 @@ class DriftVerifierTests(unittest.TestCase):
             drift._resolve_url(REPO_ID, HF_SHA, "index.html"): content,
             drift._resolve_url(
                 REPO_ID, HF_SHA, drift.SOURCE_BINDING_FILENAME
-            ): json.dumps(binding).encode(),
+            ): deploy._binding_bytes(binding),
         }
         return temporary, config, json_responses, byte_responses
 
@@ -179,6 +173,25 @@ class DriftVerifierTests(unittest.TestCase):
         )
         self.assertEqual("EXACT", evidence["bindings"]["source_to_publication"])
         self.assertEqual("EXACT", evidence["bindings"]["publication_to_runtime"])
+
+    def test_generated_complete_binding_is_accepted(self):
+        temporary, config, responses, bodies = self._fixture()
+        self.addCleanup(temporary.cleanup)
+        binding = deploy._source_binding(drift.SOURCE_REPOSITORY, config["source_revision"])
+        self.assertEqual(
+            {"schema", "source_repository", "source_revision", "source_path", "relation",
+             "product_class", "public_space", "evidence_url"},
+            set(binding),
+        )
+        url = drift._resolve_url(REPO_ID, HF_SHA, drift.SOURCE_BINDING_FILENAME)
+        self.assertEqual(deploy._binding_bytes(binding), bodies[url])
+        self.assertEqual(
+            (json.dumps(binding, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+            bodies[url],
+        )
+        evidence = drift.new_evidence(config)
+        drift.verify_once(config, FakeClient(responses, bodies), evidence, lambda: 2.0)
+        self.assertEqual("ACCEPTED", evidence["verdict"])
 
     def test_non_running_and_unknown_provider_stages_are_rejected(self):
         for stage in (
@@ -285,6 +298,63 @@ class DriftVerifierTests(unittest.TestCase):
                 lambda: 2.0,
             )
         self.assertEqual("MALFORMED_PROVIDER_RESPONSE", caught.exception.code)
+
+    def test_tree_entry_type_json_shapes_are_typed_rejections(self):
+        temporary, config, responses, bodies = self._fixture()
+        self.addCleanup(temporary.cleanup)
+        tree = responses[drift._tree_url(REPO_ID, HF_SHA)]
+        for malformed in ([], {}, ["file"], {"file": True}, 42, None, True, "FILE"):
+            with self.subTest(value=malformed):
+                tree[0]["type"] = malformed
+                with self.assertRaises(drift.VerificationFailure) as caught:
+                    drift.verify_once(
+                        config, FakeClient(responses, bodies),
+                        drift.new_evidence(config), lambda: 2.0,
+                    )
+                self.assertEqual("MALFORMED_PROVIDER_RESPONSE", caught.exception.code)
+
+    def test_measurement_method_json_shapes_are_typed_rejections(self):
+        temporary, config, responses, bodies = self._fixture()
+        self.addCleanup(temporary.cleanup)
+        url = f"{ENDPOINT}/.well-known/szl-source.json?refresh=1&nonce=unit-test-nonce"
+        for malformed in ([], {}, ["SPACE_REPOSITORY_COMMIT"], {"method": "HUGGINGFACE_API"}, 42, None, True):
+            with self.subTest(value=malformed):
+                responses[url]["deployment"]["measurement_method"] = malformed
+                with self.assertRaises(drift.VerificationFailure) as caught:
+                    drift.verify_once(
+                        config, FakeClient(responses, bodies),
+                        drift.new_evidence(config), lambda: 2.0,
+                    )
+                self.assertEqual("RUNTIME_ATTESTATION_REJECTED", caught.exception.code)
+
+    def test_complete_binding_document_and_canonical_bytes_are_required(self):
+        temporary, config, responses, bodies = self._fixture()
+        self.addCleanup(temporary.cleanup)
+        binding = deploy._source_binding(drift.SOURCE_REPOSITORY, config["source_revision"])
+        canonical = deploy._binding_bytes(binding)
+        url = drift._resolve_url(REPO_ID, HF_SHA, drift.SOURCE_BINDING_FILENAME)
+        cases = {}
+        for field in binding:
+            missing = dict(binding)
+            missing.pop(field)
+            cases[f"missing_{field}"] = (json.dumps(missing, indent=2, sort_keys=True) + "\n").encode()
+            changed = {**binding, field: "CONFLICTING_VALUE"}
+            cases[f"conflicting_{field}"] = (json.dumps(changed, indent=2, sort_keys=True) + "\n").encode()
+        cases["additional_field"] = (json.dumps({**binding, "unexpected_claim": "verified"}, indent=2, sort_keys=True) + "\n").encode()
+        cases["conflicting_duplicate_field"] = ('{"source_revision":"' + "d" * 40 + '",' + json.dumps(binding)[1:]).encode()
+        cases["compact_encoding"] = json.dumps(binding).encode()
+        cases["missing_final_lf"] = canonical[:-1]
+        cases["crlf_encoding"] = canonical.replace(b"\n", b"\r\n")
+        cases["different_field_order"] = (json.dumps(binding, indent=2) + "\n").encode()
+        for name, body in cases.items():
+            with self.subTest(case=name):
+                bodies[url] = body
+                with self.assertRaises(drift.VerificationFailure) as caught:
+                    drift.verify_once(
+                        config, FakeClient(responses, bodies),
+                        drift.new_evidence(config), lambda: 2.0,
+                    )
+                self.assertEqual("SOURCE_BINDING_MISMATCH", caught.exception.code)
 
     def test_stale_hf_revision_in_runtime_attestation_is_rejected(self):
         temporary, config, json_responses, byte_responses = self._fixture()

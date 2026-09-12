@@ -134,11 +134,16 @@ def _validate_release_tree(release_dir: Path, expected: dict[str, bytes]) -> Non
         raise PublicationSourceError("PUBLICATION_BYTE_DRIFT", "Release bytes differ from the immutable source.")
 
 
+def _binding_bytes(binding: dict[str, object]) -> bytes:
+    """Encode the generated binding identically for publication and readback."""
+    return (json.dumps(binding, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
 def _stage_release(release_dir: Path, snapshot: dict[str, bytes], binding: dict[str, object]) -> dict[str, bytes]:
     if any(not _safe_source_path(path) or path == SOURCE_BINDING_FILENAME for path in snapshot):
         raise PublicationSourceError("SOURCE_TREE_UNSAFE", "Unsafe source output path or binding collision.")
     expected = dict(snapshot)
-    expected[SOURCE_BINDING_FILENAME] = (json.dumps(binding, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    expected[SOURCE_BINDING_FILENAME] = _binding_bytes(binding)
     release_dir.mkdir()  # The caller supplies a new, private temporary directory.
     for relative, body in sorted(expected.items()):
         target = release_dir / relative

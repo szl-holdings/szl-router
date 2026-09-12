@@ -30,9 +30,13 @@ from pathlib import Path
 from typing import Callable
 
 if __package__:
-    from .hf_space_deploy import PublicationSourceError, _source_snapshot
+    from .hf_space_deploy import (
+        PublicationSourceError, _binding_bytes, _source_binding, _source_snapshot,
+    )
 else:
-    from hf_space_deploy import PublicationSourceError, _source_snapshot
+    from hf_space_deploy import (
+        PublicationSourceError, _binding_bytes, _source_binding, _source_snapshot,
+    )
 
 HUB_ORIGIN = "https://huggingface.co"
 SOURCE_REPOSITORY = "szl-holdings/szl-router"
@@ -684,7 +688,9 @@ def _verify_source_publication(
     observed_paths: list[str] = []
     observed_directories: list[str] = []
     for entry in tree:
-        if not isinstance(entry, dict) or entry.get("type") not in {"file", "directory"}:
+        if (not isinstance(entry, dict)
+                or not isinstance(entry.get("type"), str)
+                or entry["type"] not in {"file", "directory"}):
             raise VerificationFailure(
                 "MALFORMED_PROVIDER_RESPONSE",
                 "Published tree contained an invalid entry.",
@@ -770,22 +776,19 @@ def _verify_source_publication(
         timeout=timeout_for_call(),
     )
     binding = _json_document(binding_body, name=SOURCE_BINDING_FILENAME)
-    expected_binding = {
-        "schema": "szl.source-binding/v1",
-        "source_repository": config["source_repository"],
-        "source_revision": config["source_revision"],
-        "source_path": SOURCE_PATH,
-        "relation": "exact-deployed-subtree",
-    }
-    for key, expected in expected_binding.items():
-        if binding.get(key) != expected:
-            publication["source_binding_state"] = "MISMATCH"
-            truth["publication_state"] = "SOURCE_BINDING_MISMATCH"
-            raise VerificationFailure(
-                "SOURCE_BINDING_MISMATCH",
-                f"Published source binding mismatch for {key}.",
-                details={"field": key, "expected": expected, "observed": binding.get(key)},
-            )
+    expected_binding = _source_binding(
+        str(config["source_repository"]), str(config["source_revision"]),
+    )
+    # Validate the full generated contract and its exact serialization. Checking
+    # selected fields would admit conflicting claims, extra fields, duplicate
+    # JSON keys, and bytes that the canonical publisher never generated.
+    if binding != expected_binding or binding_body != _binding_bytes(expected_binding):
+        publication["source_binding_state"] = "MISMATCH"
+        truth["publication_state"] = "SOURCE_BINDING_MISMATCH"
+        raise VerificationFailure(
+            "SOURCE_BINDING_MISMATCH",
+            "Published source binding differs from the complete generated contract or its bytes.",
+        )
 
     source["state"] = "EXACT_CHECKOUT"
     publication["bytes_state"] = "ALIGNED"
@@ -973,7 +976,8 @@ def _verify_runtime_witness(
         context="Runtime Hugging Face revision",
         retryable=True,
     )
-    if deployment.get("measurement_method") not in {
+    measurement_method = deployment.get("measurement_method")
+    if not isinstance(measurement_method, str) or measurement_method not in {
         "SPACE_REPOSITORY_COMMIT",
         "HUGGINGFACE_API",
     }:
