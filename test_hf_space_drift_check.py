@@ -1,6 +1,7 @@
 import argparse
 import copy
 import json
+import re
 import threading
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -9,6 +10,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from scripts import hf_space_drift_check as drift
+from scripts import hf_space_deploy as deploy
+from test_hf_space_deploy import commit_fixture
 
 
 SOURCE_SHA = "a" * 40
@@ -69,13 +72,15 @@ class DriftVerifierTests(unittest.TestCase):
         space_dir.mkdir()
         content = b"exact publication bytes\n"
         (space_dir / "index.html").write_bytes(content)
+        (source_root / ".gitignore").write_text("__pycache__/\n*.pyc\n.env\n", encoding="utf-8")
+        source_sha = commit_fixture(source_root)
         config = {
             "repo_id": REPO_ID,
             "endpoint": ENDPOINT,
             "endpoint_hostname": "szlholdings-llm-router-live.hf.space",
             "source_repository": drift.SOURCE_REPOSITORY,
-            "source_revision": SOURCE_SHA,
-            "checkout_revision": SOURCE_SHA,
+            "source_revision": source_sha,
+            "checkout_revision": source_sha,
             "source_root": source_root,
             "space_dir": space_dir,
             "token": "hf_test_token",
@@ -88,7 +93,7 @@ class DriftVerifierTests(unittest.TestCase):
         binding = {
             "schema": "szl.source-binding/v1",
             "source_repository": drift.SOURCE_REPOSITORY,
-            "source_revision": SOURCE_SHA,
+            "source_revision": source_sha,
             "source_path": "space",
             "relation": "exact-deployed-subtree",
         }
@@ -110,7 +115,7 @@ class DriftVerifierTests(unittest.TestCase):
             "alignment_state": "SOURCE_BOUND_DEPLOYMENT",
             "source": {
                 "repository": drift.SOURCE_REPOSITORY,
-                "commit": SOURCE_SHA,
+                "commit": source_sha,
                 "path": "space",
                 "relation": "exact-deployed-subtree",
                 "state": "SOURCE_BOUND",
@@ -156,7 +161,7 @@ class DriftVerifierTests(unittest.TestCase):
         )
 
         self.assertEqual("ACCEPTED", evidence["verdict"])
-        self.assertEqual(SOURCE_SHA, evidence["source"]["revision"])
+        self.assertEqual(config["source_revision"], evidence["source"]["revision"])
         self.assertEqual(HF_SHA, evidence["publication"]["revision"])
         self.assertEqual("EXACT", evidence["publication"]["output_set_state"])
         self.assertEqual(HF_SHA, evidence["deployment"]["runtime_revision"])
@@ -202,6 +207,71 @@ class DriftVerifierTests(unittest.TestCase):
                     )
                 finally:
                     temporary.cleanup()
+
+    def test_publisher_and_verifier_share_exact_output_despite_ignored_local_caches(self):
+        temporary, config, json_responses, byte_responses = self._fixture()
+        self.addCleanup(temporary.cleanup)
+        space = config["space_dir"]
+        cache = space / "__pycache__"
+        cache.mkdir()
+        for index in range(8):
+            (cache / f"module{index}.cpython-312.pyc").write_bytes(b"bytecode")
+        (space / ".env").write_bytes(b"TEST_ONLY=not-a-credential\n")
+        snapshot = deploy._source_snapshot(space, config["source_revision"])
+        release = config["source_root"] / "release"
+        output = deploy._stage_release(
+            release, snapshot, deploy._source_binding(drift.SOURCE_REPOSITORY, config["source_revision"])
+        )
+        json_responses[drift._tree_url(REPO_ID, HF_SHA)] = [
+            {"type": "file", "path": relative} for relative in output
+        ]
+        byte_responses = {drift._resolve_url(REPO_ID, HF_SHA, path): body for path, body in output.items()}
+        evidence = drift.new_evidence(config)
+        drift.verify_once(config, FakeClient(json_responses, byte_responses), evidence, lambda: 2.0)
+        self.assertEqual("ACCEPTED", evidence["verdict"])
+        self.assertEqual(2, evidence["publication"]["expected_files"])
+        json_responses[drift._tree_url(REPO_ID, HF_SHA)].append(
+            {"type": "file", "path": "__pycache__/module0.cpython-312.pyc"}
+        )
+        with self.assertRaises(drift.VerificationFailure) as caught:
+            drift.verify_once(config, FakeClient(json_responses, byte_responses), drift.new_evidence(config), lambda: 2.0)
+        self.assertEqual("PUBLICATION_OUTPUT_SET_MISMATCH", caught.exception.code)
+
+    def test_missing_duplicate_and_unsafe_remote_paths_are_rejected(self):
+        for case in ("missing", "duplicate", "../escape", "/absolute", "a\\b", "a//b", "C:/drive", "a\ncontrol"):
+            with self.subTest(case=case):
+                temporary, config, responses, bodies = self._fixture()
+                self.addCleanup(temporary.cleanup)
+                tree = responses[drift._tree_url(REPO_ID, HF_SHA)]
+                if case == "missing":
+                    tree.pop()
+                else:
+                    tree.append({"type": "file", "path": "index.html" if case == "duplicate" else case})
+                with self.assertRaises(drift.VerificationFailure) as caught:
+                    drift.verify_once(config, FakeClient(responses, bodies), drift.new_evidence(config), lambda: 2.0)
+                self.assertEqual(
+                    "PUBLICATION_OUTPUT_SET_MISMATCH" if case == "missing" else "MALFORMED_PROVIDER_RESPONSE",
+                    caught.exception.code,
+                )
+
+    def test_unsafe_and_unexpected_remote_directories_are_rejected(self):
+        for path, code in (("../escape", "MALFORMED_PROVIDER_RESPONSE"),
+                           ("empty-extra", "PUBLICATION_OUTPUT_SET_MISMATCH")):
+            with self.subTest(path=path):
+                temporary, config, responses, bodies = self._fixture()
+                self.addCleanup(temporary.cleanup)
+                responses[drift._tree_url(REPO_ID, HF_SHA)].append({"type": "directory", "path": path})
+                with self.assertRaises(drift.VerificationFailure) as caught:
+                    drift.verify_once(config, FakeClient(responses, bodies), drift.new_evidence(config), lambda: 2.0)
+                self.assertEqual(code, caught.exception.code)
+
+    def test_dirty_source_is_a_typed_verifier_failure(self):
+        temporary, config, responses, bodies = self._fixture()
+        self.addCleanup(temporary.cleanup)
+        (config["space_dir"] / "index.html").write_bytes(b"modified")
+        with self.assertRaises(drift.VerificationFailure) as caught:
+            drift.verify_once(config, FakeClient(responses, bodies), drift.new_evidence(config), lambda: 2.0)
+        self.assertEqual("SOURCE_WORKTREE_DIRTY", caught.exception.code)
 
     def test_malformed_provider_response_is_rejected(self):
         temporary, config, json_responses, byte_responses = self._fixture()
@@ -387,6 +457,28 @@ class HttpWitnessPolicyTests(unittest.TestCase):
 
 
 class WorkflowWiringTests(unittest.TestCase):
+    def test_completed_publication_name_and_source_selection_match(self):
+        root = Path(__file__).resolve().parent / ".github/workflows"
+        publisher = (root / "hf-space-deploy.yml").read_text(encoding="utf-8")
+        verifier = (root / "hf-space-drift-check.yml").read_text(encoding="utf-8")
+        name = re.search(r"^name: (.+)$", publisher, re.MULTILINE).group(1)
+        self.assertIn(f"workflows: [{name}]", verifier)
+        paths_block = publisher.split("    paths:\n", 1)[1].split("\npermissions:", 1)[0]
+        published_paths = set(re.findall(r'^\s+- "([^"]+)"', paths_block, re.MULTILINE))
+        published_paths = {path.removesuffix("/**") for path in published_paths}
+        selection = verifier.split("git log -1 --format=%H --", 1)[1].split(')"', 1)[0]
+        selected_paths = set(selection.replace("\\", "").split())
+        self.assertEqual(published_paths, selected_paths)
+
+    def test_preflight_compiles_in_memory_without_import_bytecode(self):
+        root = Path(__file__).resolve().parent / ".github/workflows"
+        publisher = (root / "hf-space-deploy.yml").read_text(encoding="utf-8")
+        verifier = (root / "hf-space-drift-check.yml").read_text(encoding="utf-8")
+        for workflow in (publisher, verifier):
+            self.assertIn('PYTHONDONTWRITEBYTECODE: "1"', workflow)
+        self.assertNotIn("python -m py_compile", publisher)
+        self.assertIn('compile(Path(filename).read_bytes(), filename, "exec")', publisher)
+
     def test_both_workflows_supply_credentials_config_and_preserve_evidence(self):
         root = Path(__file__).resolve().parent
         for name in ("hf-space-deploy.yml", "hf-space-drift-check.yml"):

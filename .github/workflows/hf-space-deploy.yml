@@ -31,6 +31,7 @@ jobs:
     env:
       HF_SPACE_REPO_ID: SZLHOLDINGS/llm-router-live
       HF_SPACE_ENDPOINT: https://szlholdings-llm-router-live.hf.space
+      PYTHONDONTWRITEBYTECODE: "1"
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
@@ -54,14 +55,19 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          python -m py_compile \
+          python -B - \
             scripts/hf_space_bootstrap.py \
             scripts/hf_space_deploy.py \
             scripts/hf_space_drift_check.py \
             scripts/wait_hf_space_runtime.py \
             test_hf_runtime_convergence.py \
             space/server.py \
-            space/szl_source_attestation.py
+            space/szl_source_attestation.py <<'PY'
+          import sys
+          from pathlib import Path
+          for filename in sys.argv[1:]:
+              compile(Path(filename).read_bytes(), filename, "exec")
+          PY
           python -m unittest discover -s space/tests -p 'test_*.py'
           python -m unittest test_hf_runtime_convergence.py
           git diff --check
