@@ -7,7 +7,7 @@ name: hf-space-drift-check
 # only trains people to dismiss real drift.
 on:
   workflow_run:
-    workflows: [hf-space-deploy]
+    workflows: [Deploy SZL Router flagship Space]
     types: [completed]
     branches: [main]
   schedule:
@@ -20,6 +20,7 @@ permissions:
 env:
   HF_SPACE_REPO_ID: SZLHOLDINGS/llm-router-live
   HF_SPACE_ENDPOINT: https://szlholdings-llm-router-live.hf.space
+  PYTHONDONTWRITEBYTECODE: "1"
 
 jobs:
   drift-check:
@@ -44,8 +45,11 @@ jobs:
             revision="$(git log -1 --format=%H -- \
               space \
               .github/workflows/hf-space-deploy.yml \
+              scripts/hf_space_bootstrap.py \
               scripts/hf_space_deploy.py \
-              scripts/hf_space_drift_check.py)"
+              scripts/hf_space_drift_check.py \
+              scripts/wait_hf_space_runtime.py \
+              test_hf_runtime_convergence.py)"
           fi
           if [[ ! "$revision" =~ ^[0-9a-f]{40}$ ]]; then
             echo "Unable to resolve an exact intended source revision." >&2

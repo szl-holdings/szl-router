@@ -29,6 +29,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
+if __package__:
+    from .hf_space_deploy import (
+        PublicationSourceError, _binding_bytes, _source_binding, _source_snapshot,
+    )
+else:
+    from hf_space_deploy import (
+        PublicationSourceError, _binding_bytes, _source_binding, _source_snapshot,
+    )
+
 HUB_ORIGIN = "https://huggingface.co"
 SOURCE_REPOSITORY = "szl-holdings/szl-router"
 SOURCE_PATH = "space"
@@ -650,17 +659,10 @@ def _verify_source_publication(
     hf_revision: str,
     timeout_for_call: Callable[[], float],
 ) -> None:
-    space_dir = Path(config["space_dir"])
-    source_paths = sorted(space_dir.rglob("*"))
-    if any(path.is_symlink() for path in source_paths):
-        raise VerificationFailure(
-            "SOURCE_TREE_UNSAFE", "Symbolic links are not accepted in the Space source tree."
-        )
-    files = [path for path in source_paths if path.is_file()]
-    if not files:
-        raise VerificationFailure(
-            "SOURCE_TREE_EMPTY", f"No files exist under the {SOURCE_PATH} subtree."
-        )
+    try:
+        snapshot = _source_snapshot(Path(config["space_dir"]), str(config["source_revision"]))
+    except PublicationSourceError as exc:
+        raise VerificationFailure(exc.code, str(exc)) from exc
 
     publication = evidence["publication"]
     source = evidence["source"]
@@ -671,7 +673,7 @@ def _verify_source_publication(
     publication["files"] = []
     publication["files_checked"] = 0
 
-    expected_paths = {path.relative_to(space_dir).as_posix() for path in files}
+    expected_paths = set(snapshot)
     expected_paths.add(SOURCE_BINDING_FILENAME)
     tree, _ = client.get_json_array(
         _tree_url(str(config["repo_id"]), hf_revision),
@@ -684,28 +686,35 @@ def _verify_source_publication(
             "Published tree reached the verifier entry limit; exact output set is unavailable.",
         )
     observed_paths: list[str] = []
+    observed_directories: list[str] = []
     for entry in tree:
-        if not isinstance(entry, dict) or entry.get("type") not in {"file", "directory"}:
+        if (not isinstance(entry, dict)
+                or not isinstance(entry.get("type"), str)
+                or entry["type"] not in {"file", "directory"}):
             raise VerificationFailure(
                 "MALFORMED_PROVIDER_RESPONSE",
                 "Published tree contained an invalid entry.",
             )
-        if entry["type"] != "file":
-            continue
         path = entry.get("path")
         if (
             not isinstance(path, str)
             or not path
             or path.startswith("/")
             or "\\" in path
+            or ":" in path
+            or any(ord(char) < 32 or ord(char) == 127 for char in path)
             or any(part in {"", ".", ".."} for part in path.split("/"))
         ):
             raise VerificationFailure(
                 "MALFORMED_PROVIDER_RESPONSE",
                 "Published tree contained an unsafe file path.",
             )
-        observed_paths.append(path)
-    if len(observed_paths) != len(set(observed_paths)):
+        if entry["type"] == "directory":
+            observed_directories.append(path)
+        else:
+            observed_paths.append(path)
+    all_paths = observed_paths + observed_directories
+    if len(all_paths) != len(set(all_paths)):
         raise VerificationFailure(
             "MALFORMED_PROVIDER_RESPONSE",
             "Published tree contained duplicate file paths.",
@@ -713,23 +722,27 @@ def _verify_source_publication(
     observed_set = set(observed_paths)
     missing = sorted(expected_paths - observed_set)
     unexpected = sorted(observed_set - expected_paths)
+    unexpected_directories = sorted(
+        path for path in observed_directories
+        if not any(expected.startswith(path + "/") for expected in expected_paths)
+    )
     publication["expected_files"] = len(expected_paths)
     publication["observed_files"] = len(observed_set)
     publication["missing_files"] = missing
     publication["unexpected_files"] = unexpected
-    if missing or unexpected:
+    if missing or unexpected or unexpected_directories:
         publication["output_set_state"] = "DRIFT"
         truth["publication_state"] = "OUTPUT_SET_DRIFT"
         raise VerificationFailure(
             "PUBLICATION_OUTPUT_SET_MISMATCH",
             "Published immutable revision does not match the exact source output set.",
-            details={"missing_files": missing, "unexpected_files": unexpected},
+            details={"missing_files": missing, "unexpected_files": unexpected,
+                     "unexpected_directories": unexpected_directories},
         )
     publication["output_set_state"] = "EXACT"
 
-    for path in files:
-        relative = path.relative_to(space_dir).as_posix()
-        local_sha256 = _sha256_bytes(path.read_bytes())
+    for relative, body in snapshot.items():
+        local_sha256 = _sha256_bytes(body)
         remote_body, _ = client.get_bytes(
             _resolve_url(str(config["repo_id"]), hf_revision, relative),
             timeout=timeout_for_call(),
@@ -763,22 +776,19 @@ def _verify_source_publication(
         timeout=timeout_for_call(),
     )
     binding = _json_document(binding_body, name=SOURCE_BINDING_FILENAME)
-    expected_binding = {
-        "schema": "szl.source-binding/v1",
-        "source_repository": config["source_repository"],
-        "source_revision": config["source_revision"],
-        "source_path": SOURCE_PATH,
-        "relation": "exact-deployed-subtree",
-    }
-    for key, expected in expected_binding.items():
-        if binding.get(key) != expected:
-            publication["source_binding_state"] = "MISMATCH"
-            truth["publication_state"] = "SOURCE_BINDING_MISMATCH"
-            raise VerificationFailure(
-                "SOURCE_BINDING_MISMATCH",
-                f"Published source binding mismatch for {key}.",
-                details={"field": key, "expected": expected, "observed": binding.get(key)},
-            )
+    expected_binding = _source_binding(
+        str(config["source_repository"]), str(config["source_revision"]),
+    )
+    # Validate the full generated contract and its exact serialization. Checking
+    # selected fields would admit conflicting claims, extra fields, duplicate
+    # JSON keys, and bytes that the canonical publisher never generated.
+    if binding != expected_binding or binding_body != _binding_bytes(expected_binding):
+        publication["source_binding_state"] = "MISMATCH"
+        truth["publication_state"] = "SOURCE_BINDING_MISMATCH"
+        raise VerificationFailure(
+            "SOURCE_BINDING_MISMATCH",
+            "Published source binding differs from the complete generated contract or its bytes.",
+        )
 
     source["state"] = "EXACT_CHECKOUT"
     publication["bytes_state"] = "ALIGNED"
@@ -966,7 +976,8 @@ def _verify_runtime_witness(
         context="Runtime Hugging Face revision",
         retryable=True,
     )
-    if deployment.get("measurement_method") not in {
+    measurement_method = deployment.get("measurement_method")
+    if not isinstance(measurement_method, str) or measurement_method not in {
         "SPACE_REPOSITORY_COMMIT",
         "HUGGINGFACE_API",
     }:
