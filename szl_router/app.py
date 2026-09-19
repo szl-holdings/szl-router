@@ -223,6 +223,8 @@ async def embeddings(request: Request) -> JSONResponse:
             extra={k: v for k, v in body.items()
                    if k not in {"model", "input"}},
         )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except core.RouterError as e:
         return JSONResponse(
             status_code=502,

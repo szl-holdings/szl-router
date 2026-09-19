@@ -215,6 +215,37 @@ Two layers of resilience, both honest (a real failure is always surfaced in the
   `cooldown-skip (...)` so the receipt shows exactly why a provider was not
   consulted; and a single success clears the cooldown immediately.
 
+### Embedding cache identity
+
+The legacy `szl_router.app` embeddings endpoint uses a process-local cache with
+a default 300-second TTL and 1,024-entry cap (`SZL_EMBED_CACHE_TTL` and
+`SZL_EMBED_CACHE_MAX`). Cache identity includes the resolved provider slot,
+normalized endpoint, actual upstream request model, complete JSON request,
+provenance labels, and `SZL_EMBED_CACHE_NAMESPACE`. Endpoint and credential
+configuration are captured once per request so the transport uses the same
+values as the cache identity. Upstream or shared router bearer-token rotation
+invalidates reuse through a private per-process HMAC scope; credentials are
+never placed in cache keys or responses.
+
+Lookup follows the configured route order and skips unavailable providers.
+A cached fallback cannot hide recovery of the preferred route. Consequently,
+a failing preferred route is attempted before a fallback cache hit, which can
+add latency. `x_szl_cache.lookup_attempts` records those current attempts;
+`x_szl_provenance.attempts` retains the historical computation's provenance.
+Fresh and cached responses are detached from cache storage to prevent callers
+from changing later results. Inputs must be finite JSON values with string
+object keys; Python objects are never stringified into cache identities, and
+the Python `extra` argument cannot override `model` or `input`.
+
+A hit replays an observed response, including its provider-reported `model`.
+It does **not** verify an immutable weights revision behind a mutable upstream
+alias. Rotate the non-secret `SZL_EMBED_CACHE_NAMESPACE` when changing weights
+without changing endpoint/model, clear the cache with `embed_cache_clear()`,
+or call Python `embed(..., use_cache=False)` to bypass caching. The namespace
+is an operator assertion, not model attestation. This gateway has one optional
+shared bearer token, so the cache is shared within that service scope; it does
+not provide authenticated per-tenant isolation.
+
 ## Arm the NVIDIA GPU
 
 When the owned GPU is reachable on an OpenAI-compatible URL (vLLM / NIM /
