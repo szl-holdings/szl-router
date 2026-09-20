@@ -14,6 +14,7 @@ on:
       - "scripts/hf_space_drift_check.py"
       - "scripts/wait_hf_space_runtime.py"
       - "test_hf_runtime_convergence.py"
+  workflow_dispatch: {}
 
 permissions:
   contents: read
