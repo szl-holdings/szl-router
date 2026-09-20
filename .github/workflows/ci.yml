@@ -66,4 +66,4 @@ jobs:
 
   doctrine:
     name: Doctrine
-    uses: szl-holdings/.github/.github/workflows/doctrine-check.yml@main
+    uses: szl-holdings/.github/.github/workflows/doctrine-check.yml@86b933bd2d9393cbbf79366a3a267430c72ea6b3 # main
