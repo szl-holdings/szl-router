@@ -21,6 +21,7 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+import hmac
 import http.client
 import io
 import json
@@ -1101,11 +1102,11 @@ def resolve_embed_routes(model: str) -> List[Route]:
 # ---------------------------------------------------------------------------
 # Exact-hash embeddings cache.
 #
-# Embeddings are a pure function of (model, input, extra) — identical inputs
-# yield identical vectors — and are highly repeat-prone (RAG re-indexing the
-# same docs). So an EXACT-hash cache is honesty-safe: a hit returns the SAME
-# bytes the upstream returned, never a fabricated or approximate vector. Reuses
-# the proven _HARVEST_CACHE TTL idea (in-process, time-bounded) plus a size cap.
+# Cache reuse is scoped to the resolved route and request, not just the logical
+# model alias. A hit replays a previously observed vector; it does not prove
+# that an upstream's weights have stayed unchanged behind a mutable model name.
+# Operators can rotate SZL_EMBED_CACHE_NAMESPACE after such changes, or bypass
+# caching. Entries are process-local, time-bounded and size-bounded.
 #
 # Chat is deliberately NOT cached: it is correctness-sensitive (temperature,
 # tools, non-determinism), so caching it could silently change behavior.
@@ -1118,14 +1119,74 @@ _EMBED_CACHE_TTL = float(os.environ.get("SZL_EMBED_CACHE_TTL", "300") or 300)  #
 _EMBED_CACHE_MAX = int(os.environ.get("SZL_EMBED_CACHE_MAX", "1024") or 1024)  # entries
 _EMBED_CACHE: "Dict[str, Tuple[float, Dict[str, Any]]]" = {}
 _EMBED_CACHE_LOCK = threading.Lock()
+_EMBED_CACHE_SCOPE_KEY = os.urandom(32)
 
 
-def _embed_cache_key(model: str, input_: Any, extra: Optional[Dict[str, Any]]) -> str:
-    """Deterministic key over the full request shape. sort_keys makes dict order
-    irrelevant; default=str keeps non-JSON-native inputs hashable rather than
-    crashing the hot path."""
-    payload = {"model": model, "input": input_, "extra": extra or {}}
-    blob = json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
+@dataclass(frozen=True)
+class _ResolvedEmbeddingProvider(Provider):
+    """Freeze the endpoint and credential used by both identity and transport."""
+
+    _resolved_url: str = field(default="", repr=False)
+    _resolved_key: Optional[str] = field(default=None, repr=False)
+
+    def base_url(self) -> str:
+        return self._resolved_url
+
+    def api_key(self) -> Optional[str]:
+        return self._resolved_key
+
+    @classmethod
+    def capture(cls, provider: Provider) -> "_ResolvedEmbeddingProvider":
+        return cls(
+            name=provider.name, base_url_env=provider.base_url_env,
+            base_url_default=provider.base_url_default, key_env=provider.key_env,
+            sovereign=provider.sovereign, energy_source=provider.energy_source,
+            note=provider.note, _resolved_url=provider.base_url(),
+            _resolved_key=provider.api_key(),
+        )
+
+
+def _embedding_json(value: Any) -> str:
+    """Canonical strict JSON: never coerce objects or object keys into strings."""
+    def validate(item: Any) -> None:
+        kind = type(item)
+        if item is None or kind in (str, bool, int):
+            return
+        if kind is float and math.isfinite(item):
+            return
+        if kind is list:
+            for child in item:
+                validate(child)
+            return
+        if kind is dict and all(type(key) is str for key in item):
+            for child in item.values():
+                validate(child)
+            return
+        raise ValueError("embeddings request must contain only finite JSON values and string object keys")
+
+    validate(value)
+    return json.dumps(value, sort_keys=True, allow_nan=False, separators=(",", ":"))
+
+
+def _embed_cache_key(model: str, payload: Dict[str, Any], provider: Provider,
+                     namespace: str, caller_scope: str, route_name: str) -> str:
+    # HMAC is process-local and never returned or logged. It invalidates reuse
+    # on upstream/shared-bearer credential rotation without placing a secret or
+    # a reusable credential fingerprint in cache keys. Shared bearer auth is
+    # NOT a tenant identity; callers in that service share this cache.
+    auth_scope = hmac.new(
+        _EMBED_CACHE_SCOPE_KEY,
+        _embedding_json([provider.api_key(), caller_scope]).encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    identity = {
+        "schema": "szl-embedding-cache/v2", "logical_model": model,
+        "payload": payload, "namespace": namespace, "auth_scope": auth_scope,
+        "route": {"slot": route_name, "provider": provider.name, "base_url": provider.base_url(),
+                  "key_env": provider.key_env, "sovereign": provider.sovereign,
+                  "energy_source": provider.energy_source},
+    }
+    blob = _embedding_json(identity)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
@@ -1150,7 +1211,8 @@ def _embed_cache_put(key: str, value: Dict[str, Any]) -> None:
             # in-process exact-hash cache; not an LRU on purpose (no per-get cost).
             oldest = min(_EMBED_CACHE, key=lambda k: _EMBED_CACHE[k][0])
             _EMBED_CACHE.pop(oldest, None)
-        _EMBED_CACHE[key] = (now, value)
+        # The first (uncached) caller must not hold a reference to cache storage.
+        _EMBED_CACHE[key] = (now, json.loads(json.dumps(value)))
 
 
 def embed_cache_clear() -> None:
@@ -1159,7 +1221,7 @@ def embed_cache_clear() -> None:
         _EMBED_CACHE.clear()
 
 
-def _as_cache_hit(cached: Dict[str, Any]) -> Dict[str, Any]:
+def _as_cache_hit(cached: Dict[str, Any], attempts: List[Attempt]) -> Dict[str, Any]:
     """Return a cached embeddings response, honestly marked as cache-served.
 
     Deep-copies so callers can't mutate the stored entry. The vectors (`data`)
@@ -1177,6 +1239,7 @@ def _as_cache_hit(cached: Dict[str, Any]) -> Dict[str, Any]:
         "served_by": "cache",
         "hit": True,
         "origin_served_by": origin,
+        "lookup_attempts": [a.__dict__ for a in attempts],
         "note": "exact-hash embeddings cache hit; vectors byte-identical to the "
                 "upstream result; no recompute, no fabrication.",
     }
@@ -1200,29 +1263,45 @@ def embed(
     RouterError if every route fails (no fabricated vector).
 
     An exact-hash cache (TTL + size cap) serves byte-identical vectors for a
-    repeated (model, input, extra) request and marks the answer honestly as
-    served_by ...:cache. Set use_cache=False to force a fresh upstream call."""
-    routes = resolve_embed_routes(model)
-
-    cache_key = _embed_cache_key(model, input_, extra) if use_cache else None
-    if cache_key is not None:
-        cached = _embed_cache_get(cache_key)
-        if cached is not None:
-            return _as_cache_hit(cached)
+    repeated request to the same resolved route and marks the answer honestly as
+    served_by ...:cache. Set use_cache=False to force a fresh upstream call.
+    Hidden upstream weight changes require a cache namespace rotation or bypass;
+    neither a model alias nor the configured namespace proves a weights revision.
+    Non-JSON inputs and extra overrides of model/input raise ValueError."""
+    if type(model) is not str or not model:
+        raise ValueError("embeddings model must be a non-empty string")
+    if extra is not None and type(extra) is not dict:
+        raise ValueError("embeddings extra must be an object")
+    if extra and {"model", "input"}.intersection(extra):
+        raise ValueError("embeddings extra cannot override model or input")
+    # Validate and detach before lookup, including on use_cache=False. Hashing
+    # unsupported objects via default=str allowed them to alias valid strings.
+    request = json.loads(_embedding_json({"input": input_, "extra": extra or {}}))
+    namespace = os.environ.get("SZL_EMBED_CACHE_NAMESPACE", "")
+    caller_scope = os.environ.get("SZL_ROUTER_TOKEN", "").strip()
+    routes = []
+    for provider_name, upstream_model in list(resolve_embed_routes(model)):
+        configured = PROVIDERS.get(provider_name)
+        provider = _ResolvedEmbeddingProvider.capture(configured) if configured else None
+        routes.append((provider_name, upstream_model, provider))
 
     prov = Provenance()
     attempts: List[Attempt] = []
 
-    for provider_name, upstream_model in routes:
-        provider = PROVIDERS.get(provider_name)
+    for provider_name, upstream_model, provider in routes:
         if provider is None or not provider.available():
             attempts.append(Attempt(provider_name, upstream_model, ok=False,
                                     error="provider unavailable (no key/url)"))
             continue
 
-        payload: Dict[str, Any] = {"model": upstream_model, "input": input_}
-        if extra:
-            payload.update(extra)
+        payload: Dict[str, Any] = {"model": upstream_model, "input": request["input"]}
+        payload.update(request["extra"])
+        cache_key = (_embed_cache_key(model, payload, provider, namespace, caller_scope, provider_name)
+                     if use_cache else None)
+        if cache_key is not None:
+            cached = _embed_cache_get(cache_key)
+            if cached is not None:
+                return _as_cache_hit(cached, attempts)
 
         t0 = time.time()
         try:

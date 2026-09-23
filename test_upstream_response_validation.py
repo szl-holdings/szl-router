@@ -132,7 +132,10 @@ def test_malformed_embeddings_fail_over_and_only_valid_vectors_are_cached(route_
     assert provenance["attempts"][0]["error"].startswith("invalid embeddings response:")
     assert "private upstream diagnostics" not in provenance["attempts"][0]["error"]
     cached = core.embed("test-embed", "hello")
-    assert calls == ["first", "second"]
+    # A cached fallback cannot hide primary recovery. Retry the preferred route,
+    # then reuse the validated fallback vector if the primary is still invalid.
+    assert calls == ["first", "second", "first"]
+    assert cached["x_szl_cache"]["lookup_attempts"][0]["provider"] == "first"
     assert cached["data"] == EMBED["data"] and cached["x_szl_cache"]["hit"] is True
     assert cached["x_szl_cache"]["origin_served_by"] == "second:test-model"
 
