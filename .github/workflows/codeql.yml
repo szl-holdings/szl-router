@@ -7,6 +7,9 @@ name: CodeQL
 # if GHAS Code Security is enabled later. All actions SHA-pinned (org policy).
 
 on:
+  merge_group:
+    types: [checks_requested]
+    branches: [main]
   push:
     branches: [main]
   pull_request:
@@ -19,7 +22,7 @@ permissions:
 
 concurrency:
   group: codeql-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'merge_group' }}
 
 jobs:
   analyze:
