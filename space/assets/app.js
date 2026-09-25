@@ -1,7 +1,16 @@
 /* SZL LLM Router — public evidence surface.
  * The public contracts expose configuration inventory only. A reachable
  * contract is not evidence that a private router, provider, or model is live.
+ * Organ chrome is a function of paintFromCycle. Arithmetic-would-allow is a ghost.
  */
+
+import {
+  allowChrome,
+  loadPublishedCycle,
+  paintFromCycle,
+  paintLabel,
+  paintTone,
+} from './paint.js';
 
 const BASE = window.location.origin + '/api/a11oy/v1';
 const ENDPOINTS = {
@@ -227,15 +236,57 @@ function renderProvenance(data) {
   if (data && data.default_model) $('#default-model').textContent = data.default_model;
 }
 
+function applyOrganPaint(cycle) {
+  const paint = paintFromCycle(cycle);
+  const tone = paintTone(paint);
+  const verdict = cycle && typeof cycle.verdict === 'string' ? cycle.verdict : '';
+  const lambda = cycle && typeof cycle.lambda === 'string' ? cycle.lambda : 'CONJECTURE_1';
+  const label = paintLabel(paint, verdict);
+  document.documentElement.setAttribute('data-paint', paint);
+
+  const pill = $('#organ-paint');
+  if (pill) {
+    pill.setAttribute('data-tone', tone);
+    const dot = pill.querySelector('.dot');
+    if (dot) {
+      dot.className = tone === 'allow' ? 'dot live' : tone === 'deny' ? 'dot down' : 'dot snapshot';
+    }
+  }
+  const labelEl = $('#organ-paint-label');
+  if (labelEl) labelEl.textContent = label;
+  const verdictEl = $('#organ-verdict');
+  if (verdictEl) {
+    verdictEl.textContent = paint === 'UNAVAILABLE' ? 'UNAVAILABLE' : `${label} · ${lambda}`;
+  }
+  const note = $('#organ-cycle-note');
+  if (note) {
+    if (paint === 'UNAVAILABLE') {
+      note.textContent = 'Organ cycle paint is UNAVAILABLE. Missing or invalid cycle JSON cannot paint ALLOW.';
+    } else if (paint === 'DENY') {
+      note.textContent = `Organ cycle paint is DENY (${verdict || 'DENY'}). HARD_DENY, LAMBDA_VETO, and DENY_DEFAULT cannot paint ALLOW. Λ stays Conjecture 1.`;
+    } else {
+      note.textContent = 'Organ cycle paint is ALLOW. Chrome follows the gate; arithmetic-would-allow remains a ghost.';
+    }
+  }
+  const inspect = $('#inspect-evidence');
+  if (inspect) {
+    const allowed = allowChrome(paint);
+    inspect.classList.toggle('btn-primary', allowed);
+    inspect.classList.toggle('btn-ghost', !allowed);
+  }
+}
+
 async function cycle() {
-  const [health, models, provenance] = await Promise.all([
+  const [health, models, provenance, organCycle] = await Promise.all([
     fetchOrSnap('health'),
     fetchOrSnap('models'),
     fetchOrSnap('provenance'),
+    loadPublishedCycle(),
   ]);
   renderHealth(health);
   renderModels(models);
   renderProvenance(provenance);
+  applyOrganPaint(organCycle);
   setSourceBadge();
   stamp();
 }

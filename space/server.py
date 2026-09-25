@@ -17,6 +17,9 @@ incl. the SZLVerify.mount() bootstrap, inline styles/attributes, the assets/
 logo.svg favicon, the self-hosted app.js + verify widget, the bundled snapshot
 JSON, and the live status/verify fetches to a-11-oy.com), so the live status HUD
 and the verify widget keep working.
+
+The HUD binds organ paint through a same-origin proxy of the published
+szl-frontier ouroboros cycle. Missing or invalid cycle JSON is UNAVAILABLE.
 """
 import functools
 import json
@@ -26,6 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
+from paint import CYCLE_PATH, ORGAN_CYCLE_URL, load_published_cycle
 from szl_source_attestation import build_attestation
 
 PORT = 7860
@@ -167,6 +171,22 @@ class HardenedHandler(SimpleHTTPRequestHandler):
         self.send_header("X-SZL-Evidence-State", str(payload["evidence_state"]))
         self.send_header("X-SZL-Verification-State", str(payload["verification_state"]))
         self.send_header("X-SZL-Authority-State", str(payload["authority_state"]))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_organ_cycle(self, cycle):
+        if not isinstance(cycle, dict):
+            body = b"{}"
+            status = 503
+        else:
+            body = json.dumps(cycle, ensure_ascii=False, separators=(",", ":")).encode(
+                "utf-8"
+            )
+            status = 200
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
@@ -312,6 +332,9 @@ class HardenedHandler(SimpleHTTPRequestHandler):
         if parsed.path in routes:
             path = Path(self.directory or DIRECTORY) / "assets" / routes[parsed.path]
             self._send_snapshot_json(path)
+            return
+        if parsed.path == CYCLE_PATH:
+            self._send_organ_cycle(load_published_cycle(url=ORGAN_CYCLE_URL))
             return
         super().do_GET()
 

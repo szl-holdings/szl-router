@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark" data-szl-surface="router-flagship">
+<html lang="en" data-theme="dark" data-szl-surface="router-flagship" data-paint="UNAVAILABLE">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
@@ -26,7 +26,7 @@
   .orbit-node{position:absolute;z-index:4;min-width:125px;padding:.72rem .82rem;border:1px solid var(--border-strong);border-radius:12px;background:rgba(6,12,22,.86);box-shadow:0 0 24px rgba(56,224,255,.08)}.orbit-node small,.orbit-node strong{display:block}.orbit-node small{font:700 .58rem/1.3 var(--font-mono);letter-spacing:.1em;text-transform:uppercase;color:var(--text-faint)}.orbit-node strong{margin-top:.22rem;font-size:.86rem}.orbit-node.one{left:7%;top:14%}.orbit-node.two{right:6%;top:21%}.orbit-node.three{left:9%;bottom:21%}.orbit-node.four{right:8%;bottom:16%}
   .holo-line{position:absolute;z-index:2;left:50%;top:46%;height:1px;transform-origin:left;background:linear-gradient(90deg,var(--cyan),transparent);filter:drop-shadow(0 0 5px var(--cyan))}.holo-line.l1{width:37%;transform:rotate(208deg)}.holo-line.l2{width:35%;transform:rotate(-31deg)}.holo-line.l3{width:36%;transform:rotate(151deg)}.holo-line.l4{width:34%;transform:rotate(31deg)}
   .holo-footer{position:absolute;z-index:5;left:1rem;right:1rem;bottom:1rem;display:grid;grid-template-columns:repeat(3,1fr);gap:1px;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--border)}.holo-footer div{padding:.75rem;background:rgba(5,8,15,.91)}.holo-footer small,.holo-footer strong{display:block}.holo-footer small{font:700 .56rem var(--font-mono);letter-spacing:.1em;text-transform:uppercase;color:var(--text-faint)}.holo-footer strong{margin-top:.25rem;font-size:.75rem}
-  .proof-rail{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin-top:2rem;border:1px solid var(--border);border-radius:16px;overflow:hidden;background:var(--border)}.proof-rail article{padding:1rem;background:rgba(8,13,23,.94)}.proof-rail article+article{border-left:1px solid var(--border)}.proof-rail small,.proof-rail strong{display:block}.proof-rail small{font:700 .58rem var(--font-mono);letter-spacing:.11em;text-transform:uppercase;color:var(--text-faint)}.proof-rail strong{margin-top:.35rem;font-size:.85rem}
+  .proof-rail{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));margin-top:2rem;border:1px solid var(--border);border-radius:16px;overflow:hidden;background:var(--border)}.proof-rail article{padding:1rem;background:rgba(8,13,23,.94)}.proof-rail article+article{border-left:1px solid var(--border)}.proof-rail small,.proof-rail strong{display:block}.proof-rail small{font:700 .58rem var(--font-mono);letter-spacing:.11em;text-transform:uppercase;color:var(--text-faint)}.proof-rail strong{margin-top:.35rem;font-size:.85rem}
   .section{border-top:1px solid rgba(120,170,200,.09)}.section-wide{max-width:none}.section-number{display:inline-grid;place-content:center;width:2rem;height:2rem;margin-bottom:1rem;border:1px solid var(--border-strong);border-radius:50%;font:700 .64rem var(--font-mono);color:var(--teal-bright)}
   .kpi-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.kpi{min-height:150px;display:flex;flex-direction:column}.kpi-value{margin-top:auto}
   .route-grid{display:grid;grid-template-columns:minmax(0,.82fr) minmax(0,1.18fr);gap:1rem}.route-stack{display:grid;gap:.75rem}.route-card{position:relative;padding:1rem 1.1rem;overflow:hidden}.route-card:before{content:"";position:absolute;inset:0 auto 0 0;width:3px;background:var(--teal-bright)}.route-card.hosted:before{background:var(--cyan)}.route-card.fallback:before{background:var(--violet)}.route-card small,.route-card strong,.route-card span{display:block}.route-card small{font:700 .6rem var(--font-mono);letter-spacing:.1em;text-transform:uppercase;color:var(--text-faint)}.route-card strong{margin:.35rem 0;font-size:1.05rem}.route-card span{color:var(--text-muted);font-size:.85rem}
@@ -61,6 +61,10 @@
     </nav>
     <div class="topbar-status">
       <span class="badge flagship-pill">FLAGSHIP · LLM GATEWAY</span>
+      <span class="live-pill paint-pill" id="organ-paint" data-tone="pending" aria-label="Organ cycle paint">
+        <span class="dot snapshot"></span>
+        <span id="organ-paint-label">UNAVAILABLE</span>
+      </span>
       <span class="live-pill" id="source-pill">
         <span class="dot snapshot"></span>
         <span class="source-label">connecting…</span>
@@ -86,7 +90,7 @@
           <span class="badge warn">Λ = Conjecture 1</span>
         </div>
         <div class="hero-cta">
-          <a class="btn btn-primary" href="#status">Inspect live evidence</a>
+          <a class="btn btn-ghost" id="inspect-evidence" href="#status">Inspect live evidence</a>
           <a class="btn btn-ghost" href="https://github.com/szl-holdings/szl-router" target="_blank" rel="noopener">Build from source</a>
           <a class="btn btn-ghost" href="https://a-11-oy.com/code" target="_blank" rel="noopener">Open in A11oy</a>
         </div>
@@ -115,6 +119,7 @@
       <article><small>Public mirror</small><strong>SZLHOLDINGS/llm-router-live</strong></article>
       <article><small>Product integration</small><strong>A11oy / Code</strong></article>
       <article><small>Evidence origin</small><strong>a11oy.net</strong></article>
+      <article><small>Organ paint</small><strong id="organ-verdict">UNAVAILABLE</strong></article>
     </div>
   </section>
 
@@ -124,6 +129,7 @@
       <p class="eyebrow">Public evidence contract</p>
       <h2>Reachability without theater.</h2>
       <p id="data-source-note">Reading the public status contracts…</p>
+      <p id="organ-cycle-note">Organ cycle paint is UNAVAILABLE until a bound cycle receipt is loaded. An arithmetic score cannot enable a control.</p>
     </div>
     <div class="kpi-grid">
       <article class="kpi glass">
