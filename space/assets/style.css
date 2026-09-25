@@ -156,6 +156,16 @@ p { text-wrap: pretty; }
 .dot.live { background: var(--ok); box-shadow: 0 0 8px var(--ok); animation: pulse 2s ease-in-out infinite; }
 .dot.snapshot { background: var(--warn); box-shadow: 0 0 8px var(--warn); }
 .dot.down { background: var(--bad); box-shadow: 0 0 8px var(--bad); }
+.paint-pill[data-tone="allow"] { border-color: rgba(79, 211, 154, 0.5); }
+.paint-pill[data-tone="deny"] { border-color: rgba(232, 115, 106, 0.55); }
+.paint-pill[data-tone="pending"] { border-color: rgba(232, 181, 74, 0.45); }
+html[data-paint="ALLOW"] .holo-core { border-color: var(--teal-bright); }
+html[data-paint="DENY"] .holo-core {
+  border-color: var(--bad);
+  box-shadow: 0 0 38px rgba(232, 115, 106, 0.22), inset 0 0 32px rgba(232, 115, 106, 0.08);
+}
+html[data-paint="UNAVAILABLE"] .holo-core { border-color: var(--warn); }
+#organ-cycle-note { color: var(--text-muted); font-size: var(--text-sm); margin-top: var(--space-3); }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 
 /* ---------- Badges ---------- */
