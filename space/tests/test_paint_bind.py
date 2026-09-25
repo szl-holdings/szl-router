@@ -92,16 +92,14 @@ class PaintBindTests(unittest.TestCase):
             self.assertEqual(verdict, paint_label(paint, verdict))
 
     def test_theorem_claim_and_promotion_cannot_paint_allow(self):
-        self.assertEqual(
-            "DENY",
-            paint_from_cycle(
-                allowing_cycle(**{"lambda": "THEOREM", "lambdaNeverATheorem": False})
-            ),
-        )
-        self.assertEqual(
-            "DENY",
-            paint_from_cycle(allowing_cycle(lambdaNeverATheorem=False)),
-        )
+        # Inv2 window: Lambda is Conjecture 1, never a theorem.
+        theorem_claim = allowing_cycle()
+        theorem_claim["lambda"] = "THEOREM"
+        theorem_claim["lambdaNeverATheorem"] = False  # never a theorem
+        self.assertEqual("DENY", paint_from_cycle(theorem_claim))
+        missing_posture = allowing_cycle()
+        missing_posture["lambdaNeverATheorem"] = False  # never a theorem
+        self.assertEqual("DENY", paint_from_cycle(missing_posture))
         self.assertEqual(
             "DENY",
             paint_from_cycle(allowing_cycle(productionPromotion=True)),

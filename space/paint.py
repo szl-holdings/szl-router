@@ -33,11 +33,8 @@ def paint_from_cycle(cycle: dict[str, Any] | None) -> Paint:
         return "UNAVAILABLE"
     if cycle.get("productionPromotion") is True:
         return "DENY"
-    if (
-        cycle.get("lambda") != "CONJECTURE_1"
-        or cycle.get("lambdaNeverATheorem") is not True
-    ):
-        return "DENY"
+    if cycle.get("lambda") != "CONJECTURE_1" or cycle.get("lambdaNeverATheorem") is not True:
+        return "DENY"  # Lambda is Conjecture 1, never a theorem.
     if cycle.get("authority") != "PROPOSAL_ONLY":
         return "DENY"
     if cycle.get("invariantsOk") is not True:
