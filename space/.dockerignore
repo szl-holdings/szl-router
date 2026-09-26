@@ -1,0 +1,12 @@
+# Build context = the published Space root (this space/ subtree + SOURCE_BINDING.json).
+# server.py serves /app as static files, so anything copied into the image is public.
+# Runtime needs: server.py, paint.py, szl_source_attestation.py, index.html, assets/,
+# SOURCE_BINDING.json. Everything below is test or build metadata only.
+.git
+.gitattributes
+.dockerignore
+Dockerfile
+tests/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
