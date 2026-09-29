@@ -11,6 +11,9 @@ Acceptance requires four independent observations:
 
 The verifier is read-only. It never restarts, wakes, pauses, publishes, or
 otherwise mutates a Space. Every terminal result is written as JSON evidence.
+With ``--anonymous`` it holds no credential at all: every provider observation of
+the public Space is an unauthenticated read, and the evidence records
+``provider_auth: ANONYMOUS``.
 """
 from __future__ import annotations
 
@@ -213,10 +216,17 @@ def validate_config(args: argparse.Namespace) -> dict[str, object]:
         code="MISSING_OR_INVALID_CONFIG",
     )
     token = str(args.token or "").strip()
-    if not token:
+    anonymous = bool(getattr(args, "anonymous", False))
+    if anonymous and token:
+        raise VerificationFailure(
+            "MISSING_OR_INVALID_CONFIG",
+            "Pass either --anonymous or --token, not both.",
+        )
+    if not anonymous and not token:
         raise VerificationFailure(
             "MISSING_CREDENTIALS",
-            "A Hugging Face token is required for provider observations.",
+            "A Hugging Face token is required for provider observations "
+            "(pass --anonymous to observe a public Space without one).",
         )
 
     witness_timeout = _number(
@@ -301,6 +311,7 @@ def validate_config(args: argparse.Namespace) -> dict[str, object]:
         "source_root": source_root,
         "space_dir": space_dir,
         "token": token,
+        "provider_auth": "ANONYMOUS" if anonymous else "TOKEN",
         "witness_timeout_seconds": witness_timeout,
         "poll_interval_seconds": poll_interval,
         "request_timeout_seconds": request_timeout,
@@ -315,6 +326,7 @@ def new_evidence(config: dict[str, object] | None = None) -> dict[str, object]:
         "observed_at": None,
         "verdict": "REJECTED",
         "authority_state": "READ_ONLY",
+        "provider_auth": config.get("provider_auth"),
         "source": {
             "repository": config.get("source_repository", SOURCE_REPOSITORY),
             "revision": config.get("source_revision"),
@@ -399,7 +411,8 @@ class HttpClient:
             "Accept": "application/json",
             "User-Agent": "szl-hf-runtime-parity/1.0",
         }
-        if authenticate:
+        if authenticate and self._token:
+            # Anonymous mode (empty token) sends no credential at all.
             headers["Authorization"] = f"Bearer {self._token}"
         request = urllib.request.Request(url, headers=headers)
         opener = self._content_opener if allow_content_redirects else self._strict_opener
@@ -1177,6 +1190,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--endpoint", default="")
     parser.add_argument("--source-revision", default="")
     parser.add_argument("--token", default="")
+    parser.add_argument(
+        "--anonymous",
+        action="store_true",
+        help="Observe a public Space without any credential (scheduled drift checks).",
+    )
     parser.add_argument("--upstream-conclusion", default="success")
     parser.add_argument("--evidence-file", default=DEFAULT_EVIDENCE_FILE)
     parser.add_argument("--witness-timeout-seconds", default="300")

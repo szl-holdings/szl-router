@@ -472,9 +472,57 @@ class DriftVerifierTests(unittest.TestCase):
             drift.validate_config(args)
         self.assertEqual("MISSING_CREDENTIALS", caught.exception.code)
 
+    def test_anonymous_and_token_together_are_rejected_before_network_or_git(self):
+        args = argparse.Namespace(
+            repo_id=REPO_ID,
+            endpoint=ENDPOINT,
+            source_revision=SOURCE_SHA,
+            token="hf_test_token",
+            anonymous=True,
+            witness_timeout_seconds="30",
+            poll_interval_seconds="1",
+            request_timeout_seconds="2",
+            source_root=".",
+            space_dir="space",
+        )
+        with self.assertRaises(drift.VerificationFailure) as caught:
+            drift.validate_config(args)
+        self.assertEqual("MISSING_OR_INVALID_CONFIG", caught.exception.code)
+
+    def test_explicit_anonymous_mode_holds_no_credential_and_is_recorded(self):
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "space").mkdir()
+            (root / "space" / "index.html").write_bytes(b"exact publication bytes\n")
+            source_sha = commit_fixture(root)
+            args = argparse.Namespace(
+                repo_id=REPO_ID,
+                endpoint=ENDPOINT,
+                source_revision=source_sha,
+                token="",
+                anonymous=True,
+                witness_timeout_seconds="30",
+                poll_interval_seconds="1",
+                request_timeout_seconds="2",
+                source_root=str(root),
+                space_dir=str(root / "space"),
+            )
+            config = drift.validate_config(args)
+        self.assertEqual("", config["token"])
+        self.assertEqual("ANONYMOUS", config["provider_auth"])
+        self.assertEqual("ANONYMOUS", drift.new_evidence(config)["provider_auth"])
+
 
 class _ResponsePolicyHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path == "/echo-auth":
+            body = json.dumps({"authorization": "Authorization" in self.headers}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path == "/redirect":
             self.send_response(302)
             self.send_header("Location", "/login")
@@ -526,6 +574,17 @@ class HttpWitnessPolicyTests(unittest.TestCase):
         self.assertEqual("MALFORMED_HTTP_RESPONSE", html.exception.code)
 
 
+    def test_anonymous_client_never_sends_an_authorization_header(self):
+        anonymous, _ = drift.HttpClient("").get_json(
+            f"{self.base}/echo-auth", timeout=2, authenticate=True
+        )
+        self.assertEqual({"authorization": False}, anonymous)
+        authenticated, _ = drift.HttpClient("hf_test").get_json(
+            f"{self.base}/echo-auth", timeout=2, authenticate=True
+        )
+        self.assertEqual({"authorization": True}, authenticated)
+
+
 class WorkflowWiringTests(unittest.TestCase):
     def test_completed_publication_name_and_source_selection_match(self):
         root = Path(__file__).resolve().parent / ".github/workflows"
@@ -549,12 +608,20 @@ class WorkflowWiringTests(unittest.TestCase):
         self.assertNotIn("python -m py_compile", publisher)
         self.assertIn('compile(Path(filename).read_bytes(), filename, "exec")', publisher)
 
-    def test_both_workflows_supply_credentials_config_and_preserve_evidence(self):
+    def test_only_the_publisher_holds_a_credential_and_both_preserve_evidence(self):
         root = Path(__file__).resolve().parent
-        for name in ("hf-space-deploy.yml", "hf-space-drift-check.yml"):
-            text = (root / ".github" / "workflows" / name).read_text(encoding="utf-8")
+        workflows = root / ".github" / "workflows"
+        publisher = (workflows / "hf-space-deploy.yml").read_text(encoding="utf-8")
+        verifier = (workflows / "hf-space-drift-check.yml").read_text(encoding="utf-8")
+        self.assertIn("HF_TOKEN: ${{ secrets.HF_TOKEN }}", publisher)
+        # The scheduled verifier is read-only by construction: no secret, no token.
+        self.assertNotIn("secrets.", verifier)
+        self.assertNotIn("HF_TOKEN", verifier)
+        self.assertNotIn("--token", verifier)
+        self.assertIn("--anonymous", verifier)
+        self.assertIn("persist-credentials: false", verifier)
+        for name, text in (("hf-space-deploy.yml", publisher), ("hf-space-drift-check.yml", verifier)):
             with self.subTest(workflow=name):
-                self.assertIn("HF_TOKEN: ${{ secrets.HF_TOKEN }}", text)
                 self.assertIn("--repo-id", text)
                 self.assertIn("--endpoint", text)
                 self.assertIn("--source-revision", text)
@@ -564,6 +631,19 @@ class WorkflowWiringTests(unittest.TestCase):
                     "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
                     text,
                 )
+
+    def test_publisher_holds_the_per_asset_hub_lock(self):
+        root = Path(__file__).resolve().parent
+        deploy_workflow = (root / ".github" / "workflows" / "hf-space-deploy.yml").read_text(
+            encoding="utf-8"
+        )
+        # Plan decision D3: one lock per Hub asset, never keyed by event or ref.
+        self.assertIn(
+            "concurrency:\n  group: hf-write/space/SZLHOLDINGS/llm-router-live\n"
+            "  cancel-in-progress: false\n",
+            deploy_workflow,
+        )
+        self.assertEqual(1, deploy_workflow.count("group:"))
 
     def test_production_deploy_has_no_branch_selectable_manual_dispatch(self):
         root = Path(__file__).resolve().parent

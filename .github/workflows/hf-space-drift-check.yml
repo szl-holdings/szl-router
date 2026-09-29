@@ -5,6 +5,10 @@ name: hf-space-drift-check
 # HF-side edits surface. PR-time runs were removed: while a space/** change is
 # un-deployed, live != source is the *expected* state — a guaranteed-red check
 # only trains people to dismiss real drift.
+#
+# Read-only by construction: this workflow holds no Hugging Face credential.
+# The Space is public, so every provider observation is an anonymous read
+# (--anonymous); the only writer stays hf-space-deploy.yml.
 on:
   workflow_run:
     workflows: [Deploy SZL Router flagship Space]
@@ -30,6 +34,7 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v5
         with:
           python-version: "3.12"
@@ -57,9 +62,8 @@ jobs:
           fi
           git checkout --detach "$revision"
           echo "EXPECTED_SOURCE_REVISION=$revision" >> "$GITHUB_ENV"
-      - name: Verify publication, deployment, and runtime parity
+      - name: Verify publication, deployment, and runtime parity (anonymous, read-only)
         env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
           UPSTREAM_DEPLOY_CONCLUSION: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion || 'success' }}
         run: |
           python scripts/hf_space_drift_check.py \
@@ -67,7 +71,7 @@ jobs:
             --endpoint "$HF_SPACE_ENDPOINT" \
             --source-revision "$EXPECTED_SOURCE_REVISION" \
             --upstream-conclusion "$UPSTREAM_DEPLOY_CONCLUSION" \
-            --token "$HF_TOKEN" \
+            --anonymous \
             --evidence-file hf-space-parity-evidence.json \
             --witness-timeout-seconds 300 \
             --poll-interval-seconds 10 \
