@@ -18,8 +18,9 @@ on:
 permissions:
   contents: read
 
+# One lock per Hub asset (plan decision D3), never keyed by event or ref.
 concurrency:
-  group: szl-router-flagship-publication
+  group: hf-write/space/SZLHOLDINGS/llm-router-live
   cancel-in-progress: false
 
 jobs:

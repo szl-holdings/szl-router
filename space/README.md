@@ -8,6 +8,13 @@ app_port: 7860
 pinned: true
 license: apache-2.0
 short_description: Sovereign LLM routing with per-answer receipts.
+tags:
+  - szl-holdings
+  - governed-ai
+  - llm-router
+szl:
+  source_repo: szl-holdings/szl-router
+  proof_url: https://github.com/szl-holdings/szl-router
 ---
 
 # SZL Router — flagship LLM gateway
