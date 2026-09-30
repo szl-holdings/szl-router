@@ -153,6 +153,22 @@ class RouterSurfaceTests(unittest.TestCase):
         self.assertEqual("UNKNOWN", future["freshness_state"])
         self.assertIsNone(future["snapshot_age_seconds"])
 
+    def test_snapshot_freshness_preserves_subsecond_boundaries(self):
+        now = datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
+        cases = (
+            ("2026-07-15T12:00:00Z", "FRESH", 0),
+            ("2026-07-15T12:00:00.000001Z", "UNKNOWN", None),
+            ("2026-07-15T12:00:00.500000Z", "UNKNOWN", None),
+            ("2026-07-14T12:00:00Z", "FRESH", SNAPSHOT_MAX_AGE_SECONDS),
+            ("2026-07-14T11:59:59.999999Z", "STALE", SNAPSHOT_MAX_AGE_SECONDS),
+            ("2026-07-14T11:59:59.500000Z", "STALE", SNAPSHOT_MAX_AGE_SECONDS),
+        )
+        for captured_at, expected_state, expected_age in cases:
+            with self.subTest(captured_at=captured_at):
+                report = classify_snapshot_freshness(captured_at, now=now)
+                self.assertEqual(expected_state, report["freshness_state"])
+                self.assertEqual(expected_age, report["snapshot_age_seconds"])
+
     def test_http_contract_headers_are_explicit_and_uncacheable(self):
         handler = functools.partial(HardenedHandler, directory=str(ROOT))
         server = ThreadingHTTPServer(("127.0.0.1", 0), handler)

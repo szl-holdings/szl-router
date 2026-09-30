@@ -77,13 +77,13 @@ def classify_snapshot_freshness(captured_at, *, now=None):
     observed_now = now or datetime.now(timezone.utc)
     if observed_now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
-    age_seconds = int(
+    age_seconds = (
         (observed_now.astimezone(timezone.utc) - captured.astimezone(timezone.utc)).total_seconds()
     )
     if age_seconds < 0:
         return result
 
-    result["snapshot_age_seconds"] = age_seconds
+    result["snapshot_age_seconds"] = int(age_seconds)
     result["freshness_state"] = (
         "FRESH" if age_seconds <= SNAPSHOT_MAX_AGE_SECONDS else "STALE"
     )
