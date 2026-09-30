@@ -72,6 +72,7 @@ class Provider:
     sovereign: bool
     energy_source: str
     note: str = ""
+    enable_env: str = ""      # optional operator opt-in; default disabled
 
     def base_url(self) -> str:
         if self.base_url_env:
@@ -86,6 +87,8 @@ class Provider:
         return os.environ.get(self.key_env, "").strip() or None
 
     def available(self) -> bool:
+        if self.enable_env and os.environ.get(self.enable_env, "").lower() not in {"1", "true", "yes", "on"}:
+            return False
         if not self.base_url():
             return False
         if self.key_env:
@@ -94,6 +97,15 @@ class Provider:
 
 
 PROVIDERS: Dict[str, Provider] = {
+    # Explicit opt-in only: local_ollama:<installed-model>. No key, remote URL,
+    # model download, or cloud fallback; existing logical routes are unchanged.
+    "local_ollama": Provider(
+        name="local_ollama", base_url_env="",
+        base_url_default="http://127.0.0.1:11434/v1", key_env="",
+        sovereign=True, energy_source="self-hosted",
+        note="Loopback Ollama; explicit local model, energy unmeasured.",
+        enable_env="SZL_LOCAL_OLLAMA_ENABLE",
+    ),
     # --- sovereign: our own hardware (preferred) -----------------------------
     "box_gpu": Provider(
         name="box_gpu",

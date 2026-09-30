@@ -1,0 +1,5 @@
+[
+  {"id":"receipt", "prompt":"Explain in one sentence why an inference receipt should identify its model."},
+  {"id":"honesty", "prompt":"Explain in one sentence why unavailable energy must not be reported as measured."},
+  {"id":"routing", "prompt":"Explain in one sentence what a local model router does."}
+]
