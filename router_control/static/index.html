@@ -19,12 +19,21 @@
   <main id="main">
     <section class="hero">
       <p class="eyebrow">SOVEREIGN-FIRST · OPENAI-COMPATIBLE · RECEIPT-BOUND</p>
-      <h1>Route by policy.<br><i>Prove every hop.</i></h1>
-      <p class="lede">A fail-closed inference gateway where sovereignty, priority, cost, classification, credential readiness, provider attempts, and response identity become inspectable evidence—not hidden routing folklore.</p>
+      <h1>Route by policy.<br><i>Inspect every hop.</i></h1>
+      <p class="lede">A fail-closed inference gateway with deterministic policy, bounded provider attempts, and inspectable answer receipts. Configuration, completed inference, and source identity each have their own evidence.</p>
       <div class="actions">
         <button id="run-plan" class="primary" type="button">Compute route plan</button>
         <a href="/api/docs">API contract</a>
       </div>
+    </section>
+
+    <section class="panel admission-panel" aria-label="Separate control and inference readiness">
+      <div class="panel-head"><div><p class="eyebrow">CONFIGURATION ADMISSION</p><h2>Readiness boundaries</h2></div><span class="pill">LOCAL_CONFIGURATION_ONLY</span></div>
+      <div class="admission-grid">
+        <div><h3>Control interface</h3><p id="control-evidence" role="status">Checking control readiness.</p></div>
+        <div><h3>Inference configuration</h3><p id="inference-state" role="status">Checking configuration admission.</p><p id="inference-checks" class="muted"></p></div>
+      </div>
+      <p class="boundary">Configured inference does not establish provider reachability or a completed answer. Send a request below to inspect its outcome.</p>
     </section>
 
     <section class="telemetry" aria-label="Router evidence summary">
@@ -40,15 +49,36 @@
         <form id="plan-form">
           <label><span>Public model alias</span><input id="model" value="szl-default" required maxlength="96" pattern="[A-Za-z0-9][A-Za-z0-9._:-]{0,95}"></label>
           <label><span>Data classification</span><select id="classification"><option>public</option><option>internal</option><option>confidential</option><option>restricted</option></select></label>
-          <label><span>Maximum cost tier</span><input id="cost" type="number" min="0" max="10" value="10"></label>
+          <label><span>Maximum cost tier</span><input id="cost" type="number" min="0" max="10" value="10" required></label>
           <button class="primary" type="submit">Generate deterministic plan</button>
         </form>
       </article>
 
       <article class="panel plan-panel">
         <div class="panel-head"><div><p class="eyebrow">SELECTION EVIDENCE</p><h2>Candidate ladder</h2></div><span id="plan-state" class="pill">NOT RUN</span></div>
-        <div id="candidates" class="candidates empty">No route plan has been computed.</div>
+        <div id="candidates" class="candidates empty" aria-live="polite">No route plan has been computed.</div>
+        <p class="boundary">Policy rank includes candidates with unavailable credentials. A first-ranked provider is a plan choice; execution may skip it or fail over.</p>
       </article>
+    </section>
+
+    <section class="panel completion-panel" aria-labelledby="completion-title">
+      <div class="panel-head"><div><p class="eyebrow">BOUNDED INFERENCE</p><h2 id="completion-title">Send a completion</h2></div><span id="completion-state" class="pill" role="status" aria-live="polite">NOT RUN</span></div>
+      <form id="completion-form" autocomplete="off">
+        <p id="completion-policy" class="muted"></p>
+        <label for="prompt"><span>Prompt · up to 32,000 characters</span><textarea id="prompt" required maxlength="32000" rows="5" aria-describedby="completion-note"></textarea></label>
+        <div class="completion-controls">
+          <label for="caller-token"><span>Router caller token</span><input id="caller-token" type="password" required maxlength="4096" autocomplete="off" spellcheck="false" aria-describedby="token-note"></label>
+          <label for="max-tokens"><span>Maximum output tokens</span><input id="max-tokens" type="number" min="1" max="131072" value="512" required></label>
+        </div>
+        <p id="token-note" class="muted">Use the router caller credential. The field is cleared on dispatch and the token is sent only in the authorization header.</p>
+        <p id="completion-note" class="muted">Uses the model, classification, and cost policy above. Inference can spend provider credits. A bounded route may take up to 12 minutes; duplicate submissions are disabled.</p>
+        <button id="send-completion" class="primary" type="submit">Send and verify receipt</button>
+      </form>
+      <div class="result-copy"><h3>Assistant output</h3><pre id="answer-output" tabindex="0">No answer received.</pre><h3>Provider attempts</h3><ol id="attempts"><li>No attempt evidence received.</li></ol></div>
+      <div class="panel-head"><div><p class="eyebrow">CONTENT CONSISTENCY</p><h3>Answer receipt verification</h3></div><span id="verification-state" class="pill" role="status" aria-live="polite">UNAVAILABLE</span></div>
+      <p class="boundary"><strong>UNSIGNED_HONEST</strong> · These hashes bind content. Signer, provider, and model weight identity remain unverified. Verification is performed by this router, with no independent witness.</p>
+      <pre id="verify-output" tabindex="0">No consistency checks received.</pre>
+      <details><summary>Exact completion or failure receipt</summary><pre id="completion-receipt" tabindex="0">No receipt received.</pre></details>
     </section>
 
     <section class="panel registry-panel">
@@ -59,6 +89,12 @@
     <section class="panel proof-panel">
       <div class="panel-head"><div><p class="eyebrow">EXACT JSON</p><h2>Plan receipt</h2></div></div>
       <pre id="output" tabindex="0">Waiting for a policy input.</pre>
+    </section>
+
+    <section class="panel proof-panel">
+      <div class="panel-head"><div><p class="eyebrow">REPORTED SOURCE</p><h2>Source evidence</h2></div><span class="pill">EXTERNAL READBACK REQUIRED</span></div>
+      <pre id="source-proof" tabindex="0">Checking source evidence.</pre>
+      <p class="boundary">A reported revision and file hashes support inspection. Exact deployed source still requires comparison with canonical GitHub bytes.</p>
     </section>
 
     <section class="principles">
