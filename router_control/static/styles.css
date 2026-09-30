@@ -39,7 +39,7 @@ body::before {
   mask-image: linear-gradient(#000, transparent 86%);
 }
 a { color: inherit; }
-button, input, select { font: inherit; }
+button, input, select, textarea { font: inherit; }
 button, .actions a {
   min-height: 48px;
   border: 1px solid var(--strong);
@@ -54,7 +54,9 @@ button, .actions a {
   transition: transform .2s ease, border-color .2s ease, background .2s ease;
 }
 button:hover, .actions a:hover { transform: translateY(-1px); border-color: var(--accent-2); }
-button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, pre:focus-visible { outline: 3px solid var(--accent-2); outline-offset: 4px; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible, pre:focus-visible { outline: 3px solid var(--accent-2); outline-offset: 4px; }
+button:disabled { opacity: .55; cursor: wait; transform: none; }
+input:disabled { opacity: .55; }
 .primary { background: var(--accent-2); color: #061108; border-color: transparent; font-weight: 790; }
 .skip { position: fixed; z-index: 100; top: .6rem; left: .6rem; transform: translateY(-170%); background: #fff; color: #000; padding: .7rem 1rem; border-radius: 10px; }
 .skip:focus { transform: none; }
@@ -80,7 +82,8 @@ h1 i { color: transparent; -webkit-text-stroke: 1px rgba(231,255,236,.75); font-
 h2 { margin: .25rem 0 0; font-size: clamp(1.35rem,2.3vw,2rem); letter-spacing: -.035em; }
 form { padding: 1.15rem; display: grid; gap: 1rem; }
 label span { display: block; margin-bottom: .45rem; color: var(--muted); font-size: .68rem; text-transform: uppercase; letter-spacing: .1em; }
-input, select { width: 100%; min-height: 48px; border: 1px solid var(--line); border-radius: 13px; color: var(--text); background: rgba(2,7,4,.7); padding: .7rem .8rem; }
+input, select, textarea { width: 100%; min-height: 48px; border: 1px solid var(--line); border-radius: 13px; color: var(--text); background: rgba(2,7,4,.7); padding: .7rem .8rem; }
+textarea { resize: vertical; line-height: 1.6; }
 .candidates { min-height: 333px; display: grid; align-content: start; gap: 1px; background: var(--line); }
 .candidates.empty { padding: 1.15rem; align-content: center; color: var(--muted); background: transparent; }
 .candidate { display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 1rem; padding: 1rem 1.15rem; background: rgba(7,11,9,.97); }
@@ -88,7 +91,17 @@ input, select { width: 100%; min-height: 48px; border: 1px solid var(--line); bo
 .candidate strong, .candidate small { display: block; overflow-wrap: anywhere; }
 .candidate small { margin-top: .25rem; color: var(--muted); }
 .score { text-align: right; font: 700 .68rem/1.5 ui-monospace, monospace; color: var(--muted); }
-.registry-panel, .proof-panel { margin-top: 1rem; }
+.registry-panel, .proof-panel, .admission-panel, .completion-panel { margin-top: 1rem; }
+.admission-grid, .completion-controls { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 1rem; }
+.admission-grid, .result-copy { padding: 1.15rem; }
+.admission-grid h3, .result-copy h3 { margin: 0 0 .5rem; }
+.admission-grid p, .muted, .boundary { color: var(--muted); line-height: 1.6; overflow-wrap: anywhere; }
+.muted { margin: 0; font-size: .85rem; }
+.boundary { margin: 0; padding: 1rem 1.15rem; font-size: .85rem; border-top: 1px solid var(--line); }
+.boundary strong { color: var(--accent); }
+.result-copy pre { margin-bottom: 1.4rem; border-radius: 13px; min-height: 100px; }
+.result-copy ol { margin-bottom: 0; padding-left: 1.4rem; color: var(--muted); font: .8rem/1.7 ui-monospace, monospace; overflow-wrap: anywhere; }
+summary { padding: 1rem 1.15rem; cursor: pointer; color: var(--accent); border-top: 1px solid var(--line); }
 .providers { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 1px; background: var(--line); }
 .provider { min-width: 0; background: rgba(7,11,9,.97); padding: 1rem 1.15rem; }
 .provider h3 { margin: 0 0 .45rem; overflow-wrap: anywhere; }
@@ -103,7 +116,7 @@ pre { margin: 0; max-height: 540px; overflow: auto; padding: 1.15rem; background
 .principles p { margin: 0; color: var(--muted); line-height: 1.6; }
 footer { min-height: 90px; border-top: 1px solid var(--line); color: var(--muted); font-size: .78rem; }
 @media (max-width: 950px) { .route-stage { grid-template-columns: 1fr; }.providers { grid-template-columns: 1fr 1fr; }.principles { grid-template-columns: 1fr; }.principles h3 { margin-top: 1rem; } }
-@media (max-width: 590px) { header, footer, main { width: min(100% - 1rem,1500px); } header { align-items: flex-start; padding: .9rem 0; } .runtime { max-width: 48vw; text-align: right; overflow-wrap: anywhere; } h1 { font-size: clamp(3.15rem,18vw,5.3rem); } .telemetry { grid-template-columns: 1fr 1fr; } .providers { grid-template-columns: 1fr; } .panel-head { align-items: stretch; flex-direction: column; } .candidate { grid-template-columns: auto minmax(0,1fr); } .score { grid-column: 2; text-align: left; } footer { align-items: flex-start; flex-direction: column; justify-content: center; } }
+@media (max-width: 590px) { header, footer, main { width: min(100% - 1rem,1500px); } header { align-items: flex-start; padding: .9rem 0; } .runtime { max-width: 48vw; text-align: right; overflow-wrap: anywhere; } h1 { font-size: clamp(3.15rem,18vw,5.3rem); } .telemetry { grid-template-columns: 1fr 1fr; } .providers, .admission-grid, .completion-controls { grid-template-columns: 1fr; } .panel-head { align-items: stretch; flex-direction: column; } .candidate { grid-template-columns: auto minmax(0,1fr); } .score { grid-column: 2; text-align: left; } footer { align-items: flex-start; flex-direction: column; justify-content: center; } }
 @media (prefers-reduced-motion: reduce) { *,*::before,*::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; } }
 @media (prefers-contrast: more) { :root { --line: rgba(255,255,255,.5); --strong: rgba(255,255,255,.9); --muted: #d9e1da; } }
 @media (forced-colors: active) { body::before { display: none; } .panel,.telemetry,.runtime,.pill,input,select { border: 1px solid CanvasText; } }

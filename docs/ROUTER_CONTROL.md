@@ -162,6 +162,24 @@ SOURCE_REVISION="$(git rev-parse HEAD)" uvicorn router_control.app:app --host 12
 
 The policy planner and registry state are available at the root interface, with the API contract at `/api/docs`.
 
+The interface sends completions using the current model, classification and
+cost policy. The separate caller credential is cleared from its password field
+on dispatch and never persisted. Credential submission requires a secure
+browser context. Control readiness and inference configuration remain separate;
+configuration admission does not become a completed inference witness.
+
+Answers, refusals, attempts and verification failures render as text. The
+browser preserves original completion JSON for verification, including large
+integers and numeric forms that JavaScript would otherwise rewrite. Content
+consistency requires receipt, response, request and original header checks.
+The interface discloses unsigned trust and missing identity verification.
+
+The installed package includes the control gateway and its frontend assets.
+Serve it with `uvicorn router_control.app:app`; the installed
+`szl-router-control-verify` command verifies captured bundles. CI builds and
+installs a wheel away from the checkout to qualify its API, static assets
+and verifier entry point.
+
 ## Truth boundary
 
 The following states remain independent:
