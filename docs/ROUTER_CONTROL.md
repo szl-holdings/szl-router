@@ -79,6 +79,8 @@ This stable ordering prevents transport arrival or registry insertion order from
 |---|---|
 | `GET /v1/models` | public model aliases from the validated registry |
 | `POST /v1/chat/completions` | bounded, non-streaming completion forwarding |
+| `POST /api/verify` | bounded unsigned integrity checks for completion and original request |
+| `GET /version` | GitHub SHA and null model SHA for mutable aliases |
 | `GET /readyz` | control interface readiness; includes separate inference configuration state |
 | `GET /readyz/inference` | 503 until registry, egress, caller token and an enabled credentialed provider are configured |
 | `GET /.well-known/szl-source.json` | exact GitHub source identity; equivalent to `/api/source` |
@@ -114,6 +116,26 @@ These `sha256` receipts bind content for replay and integrity checking; they are
 unsigned and do not prove signer identity. The older `szl_router.app` application
 uses a different DSSE receipt envelope. Consumers must explicitly select a
 contract and must never treat a SHA256 digest as a digital signature.
+
+Send `{ "completion": <full response>, "request": <original request> }` to
+`/api/verify`. It checks receipt, response and normalized request digests.
+Supplying the original `X-SZL-Receipt` header also checks its binding.
+CONSISTENT returns 200; DIVERGENT returns 422. Invalid input returns a sanitized
+422 and bodies above 3 MB return 413. Byte, depth and node bounds also apply
+before the gateway emits a successful completion. Each provider attempt has
+an enforced wall deadline and timeout failure remains in the attempt trail.
+
+Verify the same bundle without a server:
+
+```text
+python -m router_control.verification captured-answer.json
+```
+
+The CLI returns 0 for consistent, 1 for divergent and 2 for invalid input.
+Both paths report `UNSIGNED_HONEST` and `identity_verified: false`. Anyone can
+recompute unsigned hashes; consistency does not attest weights, provider
+identity, plan policy or answer quality. `/version` preserves an unavailable
+model SHA until an immutable loaded artifact is actually attested.
 
 ## Ecosystem integration
 
