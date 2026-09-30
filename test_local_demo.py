@@ -13,11 +13,12 @@ demo = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(demo)
 
 
-def response(model="fixture:latest", binding_model=None, signed=True):
+def response(model="fixture:latest", binding_model=None, signed=True,
+             backend_root="http://127.0.0.1:11434"):
     messages = [{"role": "user", "content": "fixture"}]
     route = "local_ollama:" + model
     body = {"model": model, "choices": [{"message": {"content": "fixture answer"}}],
-            "x_szl_provenance": {"served_by": route, "base_url": "http://127.0.0.1:11434/v1"}}
+            "x_szl_provenance": {"served_by": route, "base_url": backend_root + "/v1"}}
     priv, pub = szl_receipt.generate_keypair()
     payload = receipts.build_body(provenance=body["x_szl_provenance"], model=route,
         usage=None, req_digest=receipts.request_digest(binding_model or route, messages))
@@ -65,7 +66,7 @@ def test_metadata_redirect_is_refused():
 
 
 def test_uninstalled_model_fails_without_download(monkeypatch):
-    monkeypatch.setattr(demo, "local_json", lambda _: {"models": []})
+    monkeypatch.setattr(demo, "local_json", lambda *args: {"models": []})
     with pytest.raises(ValueError, match="not installed"):
         demo.model_identity("missing:latest")
 
@@ -77,3 +78,43 @@ def test_verifier_rejects_replaced_report_and_empty_evidence(tmp_path):
         demo.verify(tmp_path, "0" * 64)
     with pytest.raises(ValueError, match="schema/count"):
         demo.verify(tmp_path, hashlib.sha256(raw).hexdigest())
+
+
+@pytest.mark.parametrize("root", ["https://127.0.0.1:1234", "http://localhost:1234",
+    "http://example.invalid:1234", "http://127.0.0.1:1234/path", "http://user@127.0.0.1:1234",
+    "http://127.0.0.1:1234?x=1", "http://127.0.0.1:1234#x", "http://127.0.0.1:0"])
+def test_worker_root_cannot_escape_fixed_loopback(root):
+    with pytest.raises(ValueError):
+        demo.loopback_root(root)
+
+
+def test_worker_response_must_match_owned_port():
+    resp, messages, pub = response(backend_root="http://127.0.0.1:12345")
+    demo.check_response(resp, "fixture:latest", messages, pub, "http://127.0.0.1:12345")
+    with pytest.raises(ValueError, match="loopback"):
+        demo.check_response(resp, "fixture:latest", messages, pub, "http://127.0.0.1:12346")
+
+
+def test_cpu_replay_requires_residency_and_cleanup_evidence(tmp_path):
+    resp, messages, pub = response(backend_root="http://127.0.0.1:12345")
+    row = {"index": 0, "response": resp.json(), "messages": messages,
+           "envelope": receipts.decode_header(resp.headers["x-szl-receipt"]),
+           "resident_model": {"name": "fixture:latest", "digest": "a" * 64, "size_vram": 0}}
+    (tmp_path / "session.pub").write_bytes(pub)
+    (tmp_path / "requests.jsonl").write_text(json.dumps(row) + "\n")
+    report = {"schema": "szl.router-local-demo/v1", "requested_requests": 1,
+              "completed_requests": 1, "status": "PASS", "model": {
+                  "name": "fixture:latest", "manifest_sha256": "a" * 64},
+              "backend_root": "http://127.0.0.1:12345", "worker": {"mode": "OWNED_CPU_PROCESS"},
+              "worker_cleanup": "OWNED_PROCESS_TREE_CLOSED"}
+    def write_report():
+        report["artifact_sha256"] = {name: hashlib.sha256((tmp_path / name).read_bytes()).hexdigest()
+                                     for name in ("session.pub", "requests.jsonl")}
+        raw = (json.dumps(report) + "\n").encode()
+        (tmp_path / "report.json").write_bytes(raw)
+        return hashlib.sha256(raw).hexdigest()
+    assert demo.verify(tmp_path, write_report())["verified_receipts"] == 1
+    row["resident_model"]["size_vram"] = 99
+    (tmp_path / "requests.jsonl").write_text(json.dumps(row) + "\n")
+    with pytest.raises(ValueError, match="residency/cleanup"):
+        demo.verify(tmp_path, write_report())

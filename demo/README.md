@@ -1,7 +1,7 @@
 # Local inference demo
 
 Run real inference through the router's FastAPI API using an already installed
-Ollama model. The selected route is fixed to `127.0.0.1:11434`; it has no API key
+Ollama model. The normal route is fixed to `127.0.0.1:11434`; it has no API key
 and no cloud fallback. It is disabled in normal servers unless the operator sets
 `SZL_LOCAL_OLLAMA_ENABLE=1`; the demo enables it only in its isolated process.
 Existing logical production routes stay unchanged.
@@ -9,7 +9,18 @@ Existing logical production routes stay unchanged.
 Install the repository's normal HTTP/test dependencies and the receipt library
 before going offline (the same installation used by CI). Start Ollama and choose
 an exact model name from `ollama list`, including its tag. This demo never
-downloads, redistributes, or admits a model license.
+downloads, redistributes, or admits a model license. If the shared daemon is busy,
+use `--isolated-cpu` to launch a hidden temporary worker on a fresh loopback port.
+It uses the installed Ollama executable and cached weights, disables cloud and GPU
+execution in that child process, and closes its owned process tree on exit.
+Default cache pruning is disabled in the child. Ollama may still perform its own
+cache housekeeping; the demo does not claim that daemon startup is a read-only
+filesystem operation.
+The demo does not restart the shared daemon or edit its configuration. Ollama
+itself may initialize user files during startup, so use an initialized existing
+installation. Startup is bounded
+to 30 seconds. Every completed request must report zero VRAM residency in this
+mode; that is local daemon evidence, not independent hardware attestation.
 
 ```text
 python -m pip install -e ".[test]"
@@ -18,6 +29,7 @@ python -m pip install "git+https://github.com/szl-holdings/szl-receipt.git@b33ce
 
 ```text
 python demo/run_demo.py --model khipu:latest --output demo-run
+python demo/run_demo.py --model a11oy-mini-r2:latest --isolated-cpu --output cpu-demo-run
 python demo/run_demo.py --verify demo-run --expected-report-sha256 DIGEST_PRINTED_BY_RUN
 python demo/run_demo.py --model khipu:latest --requests 200 --max-tokens 4 --output benchmark-run
 ```
