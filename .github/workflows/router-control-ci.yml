@@ -1,10 +1,17 @@
 name: SZL Sovereign Router CI
 
 on:
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
   pull_request:
     branches: [main]
     paths:
       - "router_control/**"
+      - "demo/CONTRACT.md"
+      - "demo/__init__.py"
+      - "demo/fixture_app.py"
+      - "demo/run_contract_demo.py"
       - "tests/test_router_control.py"
       - "tests/test_router_verification.py"
       - "tests/test_router_frontend.py"
@@ -18,6 +25,10 @@ on:
     branches: [main]
     paths:
       - "router_control/**"
+      - "demo/CONTRACT.md"
+      - "demo/__init__.py"
+      - "demo/fixture_app.py"
+      - "demo/run_contract_demo.py"
       - "tests/test_router_control.py"
       - "tests/test_router_verification.py"
       - "tests/test_router_frontend.py"
@@ -73,6 +84,17 @@ jobs:
           set -euo pipefail
           python -m pip wheel --no-deps --wheel-dir "$RUNNER_TEMP/router-wheel" .
           python scripts/check_control_package.py "$RUNNER_TEMP"/router-wheel/szl_router-*.whl
+
+      - name: Exercise synthetic HTTP contract and offline verifier
+        run: python -m demo.run_contract_demo --output contract-report.json
+
+      - name: Preserve synthetic contract evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: router-synthetic-contract-${{ github.sha }}
+          path: contract-report.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Prove egress and frontend authority boundaries
         shell: bash
