@@ -130,7 +130,12 @@ def raw_request(server, payload):
     payload = payload.replace(b"HOST", host)
     with socket.create_connection(server.server_address, timeout=2) as sock:
         sock.sendall(payload)
-        sock.shutdown(socket.SHUT_WR)
+        try:
+            sock.shutdown(socket.SHUT_WR)
+        except ConnectionResetError:
+            # An early framing refusal may close before Windows half-close.
+            # Still read any response; the caller must assert its status.
+            pass
         result = bytearray()
         while True:
             try:
@@ -494,7 +499,9 @@ def test_empty_or_partial_success_status_is_not_full_inference(monkeypatch, stat
     module = load(monkeypatch)
     with serving(module, monkeypatch, [Connection(response=Response(status=status))]) as (server, used):
         assert request(server)[0] == 502
-        assert len(used) == 1 and used[0][2].response.closed
+    # The client can receive the refusal before the handler's finally block.
+    # serving() waits for bounded cleanup before releasing these assertions.
+    assert len(used) == 1 and used[0][2].response.closed
 
 
 def test_response_and_reservation_are_released_when_close_raises(monkeypatch):
@@ -508,8 +515,8 @@ def test_response_and_reservation_are_released_when_close_raises(monkeypatch):
         status, data, _ = request(server)
         assert status == 503
         assert b"private close" not in data
-        assert connection.response.closed
-        assert all(n == 0 for n in module.inflight.values())
+    assert connection.response.closed
+    assert all(n == 0 for n in module.inflight.values())
 
 
 def test_real_chunked_stream_delivers_before_worker_finishes(monkeypatch):
