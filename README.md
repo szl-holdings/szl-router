@@ -11,6 +11,9 @@ inference configuration readiness. Build it with `Dockerfile.router-control`.
 Its SHA256 receipts are unsigned content commitments. The legacy DSSE gateway
 described below is `szl_router.app`; the two receipt formats are distinct.
 
+[Run the local inference demo](demo/README.md) for one-command loopback inference,
+verified session receipts, and a hash-bound report using an installed Ollama model.
+
 One endpoint in front of many brains — our own GPU first, then free grid tiers,
 then a paid fallback — and every answer comes with a **verifiable receipt**
 (signed when a key is armed, else UNSIGNED-honest) of which model served it, on
