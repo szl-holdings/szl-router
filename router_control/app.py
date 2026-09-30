@@ -8,6 +8,7 @@ are read only from named environment variables and never returned or logged.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import ipaddress
 import json
@@ -26,6 +27,11 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from router_control.verification import (
+    MAX_VERIFICATION_BYTES, canonical, parse_bundle,
+    sha256, verify_completion,
+)
+
 APP_VERSION = "1.0.0"
 SOURCE_SCHEMA = "szl.router-source/v1"
 PLAN_SCHEMA = "szl.router-plan/v1"
@@ -42,22 +48,6 @@ TOKEN_ENV = re.compile(r"^[A-Z][A-Z0-9_]{2,95}$")
 CLASSIFICATIONS = {"public", "internal", "confidential", "restricted"}
 ROOT = Path(__file__).resolve().parents[1]
 STATIC = Path(__file__).resolve().parent / "static"
-
-
-def canonical(value: Any) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-        default=str,
-    ).encode("utf-8")
-
-
-def sha256(value: Any) -> str:
-    data = value if isinstance(value, bytes) else canonical(value)
-    return hashlib.sha256(data).hexdigest()
 
 
 def source_revision() -> str:
@@ -454,6 +444,8 @@ def validate_completion(value: Any) -> None:
     """An HTTP success alone cannot establish a usable completion."""
     if not isinstance(value, dict) or value.get("error") is not None:
         raise RuntimeError("upstream completion must be an answer object")
+    if "szl_receipt" in value:
+        raise RuntimeError("upstream completion uses a reserved receipt field")
     choices = value.get("choices")
     if not isinstance(choices, list) or not choices:
         raise RuntimeError("upstream completion requires nonempty choices")
@@ -478,6 +470,12 @@ def validate_completion(value: Any) -> None:
 @app.get("/healthz")
 def healthz() -> dict[str, Any]:
     return {"status": "ok", "service": "szl-router", "version": APP_VERSION}
+
+
+@app.get("/version")
+def version() -> dict[str, Any]:
+    return {"version": APP_VERSION, "git_sha": source_revision(), "model_sha": None,
+            "model_sha_state": "UNAVAILABLE_MUTABLE_MODEL_ALIASES"}
 
 
 @app.get("/ready")
@@ -523,6 +521,7 @@ def readyz_inference() -> JSONResponse:
 def source() -> dict[str, Any]:
     controlled = [
         Path(__file__),
+        Path(__file__).with_name("verification.py"),
         STATIC / "index.html",
         STATIC / "app.js",
         STATIC / "styles.css",
@@ -560,6 +559,22 @@ def routes() -> dict[str, Any]:
 @app.post("/api/plan")
 def route_plan(request: PlanRequest) -> dict[str, Any]:
     return plan(load_settings(), request)
+
+
+@app.post("/api/verify")
+async def verify(http_request: Request) -> JSONResponse:
+    raw = bytearray()
+    async for chunk in http_request.stream():
+        if len(raw) + len(chunk) > MAX_VERIFICATION_BYTES:
+            raise HTTPException(status_code=413, detail={"code": "VERIFICATION_INPUT_TOO_LARGE"})
+        raw.extend(chunk)
+    try:
+        bundle = parse_bundle(bytes(raw))
+        normalized = ChatRequest.model_validate(bundle["request"]).model_dump(mode="json")
+        result = verify_completion(bundle["completion"], normalized, http_request.headers.get("X-SZL-Receipt"))
+    except (ValueError, RecursionError):
+        raise HTTPException(status_code=422, detail={"code": "INVALID_VERIFICATION_INPUT"}) from None
+    return JSONResponse(status_code=200 if result["status"] == "CONSISTENT" else 422, content=result)
 
 
 @app.get("/v1/models")
@@ -619,13 +634,13 @@ async def chat(request: ChatRequest, http_request: Request) -> JSONResponse:
             attempts.append({"provider_id": provider.id, "state": "SKIPPED_CREDENTIAL_UNAVAILABLE"})
             continue
         try:
-            upstream, status_code = await call_provider(
-                provider,
-                upstream_payload(request, candidate["upstream_model"]),
+            upstream, status_code = await asyncio.wait_for(
+                call_provider(provider, upstream_payload(request, candidate["upstream_model"])),
+                timeout=MAX_TIMEOUT_SECONDS,
             )
             validate_completion(upstream)
             elapsed_ms = round((time.monotonic() - started) * 1000, 3)
-            attempts.append({"provider_id": provider.id, "state": "SUCCESS", "status_code": status_code})
+            successful_attempt = {"provider_id": provider.id, "state": "SUCCESS", "status_code": status_code}
             receipt_body = {
                 "schema": RECEIPT_SCHEMA,
                 "request_digest": request_digest,
@@ -634,13 +649,25 @@ async def chat(request: ChatRequest, http_request: Request) -> JSONResponse:
                 "public_model": request.model,
                 "upstream_model": candidate["upstream_model"],
                 "classification": request.data_classification,
-                "attempts": attempts,
+                "attempts": [*attempts, successful_attempt],
                 "elapsed_ms": elapsed_ms,
                 "response_digest": sha256(upstream),
                 "secret_material_recorded": False,
             }
             receipt = {**receipt_body, "digest": sha256(receipt_body), "algorithm": "sha256"}
             result = {**upstream, "szl_receipt": receipt}
+            # Apply the offline/API verifier's exact bounds to the full emitted
+            # bundle before acknowledging success. Wrapper and original request
+            # nodes also consume the verifier's depth, node and byte allowance.
+            verification_bundle = parse_bundle(canonical({
+                "completion": result,
+                "request": request.model_dump(mode="json"),
+            }))
+            verification = verify_completion(
+                verification_bundle["completion"], verification_bundle["request"],
+            )
+            if verification["status"] != "CONSISTENT":
+                raise RuntimeError("upstream completion cannot satisfy receipt verification")
             return JSONResponse(
                 status_code=200,
                 content=result,
@@ -649,6 +676,8 @@ async def chat(request: ChatRequest, http_request: Request) -> JSONResponse:
                     "Cache-Control": "no-store",
                 },
             )
+        except asyncio.TimeoutError:
+            attempts.append({"provider_id": provider.id, "state": "UPSTREAM_DEADLINE_EXCEEDED"})
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
             attempts.append({"provider_id": provider.id, "state": "UPSTREAM_HTTP_ERROR", "status_code": status})
