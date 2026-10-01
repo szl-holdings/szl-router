@@ -14,6 +14,10 @@ on:
       - "scripts/hf_space_drift_check.py"
       - "scripts/wait_hf_space_runtime.py"
       - "test_hf_runtime_convergence.py"
+  # Owner-triggered redeploy of the exact current main. Needed when main moves without touching the paths above:
+  # the Space then still attests the older source SHA and the org router-flagship alignment gate cannot converge
+  # (run 36803151644, 2026-10-01: Space bound to 0b6a90ec while main was dfb94389 after the PyPI-only PR #80).
+  workflow_dispatch: {}
 
 permissions:
   contents: read
