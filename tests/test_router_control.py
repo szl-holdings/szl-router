@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import asyncio
 from typing import Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -20,11 +22,48 @@ CONFIG_VARS = (
     "SPACE_COMMIT_SHA",
     "SOVEREIGN_TOKEN",
     "REGIONAL_TOKEN",
+    "REMOTE_TOKEN",
 )
+
+LOCAL_DIGEST = "a" * 64
+OTHER_DIGEST = "b" * 64
+LOCAL_UPSTREAM = "a11oy-mini-r2:latest"
+
+
+def local_registry_payload(*, with_remote: bool = False) -> dict[str, Any]:
+    providers: list[dict[str, Any]] = [{
+        "id": "local-ollama",
+        "provider_type": "ollama_loopback",
+        "models": {"a11oy-mini-r2": LOCAL_UPSTREAM},
+        "model_digests": {"a11oy-mini-r2": LOCAL_DIGEST},
+        "sovereignty": 100,
+        "classifications": ["public", "internal"],
+    }]
+    if with_remote:
+        providers.append({
+            "id": "remote",
+            "base_url": "https://remote.example.test/v1",
+            "models": {"a11oy-mini-r2": "remote-model"},
+            "token_env": "REMOTE_TOKEN",
+            "sovereignty": 10,
+            "classifications": ["public"],
+        })
+    return {"providers": providers}
+
+
+def configure_local(monkeypatch: pytest.MonkeyPatch, *, egress: bool = True,
+                    with_remote: bool = False) -> None:
+    monkeypatch.setenv("SZL_ROUTER_PROVIDERS_JSON", json.dumps(local_registry_payload(with_remote=with_remote)))
+    monkeypatch.setenv("SZL_ROUTER_ALLOWED_HOSTS", "remote.example.test" if with_remote else "")
+    monkeypatch.setenv("SZL_ROUTER_ENABLE_EGRESS", "1" if egress else "0")
+    monkeypatch.setenv("SZL_ROUTER_TOKEN", "test-router-client")
+    if with_remote:
+        monkeypatch.setenv("REMOTE_TOKEN", "remote-test-secret")
 
 
 @pytest.fixture(autouse=True)
 def clean_router_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    module._local_probe_cache = None
     for name in CONFIG_VARS:
         monkeypatch.delenv(name, raising=False)
 
@@ -377,3 +416,286 @@ def test_malformed_upstream_answers_fail_over_before_receipting(monkeypatch, bad
     assert payload["szl_receipt"]["provider_id"] == "regional"
     assert payload["szl_receipt"]["attempts"][0]["state"] == "TRANSPORT_OR_CONTRACT_ERROR"
     assert "private diagnostic" not in response.text
+
+
+@pytest.mark.parametrize("mutation", [
+    {"base_url": "http://127.0.0.1:11434/v1"},
+    {"base_url": "http://192.168.1.2:11434/v1"},
+    {"token_env": "LOCAL_TOKEN"},
+    {"model_digests": {}},
+    {"model_digests": {"a11oy-mini-r2": "latest"}},
+])
+def test_loopback_registry_rejects_endpoint_credentials_or_unpinned_model(monkeypatch, mutation):
+    configure_local(monkeypatch)
+    registry = local_registry_payload()
+    registry["providers"][0].update(mutation)
+    monkeypatch.setenv("SZL_ROUTER_PROVIDERS_JSON", json.dumps(registry))
+    response = client.get("/readyz")
+    assert response.status_code == 503
+    assert response.json()["registry_state"] == "INVALID_FAIL_CLOSED"
+    assert client.get("/api/routes").json()["providers"] == []
+
+
+def test_local_configuration_and_provider_lock_preserve_policy(monkeypatch):
+    configure_local(monkeypatch, with_remote=True)
+    readiness = client.get("/readyz/inference")
+    assert readiness.status_code == 200
+    assert readiness.json()["ready_for_requests"] is True
+    assert all(readiness.json()["checks"].values())
+    assert readiness.json()["remote_credentialed_provider"] is True
+    assert readiness.json()["provider_reachability"] == "UNVERIFIED"
+    routes = client.get("/api/routes").json()
+    local = next(row for row in routes["providers"] if row["id"] == "local-ollama")
+    assert local["provider_type"] == "ollama_loopback"
+    assert local["endpoint_state"] == "FIXED_LOOPBACK_UNVERIFIED"
+    assert local["credential_state"] == "NOT_REQUIRED_LOOPBACK"
+    assert local["model_identity_state"] == "PIN_CONFIGURED_UNVERIFIED"
+    assert local["model_digests"] == {"a11oy-mini-r2": LOCAL_DIGEST}
+    assert "127.0.0.1" not in json.dumps(routes)
+    plan = client.post("/api/plan", json={
+        "model": "a11oy-mini-r2", "required_provider_id": "local-ollama",
+    }).json()
+    assert [row["provider_id"] for row in plan["candidates"]] == ["local-ollama"]
+    assert plan["required_provider_id"] == "local-ollama"
+    assert plan["candidates"][0]["model_digest"] == LOCAL_DIGEST
+    restricted = client.post("/api/plan", json={
+        "model": "a11oy-mini-r2", "required_provider_id": "local-ollama",
+        "data_classification": "restricted",
+    }).json()
+    assert restricted["candidates"] == []
+    denied = client.post("/v1/chat/completions", json=chat_request(
+        model="a11oy-mini-r2", required_provider_id="local-ollama",
+        data_classification="restricted",
+    ))
+    assert denied.status_code == 503
+    assert denied.json()["detail"]["code"] == "NO_ELIGIBLE_PROVIDER"
+
+
+def test_loopback_configuration_readiness_does_not_claim_live_model(monkeypatch):
+    configure_local(monkeypatch, egress=False)
+
+    async def forbidden_inventory(*args, **kwargs):
+        pytest.fail("disabled router probed Ollama")
+
+    monkeypatch.setattr(module, "ollama_inventory", forbidden_inventory)
+    assert client.get("/readyz/inference").status_code == 503
+    local = client.get("/api/local-models").json()
+    assert local["status"] == "unavailable"
+    assert local["providers"][0]["inventory_state"] == "EGRESS_DISABLED"
+    assert local["providers"][0]["models"][0]["state"] == "UNAVAILABLE"
+    monkeypatch.setenv("SZL_ROUTER_ENABLE_EGRESS", "1")
+    admission = client.get("/readyz/inference")
+    assert admission.status_code == 200
+    assert all(admission.json()["checks"].values())
+    assert admission.json()["remote_credentialed_provider"] is False
+    assert admission.json()["inference_witness"] == "UNAVAILABLE"
+
+
+def test_fixed_loopback_inventory_chat_residency_and_receipt(monkeypatch):
+    configure_local(monkeypatch)
+    original_client = httpx.AsyncClient
+    calls: list[str] = []
+    generated = False
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        nonlocal generated
+        assert request.url.scheme == "http"
+        assert request.url.host == "127.0.0.1"
+        assert request.url.port == 11434
+        assert "authorization" not in request.headers
+        calls.append(request.url.path)
+        if request.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": [
+                {"name": LOCAL_UPSTREAM, "digest": LOCAL_DIGEST},
+                {"name": "hf.co/SZLHOLDINGS/unrelated:latest", "digest": OTHER_DIGEST},
+            ]})
+        if request.url.path == "/api/ps":
+            return httpx.Response(200, json={"models": [
+                {"name": LOCAL_UPSTREAM, "digest": LOCAL_DIGEST},
+            ] if generated else []})
+        assert request.url.path == "/v1/chat/completions"
+        sent = json.loads(request.content)
+        assert sent["model"] == LOCAL_UPSTREAM
+        generated = True
+        return httpx.Response(200, json={
+            "id": "chatcmpl-local-test", "object": "chat.completion", "model": LOCAL_UPSTREAM,
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "local answer"},
+                         "finish_reason": "stop"}],
+        })
+
+    monkeypatch.setattr(module.httpx, "AsyncClient", lambda **kwargs: original_client(
+        transport=httpx.MockTransport(handle), **kwargs))
+    inventory = client.get("/api/local-models")
+    assert inventory.status_code == 200
+    model = inventory.json()["providers"][0]["models"][0]
+    assert inventory.json()["basis"] == "LOCAL_DAEMON_REPORTED"
+    assert model["state"] == "MATCH"
+    assert model["resident_state"] == "NOT_LOADED"
+    original_request = chat_request(model="a11oy-mini-r2", required_provider_id="local-ollama")
+    response = client.post("/v1/chat/completions", json=original_request)
+    assert response.status_code == 200
+    completion = response.json()
+    receipt = completion["szl_receipt"]
+    identity = receipt["model_identity"]
+    assert identity["expected_digest"] == LOCAL_DIGEST
+    assert identity["pre_request_manifest_digest"] == LOCAL_DIGEST
+    assert identity["pre_request_resident_digest"] is None
+    assert identity["post_request_manifest_digest"] == LOCAL_DIGEST
+    assert identity["post_request_resident_digest"] == LOCAL_DIGEST
+    assert identity["independent_attestation"] == "UNAVAILABLE"
+    assert identity["license_state"] == "NOT_VERIFIED"
+    assert calls == ["/api/tags", "/api/ps", "/api/tags", "/api/ps",
+                     "/v1/chat/completions", "/api/tags", "/api/ps"]
+    verification = client.post("/api/verify", json={
+        "completion": completion, "request": original_request,
+    }, headers={"X-SZL-Receipt": response.headers["x-szl-receipt"]})
+    assert verification.status_code == 200
+    assert verification.json()["status"] == "CONSISTENT"
+
+
+@pytest.mark.parametrize("change_after_chat,expected_state", [
+    (False, "MODEL_DIGEST_MISMATCH"),
+    (True, "MODEL_DIGEST_MISMATCH"),
+])
+def test_local_digest_mismatch_stops_before_cloud_fallback(monkeypatch, change_after_chat,
+                                                            expected_state):
+    configure_local(monkeypatch, with_remote=True)
+    original_client = httpx.AsyncClient
+    calls: list[str] = []
+    generated = False
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        nonlocal generated
+        calls.append(request.url.path)
+        assert request.url.host == "127.0.0.1"
+        if request.url.path == "/api/tags":
+            digest = OTHER_DIGEST if generated or not change_after_chat else LOCAL_DIGEST
+            return httpx.Response(200, json={"models": [{"name": LOCAL_UPSTREAM, "digest": digest}]})
+        if request.url.path == "/api/ps":
+            return httpx.Response(200, json={"models": [
+                {"name": LOCAL_UPSTREAM, "digest": LOCAL_DIGEST},
+            ] if generated else []})
+        assert request.url.path == "/v1/chat/completions"
+        generated = True
+        return httpx.Response(200, json={
+            "model": LOCAL_UPSTREAM,
+            "choices": [{"message": {"role": "assistant", "content": "answer"}}],
+        })
+
+    monkeypatch.setattr(module.httpx, "AsyncClient", lambda **kwargs: original_client(
+        transport=httpx.MockTransport(handle), **kwargs))
+    response = client.post("/v1/chat/completions", json=chat_request(model="a11oy-mini-r2"))
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["state"] == "LOCAL_MODEL_IDENTITY_UNAVAILABLE"
+    assert detail["attempts"] == [{"provider_id": "local-ollama", "state": expected_state}]
+    assert "/v1/chat/completions" in calls if change_after_chat else "/v1/chat/completions" not in calls
+    assert "remote-test-secret" not in response.text
+
+
+def test_metadata_phase_is_inside_attempt_and_global_route_deadlines(monkeypatch):
+    configure_local(monkeypatch)
+
+    async def slow_inventory(*args, **kwargs):
+        await asyncio.sleep(0.05)
+        return {}
+
+    monkeypatch.setattr(module, "ollama_inventory", slow_inventory)
+    monkeypatch.setattr(module, "MAX_TIMEOUT_SECONDS", 0.01)
+    response = client.post("/v1/chat/completions", json=chat_request(model="a11oy-mini-r2"))
+    assert response.status_code == 502
+    assert response.json()["detail"]["attempts"][0]["state"] == "UPSTREAM_DEADLINE_EXCEEDED"
+    monkeypatch.setattr(module, "MAX_ROUTE_SECONDS", 0.002)
+    response = client.post("/v1/chat/completions", json=chat_request(model="a11oy-mini-r2"))
+    assert response.status_code == 502
+    assert response.json()["detail"]["attempts"][0]["state"] == "ROUTE_DEADLINE_EXCEEDED"
+
+
+@pytest.mark.parametrize("body", [
+    b'{"models":[],"junk":' + b'9' * 5000 + b'}',
+    b'{"models":[],"junk":' + b'[' * 2000 + b'0' + b']' * 2000 + b'}',
+    b'{"models":[],"models":[]}',
+])
+def test_bounded_malformed_daemon_inventory_is_sanitized(monkeypatch, body):
+    configure_local(monkeypatch)
+    original_client = httpx.AsyncClient
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "127.0.0.1"
+        assert request.url.path == "/api/tags"
+        return httpx.Response(200, content=body)
+
+    monkeypatch.setattr(module.httpx, "AsyncClient", lambda **kwargs: original_client(
+        transport=httpx.MockTransport(handle), **kwargs))
+    inventory = client.get("/api/local-models")
+    assert inventory.status_code == 200
+    assert inventory.json()["providers"][0]["inventory_state"] == "UNAVAILABLE"
+    response = client.post("/v1/chat/completions", json=chat_request(model="a11oy-mini-r2"))
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["state"] == "LOCAL_MODEL_IDENTITY_UNAVAILABLE"
+    assert detail["attempts"] == [{"provider_id": "local-ollama", "state": "DAEMON_INVENTORY_INVALID"}]
+    assert len(detail["digest"]) == 64
+    assert "999999" not in response.text
+
+
+def test_deep_upstream_json_emits_failure_receipt_instead_of_server_error(monkeypatch):
+    configure(monkeypatch, egress=True, tokens=True)
+    original_client = httpx.AsyncClient
+    body = b'{"choices":' + b'[' * 2000 + b'0' + b']' * 2000 + b'}'
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "sovereign.example.test"
+        return httpx.Response(200, content=body)
+
+    monkeypatch.setattr(module.httpx, "AsyncClient", lambda **kwargs: original_client(
+        transport=httpx.MockTransport(handle), **kwargs))
+    response = client.post("/v1/chat/completions", json=chat_request(
+        required_provider_id="sovereign"))
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert detail["state"] == "ALL_ELIGIBLE_PROVIDERS_FAILED"
+    assert detail["attempts"] == [{
+        "provider_id": "sovereign", "state": "TRANSPORT_OR_CONTRACT_ERROR",
+        "error_type": "RuntimeError",
+    }]
+    assert len(detail["digest"]) == 64
+
+
+def test_local_model_probe_is_bounded_shared_and_config_keyed(monkeypatch):
+    configure_local(monkeypatch)
+    calls: list[str] = []
+
+    async def delayed_inventory(kind):
+        calls.append(kind)
+        await asyncio.sleep(0.03)
+        if kind == "tags":
+            return {LOCAL_UPSTREAM: LOCAL_DIGEST}
+        return {}
+
+    monkeypatch.setattr(module, "ollama_inventory", delayed_inventory)
+
+    async def exercise():
+        first_task = asyncio.create_task(module.local_models())
+        await asyncio.sleep(0.005)
+        busy = await module.local_models()
+        first = await first_task
+        cached = await module.local_models()
+        registry = local_registry_payload()
+        registry["providers"][0]["model_digests"]["a11oy-mini-r2"] = OTHER_DIGEST
+        monkeypatch.setenv("SZL_ROUTER_PROVIDERS_JSON", json.dumps(registry))
+        changed = await module.local_models()
+        return first, busy, cached, changed
+
+    first, busy, cached, changed = asyncio.run(exercise())
+    assert first["observation_state"] == "LIVE_PROBE"
+    assert first["providers"][0]["models"][0]["state"] == "MATCH"
+    assert busy["observation_state"] == "BUSY"
+    assert busy["providers"][0]["inventory_state"] == "BUSY"
+    assert busy["providers"][0]["models"][0]["state"] == "UNAVAILABLE"
+    assert cached["observation_state"] == "CACHED_RECENT"
+    assert cached["observed_at"] == first["observed_at"]
+    assert cached["observation_age_ms"] is not None
+    assert changed["observation_state"] == "LIVE_PROBE"
+    assert changed["providers"][0]["models"][0]["state"] == "DIGEST_MISMATCH"
+    assert calls == ["tags", "ps", "tags", "ps"]

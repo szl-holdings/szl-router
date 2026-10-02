@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Sovereign-first, OpenAI-compatible routing gateway with exact receipts.
 
-Egress is disabled by default. An operator must supply a validated provider
-registry, an exact hostname allowlist, and SZL_ROUTER_ENABLE_EGRESS=1. Secrets
-are read only from named environment variables and never returned or logged.
+Egress is disabled by default. HTTPS providers require an exact hostname
+allowlist and named environment credential; the Ollama adapter uses only a
+fixed loopback endpoint and a configured model digest. Both require a validated
+registry and SZL_ROUTER_ENABLE_EGRESS=1. Secrets are never returned or logged.
 """
 from __future__ import annotations
 
@@ -15,9 +16,11 @@ import json
 import os
 import re
 import secrets
+import threading
 import time
 import urllib.parse
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -32,7 +35,7 @@ from router_control.verification import (
     sha256, verify_completion,
 )
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 SOURCE_SCHEMA = "szl.router-source/v1"
 PLAN_SCHEMA = "szl.router-plan/v1"
 RECEIPT_SCHEMA = "szl.router-receipt/v1"
@@ -42,12 +45,20 @@ MAX_MESSAGES = 64
 MAX_CONTENT_CHARS = 32_000
 MAX_TOTAL_CONTENT_CHARS = 96_000
 MAX_RESPONSE_BYTES = 2_000_000
+MAX_OLLAMA_TAGS_BYTES = 262_144
 MAX_TIMEOUT_SECONDS = 45.0
+MAX_ROUTE_SECONDS = 660.0
+LOCAL_MODEL_CACHE_SECONDS = 2.0
+OLLAMA_LOOPBACK_ORIGIN = "http://127.0.0.1:11434"
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$")
+OLLAMA_MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,191}$")
 TOKEN_ENV = re.compile(r"^[A-Z][A-Z0-9_]{2,95}$")
+MODEL_DIGEST = re.compile(r"^[0-9a-f]{64}$")
 CLASSIFICATIONS = {"public", "internal", "confidential", "restricted"}
 ROOT = Path(__file__).resolve().parents[1]
 STATIC = Path(__file__).resolve().parent / "static"
+_local_probe_lock = threading.Lock()
+_local_probe_cache: tuple[str, float, str, dict[str, Any]] | None = None
 
 
 def source_revision() -> str:
@@ -103,9 +114,11 @@ def validate_base_url(value: str, allowed_hosts: frozenset[str]) -> str:
 class ProviderRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str = Field(min_length=1, max_length=96, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$")
-    base_url: str = Field(min_length=9, max_length=512)
+    provider_type: Literal["openai_https", "ollama_loopback"] = "openai_https"
+    base_url: str | None = Field(default=None, min_length=9, max_length=512)
     models: dict[str, str] = Field(min_length=1, max_length=MAX_MODELS_PER_PROVIDER)
-    token_env: str = Field(min_length=3, max_length=96, pattern=r"^[A-Z][A-Z0-9_]{2,95}$")
+    model_digests: dict[str, str] = Field(default_factory=dict, max_length=MAX_MODELS_PER_PROVIDER)
+    token_env: str | None = Field(default=None, min_length=3, max_length=96, pattern=r"^[A-Z][A-Z0-9_]{2,95}$")
     priority: int = Field(default=100, ge=0, le=10_000)
     sovereignty: int = Field(default=0, ge=0, le=100)
     cost_tier: int = Field(default=1, ge=0, le=10)
@@ -116,7 +129,7 @@ class ProviderRecord(BaseModel):
     @classmethod
     def valid_models(cls, models: dict[str, str]) -> dict[str, str]:
         for public, upstream in models.items():
-            if not IDENTIFIER.fullmatch(public) or not IDENTIFIER.fullmatch(upstream):
+            if not IDENTIFIER.fullmatch(public) or not OLLAMA_MODEL_NAME.fullmatch(upstream):
                 raise ValueError("model aliases must use bounded identifiers")
         return dict(sorted(models.items()))
 
@@ -130,6 +143,20 @@ class ProviderRecord(BaseModel):
         if len(normalized) != len(set(normalized)):
             raise ValueError("classification values must be unique")
         return sorted(normalized)
+
+    @model_validator(mode="after")
+    def valid_provider_binding(self) -> "ProviderRecord":
+        if self.provider_type == "ollama_loopback":
+            if self.base_url is not None or self.token_env is not None:
+                raise ValueError("loopback Ollama endpoint and credentials are fixed by the router")
+            if set(self.model_digests) != set(self.models):
+                raise ValueError("each loopback model alias requires one manifest digest")
+            if any(not MODEL_DIGEST.fullmatch(value) for value in self.model_digests.values()):
+                raise ValueError("loopback model manifest digests must be lowercase SHA-256")
+        elif (self.base_url is None or self.token_env is None or self.model_digests
+              or any(not IDENTIFIER.fullmatch(upstream) for upstream in self.models.values())):
+            raise ValueError("HTTPS providers require base_url and token_env without local manifest pins")
+        return self
 
 
 class Registry(BaseModel):
@@ -164,11 +191,9 @@ def load_settings() -> Settings:
         registry = Registry.model_validate(parsed)
         normalized: list[ProviderRecord] = []
         for provider in registry.providers:
-            normalized.append(
-                provider.model_copy(
-                    update={"base_url": validate_base_url(provider.base_url, allowed_hosts)}
-                )
-            )
+            normalized.append(provider if provider.provider_type == "ollama_loopback" else provider.model_copy(
+                update={"base_url": validate_base_url(provider.base_url, allowed_hosts)}
+            ))
         return Settings(
             Registry(providers=normalized),
             allowed_hosts,
@@ -188,6 +213,8 @@ def load_settings() -> Settings:
 class PlanRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     model: str = Field(min_length=1, max_length=96, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$")
+    required_provider_id: str | None = Field(default=None, min_length=1, max_length=96,
+                                             pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$")
     data_classification: str = Field(default="public")
     max_cost_tier: int = Field(default=10, ge=0, le=10)
 
@@ -210,6 +237,8 @@ class Message(BaseModel):
 class ChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     model: str = Field(min_length=1, max_length=96, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$")
+    required_provider_id: str | None = Field(default=None, min_length=1, max_length=96,
+                                             pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$")
     messages: list[Message] = Field(min_length=1, max_length=MAX_MESSAGES)
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     top_p: float | None = Field(default=None, gt=0.0, le=1.0)
@@ -248,6 +277,8 @@ class ChatRequest(BaseModel):
 def route_candidates(settings: Settings, request: PlanRequest) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
     for provider in settings.registry.providers:
+        if request.required_provider_id is not None and provider.id != request.required_provider_id:
+            continue
         if not provider.enabled:
             continue
         upstream_model = provider.models.get(request.model)
@@ -266,7 +297,13 @@ def route_candidates(settings: Settings, request: PlanRequest) -> list[dict[str,
                 "sovereignty": provider.sovereignty,
                 "cost_tier": provider.cost_tier,
                 "classification": request.data_classification,
-                "credential_state": "AVAILABLE" if os.getenv(provider.token_env) else "UNAVAILABLE",
+                "provider_type": provider.provider_type,
+                "model_digest": provider.model_digests.get(request.model),
+                "model_identity_state": (
+                    "PIN_CONFIGURED_UNVERIFIED" if provider.provider_type == "ollama_loopback"
+                    else "UNAVAILABLE_MUTABLE_MODEL_ALIAS"
+                ),
+                "credential_state": credential_state(provider),
             }
         )
     candidates.sort(
@@ -285,6 +322,7 @@ def plan(settings: Settings, request: PlanRequest) -> dict[str, Any]:
     body = {
         "schema": PLAN_SCHEMA,
         "model": request.model,
+        "required_provider_id": request.required_provider_id,
         "classification": request.data_classification,
         "max_cost_tier": request.max_cost_tier,
         "registry_state": settings.config_state,
@@ -323,11 +361,111 @@ def upstream_payload(request: ChatRequest, upstream_model: str) -> dict[str, Any
     return payload
 
 
+def credential_state(provider: ProviderRecord) -> str:
+    if provider.provider_type == "ollama_loopback":
+        return "NOT_REQUIRED_LOOPBACK"
+    return "AVAILABLE" if provider.token_env and os.getenv(provider.token_env) else "UNAVAILABLE"
+
+
+class ModelIdentityError(RuntimeError):
+    """A configured local model could not satisfy its exact daemon digest pin."""
+
+    def __init__(self, state: str):
+        super().__init__(state)
+        self.state = state
+
+
+async def _read_ollama_inventory(kind: Literal["tags", "ps"]) -> dict[str, str]:
+    """Read only the fixed local daemon; never accept a caller or registry URL."""
+    timeout = httpx.Timeout(5.0, connect=2.0)
+    async with httpx.AsyncClient(
+        timeout=timeout,
+        follow_redirects=False,
+        trust_env=False,
+        limits=httpx.Limits(max_connections=2, max_keepalive_connections=0),
+    ) as client:
+        async with client.stream("GET", f"{OLLAMA_LOOPBACK_ORIGIN}/api/{kind}",
+                                 headers={"Accept": "application/json"}) as response:
+            if response.status_code != 200:
+                raise ModelIdentityError("DAEMON_INVENTORY_UNAVAILABLE")
+            chunks: list[bytes] = []
+            size = 0
+            async for chunk in response.aiter_bytes():
+                size += len(chunk)
+                if size > MAX_OLLAMA_TAGS_BYTES:
+                    raise ModelIdentityError("DAEMON_INVENTORY_INVALID")
+                chunks.append(chunk)
+    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result = dict(pairs)
+        if len(result) != len(pairs):
+            raise ModelIdentityError("DAEMON_INVENTORY_INVALID")
+        return result
+
+    def reject_constant(_: str) -> None:
+        raise ModelIdentityError("DAEMON_INVENTORY_INVALID")
+
+    try:
+        value = json.loads(b"".join(chunks).decode("utf-8"),
+                           object_pairs_hook=unique_object, parse_constant=reject_constant)
+    except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+        raise ModelIdentityError("DAEMON_INVENTORY_INVALID") from exc
+    models = value.get("models") if isinstance(value, dict) else None
+    if not isinstance(models, list) or len(models) > 512:
+        raise ModelIdentityError("DAEMON_INVENTORY_INVALID")
+    inventory: dict[str, str] = {}
+    for model in models:
+        if not isinstance(model, dict):
+            raise ModelIdentityError("DAEMON_INVENTORY_INVALID")
+        name, digest = model.get("name"), model.get("digest")
+        if (not isinstance(name, str) or not OLLAMA_MODEL_NAME.fullmatch(name)
+                or not isinstance(digest, str) or not MODEL_DIGEST.fullmatch(digest)
+                or name in inventory):
+            raise ModelIdentityError("DAEMON_INVENTORY_INVALID")
+        inventory[name] = digest
+    return inventory
+
+
+async def ollama_inventory(kind: Literal["tags", "ps"]) -> dict[str, str]:
+    return await asyncio.wait_for(_read_ollama_inventory(kind), timeout=5.0)
+
+
+async def assert_ollama_identity(provider: ProviderRecord, public_model: str,
+                                 *, after_completion: bool) -> dict[str, Any]:
+    upstream_model = provider.models[public_model]
+    expected = provider.model_digests[public_model]
+    try:
+        tags = await ollama_inventory("tags")
+        running = await ollama_inventory("ps")
+    except (httpx.HTTPError, asyncio.TimeoutError) as exc:
+        raise ModelIdentityError("DAEMON_INVENTORY_UNAVAILABLE") from exc
+    observed = tags.get(upstream_model)
+    if observed is None:
+        raise ModelIdentityError("MODEL_ABSENT")
+    if observed != expected:
+        raise ModelIdentityError("MODEL_DIGEST_MISMATCH")
+    resident = running.get(upstream_model)
+    if resident is not None and resident != expected:
+        raise ModelIdentityError("RESIDENT_DIGEST_MISMATCH")
+    if after_completion and resident is None:
+        raise ModelIdentityError("RESIDENT_MODEL_UNAVAILABLE")
+    return {
+        "state": "LOCAL_DAEMON_REPORTED_MATCH",
+        "basis": "OLLAMA_TAGS_AND_RUNNING_MODELS_PRE_POST",
+        "expected_digest": expected,
+        "observed_manifest_digest": observed,
+        "observed_resident_digest": resident,
+        "independent_attestation": "UNAVAILABLE",
+        "license_state": "NOT_VERIFIED",
+    }
+
+
 async def call_provider(provider: ProviderRecord, payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
-    token = os.getenv(provider.token_env, "")
-    if not token:
+    token = os.getenv(provider.token_env, "") if provider.token_env else ""
+    if provider.provider_type == "openai_https" and not token:
         raise RuntimeError("credential unavailable")
-    url = provider.base_url.rstrip("/") + "/chat/completions"
+    base_url = (OLLAMA_LOOPBACK_ORIGIN + "/v1" if provider.provider_type == "ollama_loopback"
+                else provider.base_url)
+    url = base_url.rstrip("/") + "/chat/completions"
     timeout = httpx.Timeout(MAX_TIMEOUT_SECONDS, connect=10.0)
     async with httpx.AsyncClient(
         timeout=timeout,
@@ -339,7 +477,7 @@ async def call_provider(provider: ProviderRecord, payload: dict[str, Any]) -> tu
             "POST",
             url,
             headers={
-                "Authorization": f"Bearer {token}",
+                **({"Authorization": f"Bearer {token}"} if token else {}),
                 "Content-Type": "application/json",
                 "Accept": "application/json",
                 "User-Agent": "szl-router/1.0",
@@ -354,7 +492,7 @@ async def call_provider(provider: ProviderRecord, payload: dict[str, Any]) -> tu
                     raise RuntimeError("upstream response exceeded byte limit")
                 chunks.append(chunk)
             raw = b"".join(chunks)
-            if response.status_code >= 400:
+            if response.status_code != 200:
                 raise httpx.HTTPStatusError(
                     f"upstream status {response.status_code}",
                     request=response.request,
@@ -362,7 +500,7 @@ async def call_provider(provider: ProviderRecord, payload: dict[str, Any]) -> tu
                 )
             try:
                 value = json.loads(raw.decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            except (UnicodeDecodeError, ValueError, RecursionError) as exc:
                 raise RuntimeError("upstream response was not strict UTF-8 JSON") from exc
             if not isinstance(value, dict):
                 raise RuntimeError("upstream response must be a JSON object")
@@ -375,14 +513,23 @@ def public_registry(settings: Settings) -> list[dict[str, Any]]:
         rows.append(
             {
                 "id": provider.id,
+                "provider_type": provider.provider_type,
                 "models": sorted(provider.models),
+                "model_digests": provider.model_digests,
+                "model_identity_state": (
+                    "PIN_CONFIGURED_UNVERIFIED" if provider.provider_type == "ollama_loopback"
+                    else "UNAVAILABLE_MUTABLE_MODEL_ALIAS"
+                ),
                 "priority": provider.priority,
                 "sovereignty": provider.sovereignty,
                 "cost_tier": provider.cost_tier,
                 "classifications": provider.classifications,
                 "enabled": provider.enabled,
-                "credential_state": "AVAILABLE" if os.getenv(provider.token_env) else "UNAVAILABLE",
-                "endpoint_state": "VALIDATED_ALLOWLISTED",
+                "credential_state": credential_state(provider),
+                "endpoint_state": (
+                    "FIXED_LOOPBACK_UNVERIFIED" if provider.provider_type == "ollama_loopback"
+                    else "VALIDATED_ALLOWLISTED"
+                ),
             }
         )
     return rows
@@ -407,12 +554,16 @@ async def no_store_evidence(request: Request, call_next):
 
 def inference_readiness(settings: Settings) -> dict[str, Any]:
     """Configuration admission only: no network call or inference proof."""
+    remote_credentialed_provider = any(
+        provider.enabled and credential_state(provider) == "AVAILABLE"
+        for provider in settings.registry.providers
+    )
     checks = {
         "registry_valid": settings.config_state == "VALIDATED",
         "egress_enabled": settings.egress_enabled,
         "caller_auth_configured": bool(os.getenv("SZL_ROUTER_TOKEN", "").strip()),
-        "credentialed_provider": any(
-            provider.enabled and bool(os.getenv(provider.token_env, "").strip())
+        "provider_configured": any(
+            provider.enabled and credential_state(provider) in {"AVAILABLE", "NOT_REQUIRED_LOOPBACK"}
             for provider in settings.registry.providers
         ),
     }
@@ -420,10 +571,12 @@ def inference_readiness(settings: Settings) -> dict[str, Any]:
     return {
         "status": "configured" if admitted else "unavailable",
         "checks": checks,
+        "remote_credentialed_provider": remote_credentialed_provider,
         "ready_for_requests": admitted,
         "basis": "LOCAL_CONFIGURATION_ONLY",
         "provider_reachability": "UNVERIFIED",
         "inference_witness": "UNAVAILABLE",
+        "model_identity": "UNVERIFIED",
     }
 
 
@@ -466,6 +619,33 @@ def validate_completion(value: Any) -> None:
             raise RuntimeError("upstream output has invalid tool calls")
 
 
+async def attempt_candidate(provider: ProviderRecord, request: ChatRequest,
+                            upstream_model: str) -> tuple[dict[str, Any], int, dict[str, Any] | None]:
+    local_before = None
+    if provider.provider_type == "ollama_loopback":
+        local_before = await assert_ollama_identity(provider, request.model,
+                                                    after_completion=False)
+    upstream, status_code = await call_provider(provider, upstream_payload(request, upstream_model))
+    validate_completion(upstream)
+    if provider.provider_type != "ollama_loopback":
+        return upstream, status_code, None
+    if upstream.get("model") != upstream_model:
+        raise ModelIdentityError("COMPLETION_MODEL_MISMATCH")
+    local_after = await assert_ollama_identity(provider, request.model,
+                                               after_completion=True)
+    return upstream, status_code, {
+        "state": "LOCAL_DAEMON_REPORTED_MATCH",
+        "basis": "OLLAMA_TAGS_AND_RUNNING_MODELS_PRE_POST",
+        "expected_digest": provider.model_digests[request.model],
+        "pre_request_manifest_digest": local_before["observed_manifest_digest"],
+        "pre_request_resident_digest": local_before["observed_resident_digest"],
+        "post_request_manifest_digest": local_after["observed_manifest_digest"],
+        "post_request_resident_digest": local_after["observed_resident_digest"],
+        "independent_attestation": "UNAVAILABLE",
+        "license_state": "NOT_VERIFIED",
+    }
+
+
 @app.get("/health")
 @app.get("/healthz")
 def healthz() -> dict[str, Any]:
@@ -490,7 +670,10 @@ def readyz() -> JSONResponse:
             or (
                 settings.config_state == "VALIDATED"
                 and bool(settings.registry.providers)
-                and bool(settings.allowed_hosts)
+                and all(
+                    provider.provider_type == "ollama_loopback" or bool(settings.allowed_hosts)
+                    for provider in settings.registry.providers
+                )
             )
         ),
     }
@@ -556,6 +739,117 @@ def routes() -> dict[str, Any]:
     return {**body, "receipt": {"algorithm": "sha256", "digest": sha256(body)}}
 
 
+def local_models_body(settings: Settings, inventory_state: str,
+                      tags: dict[str, str] | None = None,
+                      running: dict[str, str] | None = None) -> dict[str, Any]:
+    providers = [provider for provider in settings.registry.providers
+                 if provider.provider_type == "ollama_loopback"]
+    tags = tags or {}
+    running = running or {}
+    rows: list[dict[str, Any]] = []
+    for provider in providers:
+        provider_state = inventory_state if provider.enabled else "PROVIDER_DISABLED"
+        model_rows: list[dict[str, Any]] = []
+        for public_model, upstream_model in provider.models.items():
+            expected = provider.model_digests[public_model]
+            observed = tags.get(upstream_model) if provider_state == "REACHABLE" else None
+            resident = running.get(upstream_model) if provider_state == "REACHABLE" else None
+            model_rows.append({
+                "public_model": public_model,
+                "upstream_model": upstream_model,
+                "expected_digest": expected,
+                "observed_digest": observed,
+                "resident_digest": resident,
+                "state": (
+                    "UNAVAILABLE" if provider_state != "REACHABLE" else
+                    "ABSENT" if observed is None else
+                    "MATCH" if observed == expected else "DIGEST_MISMATCH"
+                ),
+                "resident_state": (
+                    "UNAVAILABLE" if provider_state != "REACHABLE" else
+                    "NOT_LOADED" if resident is None else
+                    "MATCH" if resident == expected else "DIGEST_MISMATCH"
+                ),
+                "license_state": "NOT_VERIFIED",
+            })
+        rows.append({
+            "provider_id": provider.id,
+            "provider_type": provider.provider_type,
+            "inventory_state": provider_state,
+            "models": model_rows,
+        })
+    body = {
+        "schema": "szl.router-local-models/v1",
+        "status": "observed" if inventory_state == "REACHABLE" else "unavailable",
+        "basis": "LOCAL_DAEMON_REPORTED",
+        "providers": rows,
+    }
+    return body
+
+
+def local_models_result(body: dict[str, Any], *, observation_state: str,
+                        observed_at: str | None = None,
+                        observation_age_ms: float | None = None) -> dict[str, Any]:
+    body = {**body, "observation_state": observation_state,
+            "observed_at": observed_at, "observation_age_ms": observation_age_ms}
+    return {**body, "receipt": {"algorithm": "sha256", "digest": sha256(body)}}
+
+
+@app.get("/api/local-models")
+async def local_models() -> dict[str, Any]:
+    """Read-only, bounded daemon evidence for configured aliases only."""
+    global _local_probe_cache
+    settings = load_settings()
+    providers = [provider for provider in settings.registry.providers
+                 if provider.provider_type == "ollama_loopback"]
+    if not providers:
+        return local_models_result(local_models_body(settings, "UNAVAILABLE_NOT_CONFIGURED"),
+                                   observation_state="NO_PROBE")
+    if not settings.egress_enabled:
+        return local_models_result(local_models_body(settings, "EGRESS_DISABLED"),
+                                   observation_state="NO_PROBE")
+    if not any(provider.enabled for provider in providers):
+        return local_models_result(local_models_body(settings, "PROVIDER_DISABLED"),
+                                   observation_state="NO_PROBE")
+    config_key = sha256({
+        "registry_state": settings.config_state,
+        "egress_enabled": settings.egress_enabled,
+        "allowed_hosts": sorted(settings.allowed_hosts),
+        "providers": settings.registry.model_dump(mode="json"),
+    })
+    now = time.monotonic()
+    cached = _local_probe_cache
+    if cached and cached[0] == config_key and now - cached[1] < LOCAL_MODEL_CACHE_SECONDS:
+        return local_models_result(cached[3], observation_state="CACHED_RECENT",
+                                   observed_at=cached[2],
+                                   observation_age_ms=round((now - cached[1]) * 1000, 3))
+    if not _local_probe_lock.acquire(blocking=False):
+        return local_models_result(local_models_body(settings, "BUSY"),
+                                   observation_state="BUSY")
+    try:
+        # Another request may have completed between the first cache check and
+        # lock acquisition; reuse its explicitly dated observation if so.
+        now = time.monotonic()
+        cached = _local_probe_cache
+        if cached and cached[0] == config_key and now - cached[1] < LOCAL_MODEL_CACHE_SECONDS:
+            return local_models_result(cached[3], observation_state="CACHED_RECENT",
+                                       observed_at=cached[2],
+                                       observation_age_ms=round((now - cached[1]) * 1000, 3))
+        try:
+            tags = await ollama_inventory("tags")
+            running = await ollama_inventory("ps")
+            body = local_models_body(settings, "REACHABLE", tags, running)
+        except (ModelIdentityError, httpx.HTTPError, asyncio.TimeoutError):
+            body = local_models_body(settings, "UNAVAILABLE")
+        observed_at = datetime.now(timezone.utc).isoformat()
+        completed = time.monotonic()
+        _local_probe_cache = (config_key, completed, observed_at, body)
+        return local_models_result(body, observation_state="LIVE_PROBE",
+                                   observed_at=observed_at, observation_age_ms=0.0)
+    finally:
+        _local_probe_lock.release()
+
+
 @app.post("/api/plan")
 def route_plan(request: PlanRequest) -> dict[str, Any]:
     return plan(load_settings(), request)
@@ -617,6 +911,7 @@ async def chat(request: ChatRequest, http_request: Request) -> JSONResponse:
         settings,
         PlanRequest(
             model=request.model,
+            required_provider_id=request.required_provider_id,
             data_classification=request.data_classification,
             max_cost_tier=request.max_cost_tier,
         ),
@@ -628,17 +923,22 @@ async def chat(request: ChatRequest, http_request: Request) -> JSONResponse:
     request_digest = sha256(request.model_dump(mode="json"))
     attempts: list[dict[str, Any]] = []
     started = time.monotonic()
+    deadline = started + MAX_ROUTE_SECONDS
     for candidate in candidates:
         provider = provider_by_id(settings, candidate["provider_id"])
-        if not os.getenv(provider.token_env):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            attempts.append({"provider_id": provider.id, "state": "ROUTE_DEADLINE_EXCEEDED"})
+            break
+        if credential_state(provider) == "UNAVAILABLE":
             attempts.append({"provider_id": provider.id, "state": "SKIPPED_CREDENTIAL_UNAVAILABLE"})
             continue
+        route_limited_attempt = remaining <= MAX_TIMEOUT_SECONDS
         try:
-            upstream, status_code = await asyncio.wait_for(
-                call_provider(provider, upstream_payload(request, candidate["upstream_model"])),
-                timeout=MAX_TIMEOUT_SECONDS,
+            upstream, status_code, model_identity = await asyncio.wait_for(
+                attempt_candidate(provider, request, candidate["upstream_model"]),
+                timeout=min(MAX_TIMEOUT_SECONDS, remaining),
             )
-            validate_completion(upstream)
             elapsed_ms = round((time.monotonic() - started) * 1000, 3)
             successful_attempt = {"provider_id": provider.id, "state": "SUCCESS", "status_code": status_code}
             receipt_body = {
@@ -654,6 +954,8 @@ async def chat(request: ChatRequest, http_request: Request) -> JSONResponse:
                 "response_digest": sha256(upstream),
                 "secret_material_recorded": False,
             }
+            if model_identity is not None:
+                receipt_body["model_identity"] = model_identity
             receipt = {**receipt_body, "digest": sha256(receipt_body), "algorithm": "sha256"}
             result = {**upstream, "szl_receipt": receipt}
             # Apply the offline/API verifier's exact bounds to the full emitted
@@ -676,12 +978,29 @@ async def chat(request: ChatRequest, http_request: Request) -> JSONResponse:
                     "Cache-Control": "no-store",
                 },
             )
+        except ModelIdentityError as exc:
+            attempts.append({"provider_id": provider.id, "state": exc.state})
+            failure = {
+                "schema": RECEIPT_SCHEMA,
+                "request_digest": request_digest,
+                "plan_digest": request_plan["receipt"]["digest"],
+                "attempts": attempts,
+                "secret_material_recorded": False,
+                "state": "LOCAL_MODEL_IDENTITY_UNAVAILABLE",
+            }
+            failure["digest"] = sha256(failure)
+            raise HTTPException(status_code=503, detail=failure) from None
         except asyncio.TimeoutError:
-            attempts.append({"provider_id": provider.id, "state": "UPSTREAM_DEADLINE_EXCEEDED"})
+            route_expired = route_limited_attempt or time.monotonic() >= deadline
+            attempts.append({"provider_id": provider.id, "state": (
+                "ROUTE_DEADLINE_EXCEEDED" if route_expired else "UPSTREAM_DEADLINE_EXCEEDED"
+            )})
+            if route_expired:
+                break
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
             attempts.append({"provider_id": provider.id, "state": "UPSTREAM_HTTP_ERROR", "status_code": status})
-            if 400 <= status < 500 and status != 429:
+            if 300 <= status < 500 and status != 429:
                 break
         except (httpx.HTTPError, RuntimeError, ValueError) as exc:
             attempts.append({"provider_id": provider.id, "state": "TRANSPORT_OR_CONTRACT_ERROR", "error_type": type(exc).__name__})
