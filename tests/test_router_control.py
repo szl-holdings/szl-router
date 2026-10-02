@@ -276,6 +276,46 @@ def test_transport_failure_fails_over_in_deterministic_order(monkeypatch: pytest
     assert receipt["provider_id"] == "regional"
 
 
+@pytest.mark.parametrize("status,expected_calls", [
+    (302, ["sovereign", "regional"]),
+    (429, ["sovereign", "regional"]),
+    (400, ["sovereign"]),
+])
+def test_upstream_status_failover_respects_redirect_and_client_error_policy(
+    monkeypatch: pytest.MonkeyPatch, status: int, expected_calls: list[str],
+) -> None:
+    configure(monkeypatch, egress=True, tokens=True)
+    original_client = httpx.AsyncClient
+    calls: list[str] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/chat/completions"
+        assert request.url.host in {"sovereign.example.test", "regional.example.test"}
+        provider = "sovereign" if request.url.host == "sovereign.example.test" else "regional"
+        calls.append(provider)
+        if provider == "sovereign":
+            return httpx.Response(status, headers={"Location": "https://untrusted.example/"})
+        return httpx.Response(200, json={
+            "id": "chatcmpl-status-fallback", "object": "chat.completion",
+            "model": "regional-model",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "fallback"},
+                         "finish_reason": "stop"}],
+        })
+
+    monkeypatch.setattr(module.httpx, "AsyncClient", lambda **kwargs: original_client(
+        transport=httpx.MockTransport(handle), **kwargs))
+    response = client.post("/v1/chat/completions", json=chat_request())
+    assert calls == expected_calls
+    if status == 400:
+        assert response.status_code == 502
+        attempts = response.json()["detail"]["attempts"]
+    else:
+        assert response.status_code == 200
+        attempts = response.json()["szl_receipt"]["attempts"]
+        assert response.json()["szl_receipt"]["provider_id"] == "regional"
+    assert attempts[0] == {"provider_id": "sovereign", "state": "UPSTREAM_HTTP_ERROR", "status_code": status}
+
+
 def test_all_provider_failures_emit_bounded_receipt(monkeypatch: pytest.MonkeyPatch) -> None:
     configure(monkeypatch, egress=True, tokens=True)
 

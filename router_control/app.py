@@ -1017,7 +1017,7 @@ async def chat(request: ChatRequest, http_request: Request) -> JSONResponse:
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
             attempts.append({"provider_id": provider.id, "state": "UPSTREAM_HTTP_ERROR", "status_code": status})
-            if 300 <= status < 500 and status != 429:
+            if 400 <= status < 500 and status != 429:
                 break
         except (httpx.HTTPError, RuntimeError, ValueError) as exc:
             attempts.append({"provider_id": provider.id, "state": "TRANSPORT_OR_CONTRACT_ERROR", "error_type": type(exc).__name__})
