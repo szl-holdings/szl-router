@@ -66,6 +66,16 @@ For a model already installed on the router host, configure `provider_type: "oll
 
 The angle-bracket text is a placeholder and must be replaced before configuration can validate. Set `SZL_ROUTER_PROVIDERS_JSON` to the completed object, `SZL_ROUTER_TOKEN` to a separate caller credential, and `SZL_ROUTER_ENABLE_EGRESS=1`. Do not put a credential or operator-selected URL in the local provider record. Obtain the digest from a current local manifest and compare its bytes and referenced weight hashes separately. An alias ending in `latest` is mutable; the digest pin is the router's refusal point when that alias moves. The daemon reports the installed and resident digests; the router does not independently attest the executing weights or license.
 
+An operator can additionally opt one or more local aliases into **model-store byte admission** by adding `model_weight_digests` to that local provider. Each value is the lowercase SHA-256 digest of the `application/vnd.ollama.image.model` blob named by the pinned manifest. Set `SZL_ROUTER_OLLAMA_MODELS_DIR` to the absolute path of the Ollama model-store root visible to the router process (the directory containing `manifests/` and `blobs/`). For a container, mount that store read-only into the router and set the variable to the mount path. The store path stays in operator configuration and is not returned by the API.
+
+```json
+"model_weight_digests": {
+  "szl-local": "<64 lowercase hex characters from the model blob>"
+}
+```
+
+This option is off unless both the pin and absolute store root are configured. Before each opted-in completion, the router repeats its daemon manifest check, then freshly hashes the pinned manifest and **every** referenced config/layer blob from the local store. It accepts one model layer whose digest matches the weight pin. The read-only scan uses a 20-second budget, one concurrent reader, a 64 KiB manifest limit, at most 32 layers, and a 20 GB aggregate blob limit. A missing, malformed, changing, or mismatched file, a busy scan, or a deadline failure returns a local identity error without cloud fallback. `/api/local-models` reports only `PIN_CONFIGURED_NOT_PROBED`; its short-lived daemon inventory cache cannot authorize byte admission. A successful completion receipt records the sequential pre-request file reads separately from the daemon's pre/post digest reports. The reads are not an atomic store snapshot and the store is not rehashed after the completion. A read-only router mount prevents writes by that process; the deployment must separately prevent store mutation by Ollama or other actors during inference. File hashes do not prove that Ollama loaded those bytes into memory, used them for the completion, or has a verified model license.
+
 The fixed outbound address constrains this router only. Before claiming an on-host deployment is private or sovereign, verify the Ollama listener's actual bind/firewall policy and its cloud-feature setting (`OLLAMA_NO_CLOUD=1` or its equivalent) on that host. The router's digest check does not attest those daemon settings. [Ollama configuration documentation](https://docs.ollama.com/faq)
 
 The router process and Ollama must share a network namespace for that fixed address to work. A default Docker bridge container sees its own loopback, so building `Dockerfile.router-control` does not connect it to the host daemon. Any host-network or co-located deployment needs its own reviewed network policy and a live `/api/local-models` readback from inside the deployed router. A local Windows run does not prove the container or public Space can infer.
@@ -129,6 +139,7 @@ The whole provider attempt, including local metadata checks, has a 45-second wal
 
 Failover proceeds only when a provider credential is unavailable, a transport or response-contract error occurs, a rate limit occurs, or an upstream server fails. Ordinary upstream 4xx responses stop the route rather than silently changing providers.
 For a selected local provider, an absent or changed manifest digest, or a mismatched resident digest, stops the route without sending the same prompt to a cloud provider. A cold installed model may be absent from the resident list before its first completion; successful completion requires the resident digest to match afterward. The local observation endpoint is a snapshot, so completion repeats identity checks around the provider call.
+When local-store byte admission is enabled for that alias, a failed file-hash scan also stops the route before inference. The scan consumes part of the local provider's 45-second attempt deadline; a pinned local attempt that exhausts that deadline does not fall through to a cloud candidate.
 
 ## Receipts
 
@@ -143,6 +154,7 @@ Every successful response adds `szl_receipt` and the `X-SZL-Receipt` header. The
 - elapsed time;
 - normalized upstream response digest;
 - for local inference, the configured and daemon-reported model digest and the identity evidence state;
+- when opted in, a separately labeled, pre-request local-store manifest and blob hash observation;
 - `secret_material_recorded: false`.
 
 An exhausted route returns a bounded failure receipt without including response bodies, URLs, tokens, environment variable names, or raw exception messages.

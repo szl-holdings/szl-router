@@ -226,3 +226,4 @@ def test_version_and_source_controlled_verifier_are_honest(monkeypatch):
     assert payload == {"version": module.APP_VERSION, "git_sha": "b" * 40, "model_sha": None,
                        "model_sha_state": "UNAVAILABLE_MUTABLE_MODEL_ALIASES"}
     assert "router_control/verification.py" in client.get("/api/source").json()["controlled_files"]
+    assert "router_control/local_store.py" in client.get("/api/source").json()["controlled_files"]

@@ -30,6 +30,9 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from router_control.local_store import (
+    HASH_BUDGET_SECONDS, LocalStoreError, manifest_relative_path, verify_store_bytes,
+)
 from router_control.verification import (
     MAX_JSON_DEPTH, MAX_JSON_NODES, MAX_VERIFICATION_BYTES, canonical, parse_bundle,
     sha256, verify_completion,
@@ -118,6 +121,7 @@ class ProviderRecord(BaseModel):
     base_url: str | None = Field(default=None, min_length=9, max_length=512)
     models: dict[str, str] = Field(min_length=1, max_length=MAX_MODELS_PER_PROVIDER)
     model_digests: dict[str, str] = Field(default_factory=dict, max_length=MAX_MODELS_PER_PROVIDER)
+    model_weight_digests: dict[str, str] = Field(default_factory=dict, max_length=MAX_MODELS_PER_PROVIDER)
     token_env: str | None = Field(default=None, min_length=3, max_length=96, pattern=r"^[A-Z][A-Z0-9_]{2,95}$")
     priority: int = Field(default=100, ge=0, le=10_000)
     sovereignty: int = Field(default=0, ge=0, le=100)
@@ -153,7 +157,14 @@ class ProviderRecord(BaseModel):
                 raise ValueError("each loopback model alias requires one manifest digest")
             if any(not MODEL_DIGEST.fullmatch(value) for value in self.model_digests.values()):
                 raise ValueError("loopback model manifest digests must be lowercase SHA-256")
+            if not set(self.model_weight_digests).issubset(self.models):
+                raise ValueError("local weight pins must name configured public model aliases")
+            if any(not MODEL_DIGEST.fullmatch(value) for value in self.model_weight_digests.values()):
+                raise ValueError("local weight pins must be lowercase SHA-256")
+            for public_model in self.model_weight_digests:
+                manifest_relative_path(self.models[public_model])
         elif (self.base_url is None or self.token_env is None or self.model_digests
+              or self.model_weight_digests
               or any(not IDENTIFIER.fullmatch(upstream) for upstream in self.models.values())):
             raise ValueError("HTTPS providers require base_url and token_env without local manifest pins")
         return self
@@ -191,6 +202,10 @@ def load_settings() -> Settings:
         registry = Registry.model_validate(parsed)
         normalized: list[ProviderRecord] = []
         for provider in registry.providers:
+            if provider.model_weight_digests:
+                store_root = os.getenv("SZL_ROUTER_OLLAMA_MODELS_DIR", "").strip()
+                if not store_root or not Path(store_root).is_absolute():
+                    raise ValueError("local byte admission requires an absolute model store root")
             normalized.append(provider if provider.provider_type == "ollama_loopback" else provider.model_copy(
                 update={"base_url": validate_base_url(provider.base_url, allowed_hosts)}
             ))
@@ -475,6 +490,26 @@ async def assert_ollama_identity(provider: ProviderRecord, public_model: str,
     }
 
 
+async def observe_store_bytes(provider: ProviderRecord, public_model: str) -> dict[str, Any]:
+    """Do not reuse the cheap public inventory cache to authorize inference."""
+    stop = threading.Event()
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(
+            verify_store_bytes,
+            provider.models[public_model], provider.model_digests[public_model],
+            provider.model_weight_digests[public_model],
+            os.getenv("SZL_ROUTER_OLLAMA_MODELS_DIR", ""), stop,
+        ), timeout=HASH_BUDGET_SECONDS + 1.0)
+    except asyncio.TimeoutError as exc:
+        stop.set()
+        raise ModelIdentityError("LOCAL_STORE_CHECK_TIMEOUT") from exc
+    except asyncio.CancelledError:
+        stop.set()
+        raise
+    except LocalStoreError as exc:
+        raise ModelIdentityError(exc.state) from exc
+
+
 async def call_provider(provider: ProviderRecord, payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
     token = os.getenv(provider.token_env, "") if provider.token_env else ""
     if provider.provider_type == "openai_https" and not token:
@@ -533,6 +568,7 @@ def public_registry(settings: Settings) -> list[dict[str, Any]]:
                 "provider_type": provider.provider_type,
                 "models": sorted(provider.models),
                 "model_digests": provider.model_digests,
+                "model_weight_digests": provider.model_weight_digests,
                 "model_identity_state": (
                     "PIN_CONFIGURED_UNVERIFIED" if provider.provider_type == "ollama_loopback"
                     else "UNAVAILABLE_MUTABLE_MODEL_ALIAS"
@@ -637,11 +673,14 @@ def validate_completion(value: Any) -> None:
 
 
 async def attempt_candidate(provider: ProviderRecord, request: ChatRequest,
-                            upstream_model: str) -> tuple[dict[str, Any], int, dict[str, Any] | None]:
+                             upstream_model: str) -> tuple[dict[str, Any], int, dict[str, Any] | None]:
     local_before = None
+    store_bytes = None
     if provider.provider_type == "ollama_loopback":
         local_before = await assert_ollama_identity(provider, request.model,
                                                     after_completion=False)
+        if request.model in provider.model_weight_digests:
+            store_bytes = await observe_store_bytes(provider, request.model)
     upstream, status_code = await call_provider(provider, upstream_payload(request, upstream_model))
     validate_completion(upstream)
     if provider.provider_type != "ollama_loopback":
@@ -650,7 +689,7 @@ async def attempt_candidate(provider: ProviderRecord, request: ChatRequest,
         raise ModelIdentityError("COMPLETION_MODEL_MISMATCH")
     local_after = await assert_ollama_identity(provider, request.model,
                                                after_completion=True)
-    return upstream, status_code, {
+    identity = {
         "state": "LOCAL_DAEMON_REPORTED_MATCH",
         "basis": "OLLAMA_TAGS_AND_RUNNING_MODELS_PRE_POST",
         "expected_digest": provider.model_digests[request.model],
@@ -661,6 +700,9 @@ async def attempt_candidate(provider: ProviderRecord, request: ChatRequest,
         "independent_attestation": "UNAVAILABLE",
         "license_state": "NOT_VERIFIED",
     }
+    if store_bytes is not None:
+        identity["local_store_bytes"] = store_bytes
+    return upstream, status_code, identity
 
 
 @app.get("/health")
@@ -721,6 +763,7 @@ def readyz_inference() -> JSONResponse:
 def source() -> dict[str, Any]:
     controlled = [
         Path(__file__),
+        Path(__file__).with_name("local_store.py"),
         Path(__file__).with_name("verification.py"),
         STATIC / "index.html",
         STATIC / "app.js",
@@ -786,6 +829,10 @@ def local_models_body(settings: Settings, inventory_state: str,
                     "UNAVAILABLE" if provider_state != "REACHABLE" else
                     "NOT_LOADED" if resident is None else
                     "MATCH" if resident == expected else "DIGEST_MISMATCH"
+                ),
+                "store_byte_state": (
+                    "PIN_CONFIGURED_NOT_PROBED" if public_model in provider.model_weight_digests
+                    else "NOT_CONFIGURED"
                 ),
                 "license_state": "NOT_VERIFIED",
             })
@@ -1009,6 +1056,20 @@ async def chat(request: ChatRequest, http_request: Request) -> JSONResponse:
             raise HTTPException(status_code=503, detail=failure) from None
         except asyncio.TimeoutError:
             route_expired = route_limited_attempt or time.monotonic() >= deadline
+            if (provider.provider_type == "ollama_loopback"
+                    and request.model in provider.model_weight_digests):
+                attempts.append({"provider_id": provider.id,
+                                 "state": "LOCAL_ROUTE_DEADLINE_EXCEEDED"})
+                failure = {
+                    "schema": RECEIPT_SCHEMA,
+                    "request_digest": request_digest,
+                    "plan_digest": request_plan["receipt"]["digest"],
+                    "attempts": attempts,
+                    "secret_material_recorded": False,
+                    "state": "LOCAL_ROUTE_UNAVAILABLE",
+                }
+                failure["digest"] = sha256(failure)
+                raise HTTPException(status_code=503, detail=failure) from None
             attempts.append({"provider_id": provider.id, "state": (
                 "ROUTE_DEADLINE_EXCEEDED" if route_expired else "UPSTREAM_DEADLINE_EXCEEDED"
             )})

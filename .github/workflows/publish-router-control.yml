@@ -65,7 +65,7 @@ jobs:
       - name: Qualify source and offline HTTP contract
         run: |
           python -m pip install --requirement requirements-router-control-dev.txt
-          python -m pytest -q tests/test_router_control.py tests/test_router_verification.py tests/test_router_frontend.py
+          python -m pytest -q tests/test_router_control.py tests/test_router_local_store.py tests/test_router_verification.py tests/test_router_frontend.py
           python -m demo.run_contract_demo --output contract-report.json
 
       - name: Build and exercise the control image

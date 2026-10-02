@@ -79,8 +79,8 @@ jobs:
 
       - name: Compile and test routing contracts
         run: |
-          python -I -P -m py_compile router_control/app.py
-          python -m pytest -q tests/test_router_control.py tests/test_router_verification.py tests/test_router_frontend.py
+          python -I -P -m py_compile router_control/app.py router_control/local_store.py
+          python -m pytest -q tests/test_router_control.py tests/test_router_local_store.py tests/test_router_verification.py tests/test_router_frontend.py
 
       - name: Qualify installed wheel away from source
         shell: bash
