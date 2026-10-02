@@ -1,10 +1,15 @@
 # syntax=docker/dockerfile:1.7
 FROM python:3.12.10-slim-bookworm
+ARG SOURCE_REVISION=UNAVAILABLE
+
+LABEL org.opencontainers.image.source="https://github.com/szl-holdings/szl-router" \
+      org.opencontainers.image.revision="${SOURCE_REVISION}"
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PORT=7860 \
+    SOURCE_REVISION=${SOURCE_REVISION} \
     SZL_ROUTER_ENABLE_EGRESS=0
 
 WORKDIR /app

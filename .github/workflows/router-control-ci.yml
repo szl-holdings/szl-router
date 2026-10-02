@@ -17,9 +17,11 @@ on:
       - "tests/test_router_frontend.py"
       - "pyproject.toml"
       - "scripts/check_control_package.py"
+      - "scripts/check_router_control_image.py"
       - "requirements-router-control*.txt"
       - "Dockerfile.router-control"
       - ".github/workflows/router-control-ci.yml"
+      - ".github/workflows/publish-router-control.yml"
       - "docs/ROUTER_CONTROL.md"
   push:
     branches: [main]
@@ -34,9 +36,11 @@ on:
       - "tests/test_router_frontend.py"
       - "pyproject.toml"
       - "scripts/check_control_package.py"
+      - "scripts/check_router_control_image.py"
       - "requirements-router-control*.txt"
       - "Dockerfile.router-control"
       - ".github/workflows/router-control-ci.yml"
+      - ".github/workflows/publish-router-control.yml"
       - "docs/ROUTER_CONTROL.md"
 
 permissions:
@@ -192,7 +196,7 @@ jobs:
           fetch-depth: 1
 
       - name: Build image
-        run: docker build --file Dockerfile.router-control --tag szl-router:${{ github.sha }} .
+        run: docker build --file Dockerfile.router-control --build-arg SOURCE_REVISION=${{ github.sha }} --tag szl-router:${{ github.sha }} .
 
       - name: Verify non-root and default-deny declarations
         shell: bash
@@ -200,3 +204,6 @@ jobs:
           set -euo pipefail
           test "$(docker image inspect szl-router:${{ github.sha }} --format '{{.Config.User}}')" = "10001:10001"
           test "$(docker image inspect szl-router:${{ github.sha }} --format '{{range .Config.Env}}{{println .}}{{end}}' | grep '^SZL_ROUTER_ENABLE_EGRESS=')" = "SZL_ROUTER_ENABLE_EGRESS=0"
+
+      - name: Exercise running container without network access
+        run: python scripts/check_router_control_image.py --image szl-router:${{ github.sha }} --source-revision ${{ github.sha }}
