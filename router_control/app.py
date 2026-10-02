@@ -31,7 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from router_control.verification import (
-    MAX_VERIFICATION_BYTES, canonical, parse_bundle,
+    MAX_JSON_DEPTH, MAX_JSON_NODES, MAX_VERIFICATION_BYTES, canonical, parse_bundle,
     sha256, verify_completion,
 )
 
@@ -375,6 +375,21 @@ class ModelIdentityError(RuntimeError):
         self.state = state
 
 
+def enforce_json_structure_limit(value: Any) -> None:
+    """Apply the same structure bound on Python versions with different decoder limits."""
+    stack = [(value, 0)]
+    nodes = 0
+    while stack:
+        item, depth = stack.pop()
+        nodes += 1
+        if depth > MAX_JSON_DEPTH or nodes + len(stack) > MAX_JSON_NODES:
+            raise ValueError("provider JSON exceeds structure limit")
+        if isinstance(item, dict):
+            stack.extend((child, depth + 1) for child in item.values())
+        elif isinstance(item, list):
+            stack.extend((child, depth + 1) for child in item)
+
+
 async def _read_ollama_inventory(kind: Literal["tags", "ps"]) -> dict[str, str]:
     """Read only the fixed local daemon; never accept a caller or registry URL."""
     timeout = httpx.Timeout(5.0, connect=2.0)
@@ -407,6 +422,7 @@ async def _read_ollama_inventory(kind: Literal["tags", "ps"]) -> dict[str, str]:
     try:
         value = json.loads(b"".join(chunks).decode("utf-8"),
                            object_pairs_hook=unique_object, parse_constant=reject_constant)
+        enforce_json_structure_limit(value)
     except (UnicodeDecodeError, ValueError, RecursionError) as exc:
         raise ModelIdentityError("DAEMON_INVENTORY_INVALID") from exc
     models = value.get("models") if isinstance(value, dict) else None
@@ -500,8 +516,9 @@ async def call_provider(provider: ProviderRecord, payload: dict[str, Any]) -> tu
                 )
             try:
                 value = json.loads(raw.decode("utf-8"))
+                enforce_json_structure_limit(value)
             except (UnicodeDecodeError, ValueError, RecursionError) as exc:
-                raise RuntimeError("upstream response was not strict UTF-8 JSON") from exc
+                raise RuntimeError("upstream response was not bounded UTF-8 JSON") from exc
             if not isinstance(value, dict):
                 raise RuntimeError("upstream response must be a JSON object")
             return value, response.status_code
