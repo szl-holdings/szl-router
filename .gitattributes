@@ -1,0 +1,5 @@
+# Preserve exact runtime source bytes across Windows and Unix checkouts.
+router_control/*.py text eol=lf
+router_control/static/*.html text eol=lf
+router_control/static/*.js text eol=lf
+router_control/static/*.css text eol=lf
