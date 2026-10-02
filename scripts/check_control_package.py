@@ -29,6 +29,8 @@ for route, mime in expected.items():
     response = client.get(route)
     if response.status_code != 200 or mime not in response.headers["content-type"]:
         raise RuntimeError("installed artifact route failed: " + route)
+if "router_control/local_store.py" not in client.get("/api/source").json()["controlled_files"]:
+    raise RuntimeError("installed byte-admission source missing from source receipt")
 if not STATIC.is_relative_to(pathlib.Path(sys.argv[1])):
     raise RuntimeError("source checkout masked installed package")
 if "demo" in [p.name for p in pathlib.Path(sys.argv[1]).iterdir()]:

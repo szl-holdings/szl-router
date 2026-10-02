@@ -15,6 +15,7 @@ client = TestClient(module.app, headers={"Authorization": "Bearer test-router-cl
 CONFIG_VARS = (
     "SZL_ROUTER_ALLOWED_HOSTS",
     "SZL_ROUTER_PROVIDERS_JSON",
+    "SZL_ROUTER_OLLAMA_MODELS_DIR",
     "SZL_ROUTER_ENABLE_EGRESS",
     "SZL_ROUTER_TOKEN",
     "SOURCE_REVISION",
