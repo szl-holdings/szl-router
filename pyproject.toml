@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "szl-router"
-version = "1.0.0"
+version = "1.1.0"
 description = "Sovereign, OpenAI-compatible LLM gateway with a receipt on every answer; signed when a key is armed, else UNSIGNED-honest."
 readme = "README.md"
 requires-python = ">=3.10"

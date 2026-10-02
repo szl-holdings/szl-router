@@ -8,6 +8,10 @@ The governed control gateway in `router_control.app` has its own
 [operation and ecosystem integration contract](docs/ROUTER_CONTROL.md), including
 mandatory caller authentication, explicit provider allowlisting and separate
 inference configuration readiness. Build it with `Dockerfile.router-control`.
+It also supports an opt-in Ollama route fixed to the router process's loopback
+address, with per-alias digest pins and browser requests bound to the selected
+local provider. The [control contract](docs/ROUTER_CONTROL.md) covers its model
+identity limits and the network namespace requirement for containers.
 Its SHA256 receipts are unsigned content commitments. The legacy DSSE gateway
 described below is `szl_router.app`; the two receipt formats are distinct.
 
