@@ -136,7 +136,12 @@ jobs:
             --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
             "$image_ref" > cosign-verification.json
           gh attestation verify "oci://$image_ref" \
-            --repo "$GITHUB_REPOSITORY" > provenance-verification.json
+            --repo "$GITHUB_REPOSITORY" \
+            --source-digest "$GITHUB_SHA" \
+            --source-ref refs/heads/main \
+            --signer-repo "$GITHUB_REPOSITORY" \
+            --deny-self-hosted-runners \
+            --format json > provenance-verification.json
 
       - name: Record current-source publication result
         shell: bash
