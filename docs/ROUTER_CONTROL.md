@@ -219,6 +219,33 @@ Serve it with `uvicorn router_control.app:app`; the installed
 installs a wheel away from the checkout to qualify its API, static assets
 and verifier entry point.
 
+## Control image publication
+
+After a protected `main` merge, the owner may dispatch
+`.github/workflows/publish-router-control.yml` on `main`. The workflow checks
+the selected commit against the current protected head, runs the control
+contracts, builds `Dockerfile.router-control` with that commit as its source
+revision, and exercises the running non-root container with networking disabled.
+Only then does it publish a distinct `ghcr.io/szl-holdings/szl-router-control`
+image. The tag contains the full source commit and workflow run identity so a
+retry does not replace an earlier tag. The uploaded
+`router-control-image-receipt.json` records the registry manifest digest and
+the result of pulling and exercising that exact digest. The workflow creates
+GitHub build provenance, signs the digest with Cosign keyless identity, and
+verifies both before issuing a release receipt. It rereads protected `main`
+after those checks; a superseded image is recorded but the workflow fails and
+its receipt is not eligible for promotion. Deploy using the digest
+reference in the receipt; the tag is a locator, not the immutable identity.
+
+The image defaults to `SZL_ROUTER_ENABLE_EGRESS=0` and embeds the source commit
+in its image configuration and OCI revision label. Publication does not set
+provider credentials, enable egress, create an HTTPS host, or attest a live
+answer. The old `ghcr.io/szl-holdings/szl-router` image remains a separate
+application. Read `/deployment.json` on the eventual host and compare its
+source revision with the receipt before qualifying inference there. Also
+verify that the running host uses the receipt's image digest: a runtime
+environment override can change what `/deployment.json` reports.
+
 ## Truth boundary
 
 The following states remain independent:
