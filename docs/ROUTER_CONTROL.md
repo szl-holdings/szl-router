@@ -14,11 +14,11 @@ The container and application are **default deny**:
 SZL_ROUTER_ENABLE_EGRESS=0
 ```
 
-Without a valid registry and hostname allowlist, `/api/plan` remains available for honest inspection but `/v1/chat/completions` fails closed.
+Without a valid registry, `/api/plan` remains available for honest inspection but `/v1/chat/completions` fails closed. HTTPS providers also require an exact hostname allowlist. The optional local Ollama provider has a separate fixed loopback policy.
 
 ## Configuration
 
-The registry, hostname allowlist, explicit egress enablement and caller authentication must converge before a caller can invoke a provider:
+The validated registry, explicit egress enablement and caller authentication must converge before a caller can invoke a provider. HTTPS providers also need an exact hostname allowlist and their named upstream credential:
 
 ```bash
 export SZL_ROUTER_ALLOWED_HOSTS="provider-a.example,provider-b.example"
@@ -42,9 +42,35 @@ export SZL_ROUTER_TOKEN="<separate gateway client credential>"
 export SZL_ROUTER_ENABLE_EGRESS=1
 ```
 
-Provider endpoints must use HTTPS, the default port, an exact hostname in `SZL_ROUTER_ALLOWED_HOSTS`, and no embedded credentials, query, fragment, literal IP, or localhost name. The configured `base_url` should include the provider's OpenAI-compatible API prefix, commonly `/v1`; the router appends `/chat/completions`.
+HTTPS provider endpoints must use the default port, an exact hostname in `SZL_ROUTER_ALLOWED_HOSTS`, and no embedded credentials, query, fragment, literal IP, or localhost name. The configured `base_url` should include the provider's OpenAI-compatible API prefix, commonly `/v1`; the router appends `/chat/completions`.
 
-Secrets are resolved only from each provider's named environment variable. The public registry reports `AVAILABLE` or `UNAVAILABLE`, never the variable name, endpoint, or credential value.
+HTTPS upstream secrets are resolved only from each provider's named environment variable. The public registry reports `AVAILABLE` or `UNAVAILABLE` for those credentials, never the variable name, endpoint, or value. The fixed loopback provider needs no upstream credential and reports `NOT_REQUIRED_LOOPBACK`.
+
+For a model already installed on the router host, configure `provider_type: "ollama_loopback"` in the same registry. This type accepts neither `base_url` nor `token_env`. It contacts only the built-in `127.0.0.1:11434` address and requires a lowercase 64-character Ollama manifest digest for every public alias:
+
+```json
+{
+  "providers": [{
+    "id": "local-ollama",
+    "provider_type": "ollama_loopback",
+    "models": {"szl-local": "szl-khipu:latest"},
+    "model_digests": {"szl-local": "<64 lowercase hex characters from a separately checked manifest>"},
+    "priority": 0,
+    "sovereignty": 100,
+    "cost_tier": 0,
+    "classifications": ["public"],
+    "enabled": true
+  }]
+}
+```
+
+The angle-bracket text is a placeholder and must be replaced before configuration can validate. Set `SZL_ROUTER_PROVIDERS_JSON` to the completed object, `SZL_ROUTER_TOKEN` to a separate caller credential, and `SZL_ROUTER_ENABLE_EGRESS=1`. Do not put a credential or operator-selected URL in the local provider record. Obtain the digest from a current local manifest and compare its bytes and referenced weight hashes separately. An alias ending in `latest` is mutable; the digest pin is the router's refusal point when that alias moves. The daemon reports the installed and resident digests; the router does not independently attest the executing weights or license.
+
+The fixed outbound address constrains this router only. Before claiming an on-host deployment is private or sovereign, verify the Ollama listener's actual bind/firewall policy and its cloud-feature setting (`OLLAMA_NO_CLOUD=1` or its equivalent) on that host. The router's digest check does not attest those daemon settings. [Ollama configuration documentation](https://docs.ollama.com/faq)
+
+The router process and Ollama must share a network namespace for that fixed address to work. A default Docker bridge container sees its own loopback, so building `Dockerfile.router-control` does not connect it to the host daemon. Any host-network or co-located deployment needs its own reviewed network policy and a live `/api/local-models` readback from inside the deployed router. A local Windows run does not prove the container or public Space can infer.
+
+`/api/local-models` probes only configured local aliases. It admits one live tags/loaded-model probe at a time and reuses a result for at most two seconds under the same validated configuration. The response labels a fresh observation `LIVE_PROBE`, reuse `CACHED_RECENT` with observation time and age, and concurrent uncached probes `BUSY` without claiming a reachable model. The completion path always repeats its own pre/post digest checks; a cached status response cannot authorize inference.
 
 Callers must send `Authorization: Bearer <SZL_ROUTER_TOKEN>` on completion requests.
 This credential is separate from upstream provider credentials. Missing caller
@@ -72,6 +98,11 @@ provider_id ASC
 ```
 
 This stable ordering prevents transport arrival or registry insertion order from selecting a route.
+The optional `required_provider_id` on plan and completion requests narrows the
+candidate set to that provider while retaining the model, classification, cost,
+and enabled checks. If the named provider is unavailable, the request fails
+without visiting another provider. The browser's local-model choice sets this
+field so choosing a local route cannot silently become a cloud request.
 
 ## OpenAI-compatible routes
 
@@ -80,9 +111,10 @@ This stable ordering prevents transport arrival or registry insertion order from
 | `GET /v1/models` | public model aliases from the validated registry |
 | `POST /v1/chat/completions` | bounded, non-streaming completion forwarding |
 | `POST /api/verify` | bounded unsigned integrity checks for completion and original request |
-| `GET /version` | GitHub SHA and null model SHA for mutable aliases |
+| `GET /version` | GitHub SHA and null aggregate model SHA; each local alias has its own configured pin |
 | `GET /readyz` | control interface readiness; includes separate inference configuration state |
-| `GET /readyz/inference` | 503 until registry, egress, caller token and an enabled credentialed provider are configured |
+| `GET /readyz/inference` | 503 until registry, egress, caller token and an enabled usable provider are configured; configuration only |
+| `GET /api/local-models` | live, bounded, read-only digest observations for configured local aliases |
 | `GET /.well-known/szl-source.json` | exact GitHub source identity; equivalent to `/api/source` |
 
 An inference readiness 200 means `LOCAL_CONFIGURATION_ONLY`. It does not probe
@@ -93,8 +125,10 @@ Set `SOURCE_REVISION` to the exact GitHub commit deployed (or `GIT_COMMIT`).
 source identity.
 
 The v1 receipt-verified route intentionally rejects streaming. It limits message count, individual and total content, stop sequences, output bytes, redirects, timeout, and connection pool size. `httpx` environment proxy inheritance is disabled.
+The whole provider attempt, including local metadata checks, has a 45-second wall deadline. A request has a 660-second total route deadline; the browser allows longer for its response and verification. Deadline exhaustion is retained in the bounded failure attempt trail.
 
 Failover proceeds only when a provider credential is unavailable, a transport or response-contract error occurs, a rate limit occurs, or an upstream server fails. Ordinary upstream 4xx responses stop the route rather than silently changing providers.
+For a selected local provider, an absent or changed manifest digest, or a mismatched resident digest, stops the route without sending the same prompt to a cloud provider. A cold installed model may be absent from the resident list before its first completion; successful completion requires the resident digest to match afterward. The local observation endpoint is a snapshot, so completion repeats identity checks around the provider call.
 
 ## Receipts
 
@@ -108,6 +142,7 @@ Every successful response adds `szl_receipt` and the `X-SZL-Receipt` header. The
 - bounded attempt outcomes;
 - elapsed time;
 - normalized upstream response digest;
+- for local inference, the configured and daemon-reported model digest and the identity evidence state;
 - `secret_material_recorded: false`.
 
 An exhausted route returns a bounded failure receipt without including response bodies, URLs, tokens, environment variable names, or raw exception messages.
@@ -136,6 +171,10 @@ Both paths report `UNSIGNED_HONEST` and `identity_verified: false`. Anyone can
 recompute unsigned hashes; consistency does not attest weights, provider
 identity, plan policy or answer quality. `/version` preserves an unavailable
 model SHA until an immutable loaded artifact is actually attested.
+The local provider's digest and resident check bind the receipt to what the
+local daemon reported. They do not make a cryptographic claim about the bytes
+actually executing in hardware. License and task quality need their own
+evidence before model promotion.
 
 ## Ecosystem integration
 

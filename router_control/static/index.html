@@ -27,13 +27,15 @@
       </div>
     </section>
 
-    <section class="panel admission-panel" aria-label="Separate control and inference readiness">
-      <div class="panel-head"><div><p class="eyebrow">CONFIGURATION ADMISSION</p><h2>Readiness boundaries</h2></div><span class="pill">LOCAL_CONFIGURATION_ONLY</span></div>
+    <section class="panel admission-panel" aria-label="Separate control, model, and inference readiness">
+      <div class="panel-head"><div><p class="eyebrow">CONFIGURATION ADMISSION</p><h2>Readiness boundaries</h2></div><span class="pill">EVIDENCE BY LAYER</span></div>
       <div class="admission-grid">
         <div><h3>Control interface</h3><p id="control-evidence" role="status">Checking control readiness.</p></div>
         <div><h3>Inference configuration</h3><p id="inference-state" role="status">Checking configuration admission.</p><p id="inference-checks" class="muted"></p></div>
+        <div><h3>Local provider</h3><p id="local-provider-state" role="status">Checking local provider configuration.</p><p id="local-provider-detail" class="muted">A local provider must be configured on the router host.</p></div>
+        <div><h3>Model identity</h3><p id="model-identity-state" role="status">Checking model identity.</p><p id="model-identity-detail" class="muted">A model alias does not identify loaded weights.</p></div>
       </div>
-      <p class="boundary">Configured inference does not establish provider reachability or a completed answer. Send a request below to inspect its outcome.</p>
+      <p class="boundary">Configured inference does not establish provider reachability, loaded model identity, or a completed answer. Local model observations are snapshots; refresh the registry to read current residency. Send a request below to inspect its outcome.</p>
     </section>
 
     <section class="telemetry" aria-label="Router evidence summary">
@@ -47,7 +49,9 @@
       <article class="panel policy-panel">
         <div class="panel-head"><div><p class="eyebrow">POLICY INPUT</p><h2>Plan a route</h2></div><button id="refresh" type="button">Refresh registry</button></div>
         <form id="plan-form">
-          <label><span>Public model alias</span><input id="model" value="szl-default" required maxlength="96" pattern="[A-Za-z0-9][A-Za-z0-9._:-]{0,95}"></label>
+          <label><span>Public model alias</span><input id="model" list="model-aliases" placeholder="Choose or enter an alias" required maxlength="96" pattern="[A-Za-z0-9][A-Za-z0-9._:-]{0,95}" aria-describedby="model-alias-note"><datalist id="model-aliases"></datalist></label>
+          <p id="model-alias-note" class="muted">Choose a listed alias or enter one to inspect policy. A listed alias does not establish a loaded model.</p>
+          <p id="provider-binding" class="muted" role="status" aria-live="polite">No provider bound. Policy may choose any eligible provider.</p>
           <label><span>Data classification</span><select id="classification"><option>public</option><option>internal</option><option>confidential</option><option>restricted</option></select></label>
           <label><span>Maximum cost tier</span><input id="cost" type="number" min="0" max="10" value="10" required></label>
           <button class="primary" type="submit">Generate deterministic plan</button>
@@ -70,13 +74,13 @@
           <label for="caller-token"><span>Router caller token</span><input id="caller-token" type="password" required maxlength="4096" autocomplete="off" spellcheck="false" aria-describedby="token-note"></label>
           <label for="max-tokens"><span>Maximum output tokens</span><input id="max-tokens" type="number" min="1" max="131072" value="512" required></label>
         </div>
-        <p id="token-note" class="muted">Use the router caller credential. The field is cleared on dispatch and the token is sent only in the authorization header.</p>
-        <p id="completion-note" class="muted">Uses the model, classification, and cost policy above. Inference can spend provider credits. A bounded route may take up to 12 minutes; duplicate submissions are disabled.</p>
+        <p id="token-note" class="muted">Use the router caller credential. The field is cleared on dispatch and the token is sent only to this router in the authorization header.</p>
+        <p id="completion-note" class="muted">Uses the model, classification, and cost policy above. The router may contact an admitted local or remote provider. Inference can spend provider credits. A bounded route may take up to roughly 11 minutes; duplicate submissions are disabled.</p>
         <button id="send-completion" class="primary" type="submit">Send and verify receipt</button>
       </form>
-      <div class="result-copy"><h3>Assistant output</h3><pre id="answer-output" tabindex="0">No answer received.</pre><h3>Provider attempts</h3><ol id="attempts"><li>No attempt evidence received.</li></ol></div>
+      <div class="result-copy"><h3>Assistant output</h3><pre id="answer-output" tabindex="0">No answer received.</pre><h3>Provider attempts</h3><ol id="attempts"><li>No attempt evidence received.</li></ol><h3 class="identity-heading">Completion model identity</h3><p id="completion-model-identity" role="status" aria-live="polite">UNAVAILABLE · no completion received</p><p id="completion-model-evidence" class="muted">No loaded model identity evidence received.</p></div>
       <div class="panel-head"><div><p class="eyebrow">CONTENT CONSISTENCY</p><h3>Answer receipt verification</h3></div><span id="verification-state" class="pill" role="status" aria-live="polite">UNAVAILABLE</span></div>
-      <p class="boundary"><strong>UNSIGNED_HONEST</strong> · These hashes bind content. Signer, provider, and model weight identity remain unverified. Verification is performed by this router, with no independent witness.</p>
+      <p class="boundary"><strong>UNSIGNED_HONEST</strong> · These hashes bind content. A successful response may include a model identity claim, but signer and loaded weight identity require separate verification. Verification is performed by this router, with no independent witness.</p>
       <pre id="verify-output" tabindex="0">No consistency checks received.</pre>
       <details><summary>Exact completion or failure receipt</summary><pre id="completion-receipt" tabindex="0">No receipt received.</pre></details>
     </section>
@@ -98,7 +102,7 @@
     </section>
 
     <section class="principles">
-      <article><small>01</small><h3>Default deny</h3><p>Egress is off until an exact provider registry, hostname allowlist, named credential, and explicit enable flag all converge.</p></article>
+      <article><small>01</small><h3>Default deny</h3><p>Egress is off until a validated provider registry, caller credential, and explicit enable flag converge. HTTPS providers also require an exact hostname allowlist and upstream credential.</p></article>
       <article><small>02</small><h3>Sovereignty first</h3><p>Eligible candidates sort by sovereignty, priority, cost, then stable provider identity. Arrival order never chooses the route.</p></article>
       <article><small>03</small><h3>Receipt per answer</h3><p>Request, plan, attempts, provider, upstream model, response, and elapsed time are committed without recording secret material.</p></article>
     </section>

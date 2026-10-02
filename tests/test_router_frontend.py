@@ -74,11 +74,13 @@ async function setup({ secure = true, hostname = "router.example.test", protocol
   const nodes = Object.fromEntries(ids.map(id => ["#" + id, new Element()]));
   nodes["#model"].value = "szl-default"; nodes["#classification"].value = "internal";
   nodes["#cost"].value = "4"; nodes["#max-tokens"].value = "512";
-  const calls = []; const timers = new Map(); let timerId = 0;
+  const calls = []; const timers = new Map(); let timerId = 0; const clock = { now: 0 };
   const handlers = {
     "/api/routes": () => response({ state: "VALIDATED", egress_enabled: true, providers: [] }),
+    "/api/plan": () => response({ candidates: [], selected: null, receipt: { digest: "plan-digest" } }),
     "/api/source": () => response({ revision: "b".repeat(40), receipt: { digest: "source-proof" } }),
     "/readyz": () => response({ status: "ready", inference: { ready_for_requests: true, basis: "LOCAL_CONFIGURATION_ONLY", checks: { registry_valid: true } } }),
+    "/api/local-models": () => response({ status: "unavailable", basis: "LOCAL_DAEMON_REPORTED", observation_state: "NO_PROBE", observed_at: null, observation_age_ms: null, providers: [] }),
     "/v1/chat/completions": () => response(completion),
     "/api/verify": () => response(consistent),
   };
@@ -92,6 +94,7 @@ async function setup({ secure = true, hostname = "router.example.test", protocol
     },
     window: {
       isSecureContext: secure, location: { hostname, protocol },
+      performance: { now: () => clock.now },
       setTimeout: (fn, delay) => { const id = ++timerId; timers.set(id, { fn, delay }); return id; },
       clearTimeout: id => timers.delete(id),
     },
@@ -108,7 +111,7 @@ async function setup({ secure = true, hostname = "router.example.test", protocol
   vm.runInNewContext(script, context);
   await new Promise(resolve => setImmediate(resolve));
   const enter = () => { nodes["#prompt"].value = "Bounded synthetic request"; nodes["#caller-token"].value = "test-caller-secret"; };
-  return { nodes, calls, handlers, timers, enter };
+  return { nodes, calls, handlers, timers, clock, enter };
 }
 
 async function run() {
@@ -131,6 +134,7 @@ async function run() {
     assert.equal(verified.options.headers["X-SZL-Receipt"], completion.szl_receipt.digest);
     assert(s.nodes["#answer-output"].textContent.includes("<img src=x onerror=alert(1)>"));
     assert(s.nodes["#verification-state"].textContent.includes("CONSISTENT · UNSIGNED_HONEST"));
+    assert(s.nodes["#completion-model-identity"].textContent.includes("no local identity claim"));
     assert.equal(s.nodes["#send-completion"].disabled, false);
     assert.equal(s.nodes["#completion-form"].attributes["aria-busy"], "false");
     assert(!Object.values(s.nodes).some(node => node.textContent.includes("test-caller-secret")));
@@ -159,11 +163,173 @@ async function run() {
     assert.equal(s.nodes["#revision"].textContent, "revision UNAVAILABLE");
     assert(!s.nodes["#source-proof"].textContent.includes("source-proof"));
     assert.equal(s.nodes["#inference-checks"].textContent, "");
+  } else if (scenario === "local-ready") {
+    const s = await setup();
+    s.nodes["#classification"].value = "public";
+    const digest = "c".repeat(64);
+    s.handlers["/api/routes"] = () => response({ state: "VALIDATED", egress_enabled: true, providers: [{
+      id: "on-host", provider_type: "ollama_loopback", models: ["a11oy-mini-r2"], enabled: true,
+      credential_state: "NOT_REQUIRED_LOOPBACK", endpoint_state: "FIXED_LOOPBACK_UNVERIFIED",
+      model_identity_state: "PIN_CONFIGURED_UNVERIFIED", model_digests: { "a11oy-mini-r2": digest },
+      sovereignty: 100, priority: 1, cost_tier: 0, classifications: ["public"],
+    }] });
+    s.handlers["/api/local-models"] = () => response({ status: "observed", basis: "LOCAL_DAEMON_REPORTED", observation_state: "LIVE_PROBE", observed_at: "2026-10-01T12:00:00Z", observation_age_ms: 0, providers: [{
+      provider_id: "on-host", inventory_state: "REACHABLE", models: [{
+        public_model: "a11oy-mini-r2", upstream_model: "a11oy-mini-r2", expected_digest: digest,
+        observed_digest: digest, resident_digest: null, state: "MATCH", resident_state: "NOT_LOADED", license_state: "NOT_VERIFIED",
+      }],
+    }] });
+    await s.nodes["#refresh"].fire("click");
+    assert(s.nodes["#local-provider-state"].textContent.includes("REACHABLE · LIVE_PROBE · LOCAL_DAEMON_REPORTED"));
+    assert(s.nodes["#providers"].textContent.includes("PIN_CONFIGURED_UNVERIFIED"));
+    const controls = s.nodes["#providers"].children[0].children.find(child => child.className === "provider-models");
+    assert(controls && controls.children.length === 1, "a pinned installed model may be selected before its first load");
+    assert(controls.textContent.includes("installed, not loaded"));
+    await controls.children[0].fire("click");
+    assert.equal(s.nodes["#model"].value, "a11oy-mini-r2");
+    assert(s.nodes["#provider-binding"].textContent.includes("Required local provider on-host. No cloud fallback"));
+    assert(s.nodes["#model-identity-state"].textContent.includes("INSTALLED, NOT LOADED · LIVE_PROBE · LOCAL_DAEMON_REPORTED"));
+    assert(s.nodes["#model-identity-detail"].textContent.includes("license NOT_VERIFIED"));
+    assert(s.nodes["#model-identity-detail"].textContent.includes("No model weight byte attestation"));
+    await s.nodes["#plan-form"].fire("submit");
+    const planned = s.calls.find(call => call.url === "/api/plan");
+    assert.equal(JSON.parse(planned.options.body).required_provider_id, "on-host");
+    const localCompletion = { ...completion, szl_receipt: { ...completion.szl_receipt, model_identity: {
+      state: "LOCAL_DAEMON_REPORTED_MATCH", expected_digest: digest,
+      pre_request_manifest_digest: digest, pre_request_resident_digest: null,
+      post_request_manifest_digest: digest, post_request_resident_digest: digest,
+      independent_attestation: "UNAVAILABLE", license_state: "NOT_VERIFIED",
+    } } };
+    s.handlers["/v1/chat/completions"] = () => response(localCompletion);
+    s.enter(); await s.nodes["#completion-form"].fire("submit");
+    const sent = s.calls.find(call => call.url === "/v1/chat/completions");
+    assert.equal(JSON.parse(sent.options.body).model, "a11oy-mini-r2");
+    assert.equal(JSON.parse(sent.options.body).required_provider_id, "on-host");
+    assert.equal(sent.options.headers.Authorization, "Bearer test-caller-secret");
+    assert(s.calls.some(call => call.url === "/api/verify"));
+    assert(s.nodes["#completion-model-identity"].textContent.includes("LOCAL_DAEMON_REPORTED_MATCH · CONTENT CONSISTENT"));
+    assert(s.nodes["#completion-model-evidence"].textContent.includes("license NOT_VERIFIED"));
+    assert(s.nodes["#completion-model-evidence"].textContent.includes("No model weight byte attestation"));
+    assert(s.calls.every(call => call.url.startsWith("/")), "browser only contacts the router origin");
+    s.nodes["#classification"].value = "restricted";
+    await s.nodes["#classification"].fire("input");
+    assert(!s.nodes["#providers"].textContent.includes("Use a11oy-mini-r2"));
+    assert(s.nodes["#provider-binding"].textContent.includes("No cloud fallback"));
+    s.nodes["#model"].value = "another-alias";
+    await s.nodes["#model"].fire("input");
+    assert(s.nodes["#provider-binding"].textContent.includes("No provider bound"));
+    await s.nodes["#plan-form"].fire("submit");
+    const nextPlan = s.calls.filter(call => call.url === "/api/plan").at(-1);
+    assert.equal(JSON.parse(nextPlan.options.body).required_provider_id, undefined);
+  } else if (scenario === "local-unavailable") {
+    const s = await setup();
+    s.nodes["#model"].value = "a11oy-mini-r2";
+    s.handlers["/api/routes"] = () => response({ state: "VALIDATED", egress_enabled: true, providers: [{
+      id: "on-host", provider_type: "ollama_loopback", models: ["a11oy-mini-r2"], enabled: true,
+      credential_state: "NOT_REQUIRED_LOOPBACK", model_identity_state: "PIN_CONFIGURED_UNVERIFIED",
+      model_digests: { "a11oy-mini-r2": "c".repeat(64) },
+      sovereignty: 100, priority: 1, cost_tier: 0, classifications: ["public"],
+    }] });
+    s.handlers["/api/local-models"] = () => response({ status: "unavailable", basis: "LOCAL_DAEMON_REPORTED", observation_state: "NO_PROBE", observed_at: null, observation_age_ms: null, providers: [{
+      provider_id: "on-host", inventory_state: "UNAVAILABLE", models: [{
+        public_model: "a11oy-mini-r2", expected_digest: "c".repeat(64), observed_digest: null,
+        resident_digest: null, state: "UNAVAILABLE", resident_state: "UNAVAILABLE", license_state: "NOT_VERIFIED",
+      }],
+    }] });
+    await s.nodes["#refresh"].fire("click");
+    assert(s.nodes["#local-provider-state"].textContent.includes("UNAVAILABLE"));
+    assert(s.nodes["#model-identity-state"].textContent.includes("no usable local observation"));
+    assert(!s.nodes["#providers"].children[0].children.some(child => child.className === "provider-models"));
+    s.handlers["/api/local-models"] = () => { throw new Error("offline"); };
+    await s.nodes["#refresh"].fire("click");
+    assert(s.nodes["#local-provider-state"].textContent.includes("observation failed"));
+    assert(!s.nodes["#providers"].textContent.includes("Use a11oy-mini-r2"));
+  } else if (scenario === "local-mismatch") {
+    const s = await setup();
+    s.handlers["/api/routes"] = () => response({ state: "VALIDATED", egress_enabled: true, providers: [{
+      id: "on-host", provider_type: "ollama_loopback", models: ["a11oy-mini-r2"], enabled: true,
+      credential_state: "NOT_REQUIRED_LOOPBACK", model_digests: { "a11oy-mini-r2": "c".repeat(64) },
+      sovereignty: 100, priority: 1, cost_tier: 0, classifications: ["public"],
+    }] });
+    s.handlers["/api/local-models"] = () => response({ status: "observed", basis: "LOCAL_DAEMON_REPORTED", observation_state: "LIVE_PROBE", observed_at: "2026-10-01T12:00:00Z", observation_age_ms: 0, providers: [{
+      provider_id: "on-host", inventory_state: "REACHABLE", models: [{
+        public_model: "a11oy-mini-r2", expected_digest: "c".repeat(64), observed_digest: "d".repeat(64),
+        resident_digest: null, state: "DIGEST_MISMATCH", resident_state: "UNAVAILABLE", license_state: "NOT_VERIFIED",
+      }],
+    }] });
+    await s.nodes["#refresh"].fire("click");
+    assert(s.nodes["#providers"].textContent.includes("No local model is currently eligible"));
+    assert(!s.nodes["#providers"].textContent.includes("Use a11oy-mini-r2"));
+  } else if (scenario === "local-cached-busy") {
+    const s = await setup(); s.nodes["#classification"].value = "public";
+    const digest = "c".repeat(64);
+    s.handlers["/api/routes"] = () => response({ state: "VALIDATED", egress_enabled: true, providers: [{
+      id: "on-host", provider_type: "ollama_loopback", models: ["a11oy-mini-r2"], enabled: true,
+      credential_state: "NOT_REQUIRED_LOOPBACK", model_digests: { "a11oy-mini-r2": digest },
+      sovereignty: 100, priority: 1, cost_tier: 0, classifications: ["public"],
+    }] });
+    const cached = { status: "observed", basis: "LOCAL_DAEMON_REPORTED", observation_state: "CACHED_RECENT",
+      observed_at: "2026-10-01T12:00:00Z", observation_age_ms: 1250, providers: [{
+        provider_id: "on-host", inventory_state: "REACHABLE", models: [{ public_model: "a11oy-mini-r2",
+          expected_digest: digest, observed_digest: digest, resident_digest: null,
+          state: "MATCH", resident_state: "NOT_LOADED", license_state: "NOT_VERIFIED" }],
+      }],
+    };
+    s.handlers["/api/local-models"] = () => response(cached);
+    await s.nodes["#refresh"].fire("click");
+    assert(s.nodes["#local-provider-state"].textContent.includes("CACHED_RECENT · 1250 ms old"));
+    assert(s.nodes["#local-provider-detail"].textContent.includes("rechecks local model identity"));
+    assert(s.nodes["#providers"].textContent.includes("Use a11oy-mini-r2"));
+    s.handlers["/api/local-models"] = () => response({ ...cached, observation_age_ms: 2501 });
+    await s.nodes["#refresh"].fire("click");
+    assert(s.nodes["#local-provider-state"].textContent.includes("UNAVAILABLE · OBSERVATION_EXPIRED · 2501 ms old"));
+    assert(!s.nodes["#providers"].textContent.includes("Use a11oy-mini-r2"));
+    s.handlers["/api/local-models"] = () => response({ ...cached, status: "unavailable", observation_state: "BUSY",
+      observed_at: null, observation_age_ms: null, providers: [{ provider_id: "on-host", inventory_state: "BUSY",
+        models: [{ public_model: "a11oy-mini-r2", expected_digest: digest, observed_digest: null,
+          resident_digest: null, state: "UNAVAILABLE", resident_state: "UNAVAILABLE", license_state: "NOT_VERIFIED" }],
+    }] });
+    await s.nodes["#refresh"].fire("click");
+    assert(s.nodes["#local-provider-state"].textContent.includes("UNAVAILABLE · BUSY"));
+    assert(s.nodes["#model-identity-state"].textContent.includes("no usable local observation"));
+    assert(!s.nodes["#providers"].textContent.includes("Use a11oy-mini-r2"));
+  } else if (scenario === "local-clock-expiry") {
+    const s = await setup(); s.nodes["#classification"].value = "public";
+    const digest = "c".repeat(64);
+    s.handlers["/api/routes"] = () => response({ state: "VALIDATED", egress_enabled: true, providers: [{
+      id: "on-host", provider_type: "ollama_loopback", models: ["a11oy-mini-r2"], enabled: true,
+      credential_state: "NOT_REQUIRED_LOOPBACK", model_digests: { "a11oy-mini-r2": digest },
+      sovereignty: 100, priority: 1, cost_tier: 0, classifications: ["public"],
+    }] });
+    s.handlers["/api/local-models"] = () => response({ status: "observed", basis: "LOCAL_DAEMON_REPORTED",
+      observation_state: "LIVE_PROBE", observed_at: "2026-10-01T12:00:00Z", observation_age_ms: 0,
+      providers: [{ provider_id: "on-host", inventory_state: "REACHABLE", models: [{
+        public_model: "a11oy-mini-r2", expected_digest: digest, observed_digest: digest,
+        resident_digest: null, state: "MATCH", resident_state: "NOT_LOADED", license_state: "NOT_VERIFIED",
+      }] }],
+    });
+    await s.nodes["#refresh"].fire("click");
+    const button = s.nodes["#providers"].children[0].children.find(child => child.className === "provider-models").children[0];
+    s.clock.now = 2001;
+    await button.fire("click");
+    assert.equal(s.nodes["#model"].value, "szl-default", "stale click must not bind the model");
+    assert(s.nodes["#provider-binding"].textContent.includes("No provider bound"));
+    assert(s.nodes["#local-provider-state"].textContent.includes("UNAVAILABLE · OBSERVATION_EXPIRED"));
+    assert(!s.nodes["#providers"].textContent.includes("Use a11oy-mini-r2"));
+    await s.nodes["#refresh"].fire("click");
+    assert(s.nodes["#providers"].textContent.includes("Use a11oy-mini-r2"));
+    const expiry = [...s.timers.values()].find(timer => timer.delay >= 1 && timer.delay <= 2000);
+    assert(expiry, "fresh local observation must schedule automatic expiry");
+    s.clock.now = 4002;
+    expiry.fn();
+    assert(s.nodes["#local-provider-state"].textContent.includes("UNAVAILABLE · OBSERVATION_EXPIRED"));
+    assert(!s.nodes["#providers"].textContent.includes("Use a11oy-mini-r2"));
   } else if (scenario === "divergent") {
     const s = await setup(); s.enter();
     s.handlers["/api/verify"] = () => response({ ...consistent, status: "DIVERGENT", checks: { ...consistent.checks, response_digest: false } }, 422);
     await s.nodes["#completion-form"].fire("submit");
     assert(s.nodes["#verification-state"].textContent.includes("DIVERGENT"));
+    assert(s.nodes["#completion-model-identity"].textContent.includes("model claim not accepted"));
     assert(s.nodes["#completion-state"].textContent.includes("VERIFICATION FAILED"));
     assert(s.nodes["#answer-output"].textContent.includes("<img"));
   } else if (scenario === "verifier-unavailable") {
@@ -233,7 +399,7 @@ run().catch(error => { console.error(error); process.exitCode = 1; });
 
 
 @pytest.mark.parametrize(
-    "scenario", ["success", "insecure", "loopback", "readiness", "divergent", "verifier-unavailable", "missing-header", "precise-json", "failure", "timeout", "bounds"],
+    "scenario", ["success", "insecure", "loopback", "readiness", "local-ready", "local-unavailable", "local-mismatch", "local-cached-busy", "local-clock-expiry", "divergent", "verifier-unavailable", "missing-header", "precise-json", "failure", "timeout", "bounds"],
 )
 def test_browser_completion_and_evidence_boundaries(scenario: str) -> None:
     ids = re.findall(r'\bid="([^"]+)"', (STATIC / "index.html").read_text(encoding="utf-8"))
