@@ -55,6 +55,7 @@ LOCAL_MODEL_CACHE_SECONDS = 2.0
 OLLAMA_LOOPBACK_ORIGIN = "http://127.0.0.1:11434"
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$")
 OLLAMA_MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,191}$")
+HTTPS_MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*(?:/[A-Za-z0-9][A-Za-z0-9._:-]*)*$")
 TOKEN_ENV = re.compile(r"^[A-Z][A-Z0-9_]{2,95}$")
 MODEL_DIGEST = re.compile(r"^[0-9a-f]{64}$")
 CLASSIFICATIONS = {"public", "internal", "confidential", "restricted"}
@@ -75,6 +76,15 @@ def source_revision() -> str:
 
 def enabled(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def valid_https_model_name(value: str) -> bool:
+    # A namespace-qualified model is data, never a URL or filesystem path.
+    return (
+        len(value) <= 192
+        and not value.lower().startswith(("http:", "https:"))
+        and HTTPS_MODEL_NAME.fullmatch(value) is not None
+    )
 
 
 def normalize_host(value: str) -> str:
@@ -133,8 +143,8 @@ class ProviderRecord(BaseModel):
     @classmethod
     def valid_models(cls, models: dict[str, str]) -> dict[str, str]:
         for public, upstream in models.items():
-            if not IDENTIFIER.fullmatch(public) or not OLLAMA_MODEL_NAME.fullmatch(upstream):
-                raise ValueError("model aliases must use bounded identifiers")
+            if not IDENTIFIER.fullmatch(public):
+                raise ValueError("public model aliases must use bounded identifiers")
         return dict(sorted(models.items()))
 
     @field_validator("classifications")
@@ -151,6 +161,8 @@ class ProviderRecord(BaseModel):
     @model_validator(mode="after")
     def valid_provider_binding(self) -> "ProviderRecord":
         if self.provider_type == "ollama_loopback":
+            if any(not OLLAMA_MODEL_NAME.fullmatch(upstream) for upstream in self.models.values()):
+                raise ValueError("loopback model names must use bounded identifiers")
             if self.base_url is not None or self.token_env is not None:
                 raise ValueError("loopback Ollama endpoint and credentials are fixed by the router")
             if set(self.model_digests) != set(self.models):
@@ -165,8 +177,8 @@ class ProviderRecord(BaseModel):
                 manifest_relative_path(self.models[public_model])
         elif (self.base_url is None or self.token_env is None or self.model_digests
               or self.model_weight_digests
-              or any(not IDENTIFIER.fullmatch(upstream) for upstream in self.models.values())):
-            raise ValueError("HTTPS providers require base_url and token_env without local manifest pins")
+              or any(not valid_https_model_name(upstream) for upstream in self.models.values())):
+            raise ValueError("HTTPS providers require base_url, token_env and bounded upstream model names without local manifest pins")
         return self
 
 

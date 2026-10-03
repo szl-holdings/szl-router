@@ -17,7 +17,7 @@ def routing(monkeypatch):
     primary = core.Provider("primary", "EMBED_TEST_URL", "", "EMBED_TEST_KEY",
                             True, "self-hosted")
     fallback = core.Provider("fallback", "", "http://fallback.invalid/v1", "",
-                             False, "grid")
+                             True, "self-hosted")
     monkeypatch.setattr(core, "PROVIDERS", {"primary": primary, "fallback": fallback})
     monkeypatch.setattr(core, "EMBED_ROUTES", {
         "bge-large": [("primary", "weights-a"), ("fallback", "weights-b")],
@@ -65,7 +65,7 @@ def test_effective_configuration_change_misses(routing, monkeypatch, change):
     elif change == "provider":
         core.EMBED_ROUTES["bge-large"].reverse()
     elif change == "labels":
-        core.PROVIDERS["primary"] = replace(core.PROVIDERS["primary"], sovereign=False, energy_source="grid")
+        core.PROVIDERS["primary"] = replace(core.PROVIDERS["primary"], energy_source="self-hosted-changed")
     elif change == "upstream_key":
         monkeypatch.setenv("EMBED_TEST_KEY", "fake-upstream-key-b")
     elif change == "caller_key":
@@ -87,7 +87,7 @@ def test_unavailable_route_cannot_replay_its_cache(routing, monkeypatch):
     second = core.embed("bge-large", "document")
     assert len(calls) == 2
     assert second["x_szl_provenance"]["provider"] == "fallback"
-    assert second["x_szl_provenance"]["sovereign"] is False
+    assert second["x_szl_provenance"]["sovereign"] is True
 
 
 def test_registry_alias_change_cannot_relabel_cached_origin(routing):

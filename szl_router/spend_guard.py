@@ -1,26 +1,25 @@
-"""szl-router local spend guard — SZL Sovereign Ops.
+"""szl-router advisory paid-tier spend guard - SZL Sovereign Ops.
 
-Enforces the org's hard USD spend cap + emergency kill-switch at the ONE place
-money can actually leave: the paid-tier upstream call in core.chat(). Free and
-sovereign tiers cost nothing and are never gated.
+The paid route in core.chat() checks prior recorded estimates and a kill-file
+before transport, then attempts to record an estimate after success. Calls are
+not pre-reserved, concurrent calls can exceed the configured threshold, and
+core.chat() does not fail a served response when ledger recording fails. This
+is not a strict USD cap or proof of actual provider charges. Unqualified cloud
+routes are blocked separately; owned hardware has no vendor charge here.
 
-Design (matches the a11oy szl_spend_cap doctrine):
+Design:
   * Pure stdlib, zero deps, runs anywhere.
   * Append-only, hash-linked JSON-lines ledger (tamper-evident: each row's
     digest chains the previous one, exactly like a receipt chain).
-  * Shares the org kill-file convention (SZL_SPEND_KILL_FILE); a single
-    `touch` of that file halts ALL paid spend instantly, everywhere.
-  * Honest by construction: an estimate is labelled estimated; nothing is
-    fabricated; a missing usage block falls back to a flat conservative figure.
-  * HONEST PER-MODEL PRICING: paid frontier models are priced with their real
-    asymmetric input/output list rates (not one flat number), so the ledger
-    never systematically under-records frontier spend. Rates are conservative
-    (rounded UP where uncertain) — an estimate may be conservative-high, never
-    optimistic-low. Every row records the rate basis + token counts so the
-    figure is auditable and correctable.
+  * Checks the org kill-file convention (SZL_SPEND_KILL_FILE) at paid-call
+    preflight; already in-flight calls are not cancelled by this check.
+  * Labels estimates and their rate basis. Missing usage or an unknown model
+    uses a configurable fallback, which is not verified current pricing.
+  * Historical per-model list-rate estimates are auditable but require current
+    provider/model/account/region price review before spend qualification.
 
 Env knobs (all optional):
-  SZL_SPEND_CAP_USD      hard cumulative cap in USD           (default 25)
+  SZL_SPEND_CAP_USD      advisory recorded-spend threshold     (default 25)
   SZL_SPEND_KILL_FILE    presence = emergency stop            (/opt/alloyscape/.spend-KILL)
   SZL_SPEND_LEDGER_FILE  append-only ledger path              (/opt/alloyscape/.szl-router-spend.jsonl)
   SZL_PAID_USD_PER_1K    flat per-1k fallback for UNKNOWN paid models (default 0.003)
@@ -39,11 +38,10 @@ _GENESIS = "0" * 64
 _LOCK = threading.Lock()
 
 # --- Per-model paid pricing (USD per 1K tokens), input/output split ----------
-# Public list prices, matched case-insensitively by SUBSTRING against the served
-# upstream model id, most-specific first. Rounded UP where uncertain so the
-# ledger never UNDER-records (honesty doctrine + fail-closed on cost). These are
-# estimates and are labelled as such in every ledger row; correct them here as
-# published prices change.
+# Historical list-price estimates, matched case-insensitively by SUBSTRING
+# against the served upstream model ID, most-specific first. These are not
+# verified current prices; substring matching and fallback rates can be wrong.
+# Every ledger row labels the amount as estimated and records its rate basis.
 _MODEL_RATES: List[Tuple[str, float, float]] = [
     # (substring, usd_per_1k_input, usd_per_1k_output)
     # -- Moonshot / Kimi (the armed paid-grid frontier route) --
@@ -143,8 +141,8 @@ def spent_usd() -> float:
 def rate_for(model: Optional[str]) -> Tuple[float, float, str]:
     """Return (usd_per_1k_input, usd_per_1k_output, basis) for a served model.
 
-    Falls back to a flat symmetric per-1k rate for any model not in the table so
-    an unknown paid model is still recorded (conservatively), never dropped."""
+    Falls back to a flat symmetric per-1k estimate for any model not in the
+    table. The fallback is not evidence of that model's actual price."""
     m = (model or "").lower().strip()
     if m:
         for sub, ri, ro in _MODEL_RATES:
@@ -159,9 +157,9 @@ def estimate_detail(result: Optional[Dict[str, Any]], model: Optional[str] = Non
 
     Prices prompt/completion tokens with the model's asymmetric input/output
     rates. If only a total is given, prices the whole total at the higher
-    (output) rate — conservative-high so we never under-record. If there is no
-    usage block at all, falls back to a flat per-call figure. Returns the amount
-    plus the rate basis + token counts for the ledger."""
+    table rate. If there is no usage block, uses a flat per-call estimate.
+    Neither fallback guarantees an upper bound on actual provider charges.
+    Returns the amount, rate basis, and token counts for a best-effort ledger."""
     usage = (result or {}).get("usage") or {}
     ri, ro, basis = rate_for(model)
     pt = usage.get("prompt_tokens")

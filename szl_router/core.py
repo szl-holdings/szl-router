@@ -7,7 +7,8 @@ made our own, leaner):
   * Sovereign-first routing: try our own metal (GPU on our box) before any
     third-party grid tier, before any paid tier.
   * Honest provenance on every answer: served_by, base_url, sovereign,
-    energy_source, tier, attempts. We never label a grid/free tier as sovereign.
+    energy_source, tier, attempts. Grid candidates are never sovereign or
+    presumed free from provider identity alone.
   * Keys ONLY from the environment. Nothing secret is ever written to disk.
   * No half-state: a logical model either resolves to a working upstream or the
     call fails loud with the full attempt trail.
@@ -138,7 +139,7 @@ PROVIDERS: Dict[str, Provider] = {
              "the sole worker. Each sovereign node is a SEPARATE worker — placement + "
              "sequential failover only; VRAM is NEVER fused/combined.",
     ),
-    # --- free / grid tiers (third-party clouds) ------------------------------
+    # --- third-party grid candidates (not price/quota qualified) -------------
     "groq": Provider(
         name="groq",
         base_url_env="GROQ_BASE_URL",
@@ -146,7 +147,7 @@ PROVIDERS: Dict[str, Provider] = {
         key_env="GROQ_API_KEY",
         sovereign=False,
         energy_source="grid",
-        note="Free, very fast.",
+        note="Cloud inference candidate; model pricing and quota unverified.",
     ),
     "nvidia_nim": Provider(
         name="nvidia_nim",
@@ -155,7 +156,7 @@ PROVIDERS: Dict[str, Provider] = {
         key_env="NVIDIA_NIM_API_KEY",
         sovereign=False,
         energy_source="grid",
-        note="NVIDIA-hosted NIM catalog.",
+        note="NVIDIA-hosted NIM catalog; model pricing and quota unverified.",
     ),
     "zhipu": Provider(
         name="zhipu",
@@ -164,7 +165,7 @@ PROVIDERS: Dict[str, Provider] = {
         key_env="ZHIPU_API_KEY",
         sovereign=False,
         energy_source="grid",
-        note="GLM family; free flash tier.",
+        note="GLM API candidate; model pricing, quota, and terms unverified.",
     ),
     "siliconflow": Provider(
         name="siliconflow",
@@ -173,7 +174,7 @@ PROVIDERS: Dict[str, Provider] = {
         key_env="SILICONFLOW_API_KEY",
         sovereign=False,
         energy_source="grid",
-        note="Free Qwen3-8B and DeepSeek-R1 distills.",
+        note="Inference API candidate; model pricing, quota, and terms unverified.",
     ),
     "cerebras": Provider(
         name="cerebras",
@@ -182,8 +183,7 @@ PROVIDERS: Dict[str, Provider] = {
         key_env="CEREBRAS_API_KEY",
         sovereign=False,
         energy_source="grid",
-        note="Free tier ~1M tokens/day, ultra-fast, no card. Dormant until "
-             "CEREBRAS_API_KEY is armed (skipped automatically while unset).",
+        note="Cloud inference candidate; model pricing and quota unverified.",
     ),
     "openrouter": Provider(
         name="openrouter",
@@ -192,8 +192,7 @@ PROVIDERS: Dict[str, Provider] = {
         key_env="OPENROUTER_API_KEY",
         sovereign=False,
         energy_source="grid",
-        note="Aggregator with :free model variants (DeepSeek-R1, Qwen3). Dormant "
-             "until OPENROUTER_API_KEY is armed (skipped automatically while unset).",
+        note="Aggregator candidate; :free suffix does not qualify pricing or quota.",
     ),
     "google": Provider(
         name="google",
@@ -202,10 +201,7 @@ PROVIDERS: Dict[str, Provider] = {
         key_env="GEMINI_API_KEY",
         sovereign=False,
         energy_source="grid",
-        note="Gemini free tier via AI Studio (2.5 Pro/Flash). HONEST CAVEAT: the "
-             "free tier may use inputs to improve Google's models — keep sovereign / "
-             "open-weight routes primary for sensitive data. Dormant until "
-             "GEMINI_API_KEY is armed (skipped automatically while unset).",
+        note="Gemini API candidate; pricing, quota, terms, and data use unverified.",
     ),
     # --- paid grid tier (last resort) ----------------------------------------
     "moonshot": Provider(
@@ -223,8 +219,8 @@ PROVIDERS: Dict[str, Provider] = {
 # ---------------------------------------------------------------------------
 # Logical model routes. Each logical name resolves to an ORDERED fallback list
 # of (provider, upstream_model). Order encodes the doctrine: sovereign first,
-# then free grid, then paid. Unavailable providers (no key/url) are skipped at
-# call time, never faked.
+# then grid candidates, then paid. Unqualified candidates are skipped even if
+# a key is present; key availability does not establish price or quota.
 # ---------------------------------------------------------------------------
 Route = Tuple[str, str]
 
@@ -237,16 +233,14 @@ MODEL_ROUTES: Dict[str, List[Route]] = {
         ("box_gpu", "llama3.1:8b"),
         ("nvidia_gpu", "llama3.1:8b"),
         ("omen_gpu", "llama3.1:8b"),
-        # free-grid, frontier-class FIRST: DeepSeek-R1 (open-weight, MIT) is a
-        # stronger reasoner than Llama-70B and Groq serves it free today; NVIDIA
-        # NIM hosts the full R1. Then ultra-fast Cerebras, OpenRouter :free R1 and
-        # Gemini free — each skipped automatically until its key is armed.
+        # Grid candidates remain listed for later model-specific qualification.
+        # They are skipped until pricing and quota are verified.
         ("groq", "deepseek-r1-distill-llama-70b"),
         ("nvidia_nim", "deepseek-ai/deepseek-r1"),
         ("cerebras", "gpt-oss-120b"),
         ("openrouter", "qwen/qwen3-next-80b-a3b-instruct:free"),
         ("google", "gemini-2.5-flash"),
-        # reliable 70B grid fallback, then paid last-resort (unchanged).
+        # Further grid candidates, then the existing paid last resort.
         ("groq", "llama-3.3-70b-versatile"),
         ("nvidia_nim", "meta/llama-3.3-70b-instruct"),
         ("moonshot", "kimi-k2.5"),
@@ -254,13 +248,13 @@ MODEL_ROUTES: Dict[str, List[Route]] = {
     # low-latency small brain. OFFLOAD doctrine: prefer the always-on HOME node
     # (omen_gpu) FIRST for small/fast jobs so the TRAVELING Blackwell laptop
     # (box_gpu) is not the sole worker. If OMEN is not armed/reachable this
-    # falls through honestly to the laptop, then the free grid. Each is a
+    # falls through honestly to the laptop, then grid candidates. Each is a
     # separate sovereign worker (sequential failover, never fused VRAM).
     "szl-fast": [
         ("omen_gpu", "llama3.1:8b"),
         ("box_gpu", "llama3.1:8b"),
         ("nvidia_gpu", "llama3.1:8b"),
-        # ultra-fast free grid: Cerebras (≈1M tok/day) first, then Groq instant.
+        # Grid candidates retained for later model-specific qualification.
         ("cerebras", "gpt-oss-120b"),
         ("groq", "llama-3.1-8b-instant"),
         ("nvidia_nim", "meta/llama-3.1-8b-instruct"),
@@ -271,8 +265,7 @@ MODEL_ROUTES: Dict[str, List[Route]] = {
         ("box_gpu", "qwen2.5-coder:7b"),
         ("nvidia_gpu", "qwen2.5-coder:7b"),
         ("omen_gpu", "qwen2.5-coder:7b"),
-        # free-grid: DeepSeek-R1 (strong on hard/algorithmic code) first, then the
-        # existing coder-specialist and 70B fallbacks. New providers skip until armed.
+        # Grid candidates retained for later model-specific qualification.
         ("groq", "deepseek-r1-distill-llama-70b"),
         ("openrouter", "qwen/qwen3-next-80b-a3b-instruct:free"),
         ("nvidia_nim", "deepseek-ai/deepseek-coder-6.7b-instruct"),
@@ -284,8 +277,8 @@ MODEL_ROUTES: Dict[str, List[Route]] = {
 # the always-on HOME node (omen_gpu) FIRST so the embeddings/RAG lane lives on
 # the always-on desktop and the TRAVELING laptop is not pinned as the embeddings
 # dependency. Served through the OpenAI-compatible /v1/embeddings surface in
-# app.py. Honest provenance is identical to chat. Free-grid has no honest
-# always-on embeddings peer here, so the sovereign nodes are the route; if none
+# app.py. Honest provenance is identical to chat. There is no qualified cloud
+# embeddings route here, so the sovereign nodes are the route; if none
 # is armed the call fails loud (no fabricated vector).
 EMBED_ROUTES: Dict[str, List[Route]] = {
     "bge-large": [
@@ -319,7 +312,7 @@ class Provenance:
     base_url: Optional[str] = None
     sovereign: bool = False
     energy_source: Optional[str] = None
-    tier: Optional[str] = None             # sovereign | free-grid | paid-grid
+    tier: Optional[str] = None             # sovereign | unqualified-grid | paid-grid
     attempts: List[Attempt] = field(default_factory=list)
     # Set ONLY for the opt-in "szl-auto" logical model: the honest, deterministic
     # routing decision (complexity heuristic + chosen real logical model). Absent
@@ -327,7 +320,7 @@ class Provenance:
     routing: Optional[Dict[str, Any]] = None
     # Honest per-call USD cost block for the SERVED route (see _cost_detail):
     # paid tier -> the spend-guard's auditable estimate (labelled estimated:true);
-    # free/sovereign tiers -> $0.00 vendor charge with an explicit basis string.
+    # sovereign tier -> $0.00 vendor charge with an explicit basis string.
     # Additive: only present once a route is served.
     cost: Optional[Dict[str, Any]] = None
 
@@ -354,7 +347,9 @@ def _tier_of(p: Provider) -> str:
         return "sovereign"
     if p.name == "moonshot":
         return "paid-grid"
-    return "free-grid"
+    # Provider identity (or a :free model suffix) cannot prove model-specific
+    # pricing, quota, account eligibility, or terms.
+    return "unqualified-grid"
 
 
 class RouterError(RuntimeError):
@@ -597,7 +592,8 @@ def _warm_candidate_later(routes: List[Route], next_index: int) -> bool:
     i.e. skipping the current cooled provider still leaves a real candidate."""
     for provider_name, _up in routes[next_index:]:
         p = PROVIDERS.get(provider_name)
-        if p is not None and p.available() and _cooldown_remaining(provider_name) <= 0:
+        if (p is not None and p.available() and _tier_of(p) != "unqualified-grid"
+                and _cooldown_remaining(provider_name) <= 0):
             return True
     return False
 
@@ -606,21 +602,22 @@ def _cost_detail(provider: Provider, result: Dict[str, Any], upstream_model: str
     """Honest per-call USD cost block for the served route, signed into the receipt.
 
     * paid-grid  -> the spend-guard's auditable ESTIMATE (labelled estimated:true,
-                    with rate basis + token counts) — the same figure the
-                    append-only ledger records, so receipt and ledger agree;
-    * free-grid  -> $0.00 vendor charge (free != zero energy; energy stays
-                    labelled elsewhere, never fabricated here);
+                    with rate basis + token counts); ledger recording is best effort;
     * sovereign  -> $0.00 vendor charge on our own metal (electricity is NOT
-                    metered here — we say so instead of inventing a number).
+                    metered here - we say so instead of inventing a number).
+    * unqualified-grid -> unknown vendor charge; never represented as free.
     """
     tier = _tier_of(provider)
     if tier == "paid-grid":
         detail = spend_guard.estimate_detail(result, upstream_model)
         detail["tier"] = tier
         return detail
-    basis = ("sovereign-owned-metal; no vendor charge; electricity not metered here"
-             if tier == "sovereign" else "free-tier; no vendor charge today")
-    return {"amount_usd": 0.0, "estimated": False, "basis": basis,
+    if tier == "sovereign":
+        return {"amount_usd": 0.0, "estimated": False,
+                "basis": "sovereign-owned-metal; no vendor charge; electricity not metered here",
+                "model": upstream_model, "tier": tier}
+    return {"amount_usd": None, "estimated": False,
+            "basis": "model pricing and quota unverified; vendor charge unknown",
             "model": upstream_model, "tier": tier}
 
 
@@ -980,6 +977,10 @@ def chat(
     logical model (sovereign-first). `model` stays "szl-auto" on the receipt so
     the caller sees WHAT they asked for; the chosen real model and served
     provider are recorded honestly in provenance.routing + served_by."""
+    if extra is not None and type(extra) is not dict:
+        raise ValueError("chat extra must be an object")
+    if extra and {"model", "messages"}.intersection(extra):
+        raise ValueError("chat extra cannot override model or messages")
     routing_block: Optional[Dict[str, Any]] = None
     route_model = model
     if model == AUTO_MODEL:
@@ -997,6 +998,12 @@ def chat(
                                     error="provider unavailable (no key/url)"))
             continue
 
+        tier = _tier_of(provider)
+        if tier == "unqualified-grid":
+            attempts.append(Attempt(provider_name, upstream_model, ok=False,
+                                    error="pricing/quota unqualified; grid route disabled"))
+            continue
+
         # FAILURE COOLDOWN: skip a recently-failed upstream ONLY while a warm
         # candidate (available, not cooling) remains later in the chain. The
         # skip lands in the attempt trail so the receipt shows why this
@@ -1008,11 +1015,9 @@ def chat(
                                           "failure; warm fallback available)" % _cd_left))
             continue
 
-        # SPEND GUARD (SZL Sovereign Ops): a PAID tier may never spend past the
-        # hard USD cap or while the kill-switch is engaged. Sovereign/free tiers
-        # cost nothing and are never gated. A blocked paid route falls through to
-        # the next (cheaper) route honestly, recorded in the attempt trail.
-        if _tier_of(provider) == "paid-grid":
+        # The paid preflight checks the current ledger and kill-switch; it does
+        # not reserve spend or prove that later ledger writes will succeed.
+        if tier == "paid-grid":
             _sg_ok, _sg_why = spend_guard.allow()
             if not _sg_ok:
                 attempts.append(Attempt(provider_name, upstream_model, ok=False,
@@ -1046,16 +1051,16 @@ def chat(
             prov.base_url = provider.base_url()
             prov.sovereign = provider.sovereign
             prov.energy_source = provider.energy_source
-            prov.tier = _tier_of(provider)
+            prov.tier = tier
             prov.attempts = attempts
-            # Honest cost block for the served route — same figure the spend
-            # ledger records for paid tiers; $0 vendor charge stated explicitly
-            # for free/sovereign tiers. Signed into the receipt via app.py.
+            # Honest cost block for the served route - a paid estimate or a
+            # sovereign zero vendor charge.
+            # Signed into the receipt via app.py.
             prov.cost = _cost_detail(provider, result, upstream_model)
             result["x_szl_provenance"] = prov.to_dict()
             # SPEND GUARD: record estimated USD for a served PAID call so the
-            # append-only ledger stays honest (free/sovereign record nothing).
-            if _tier_of(provider) == "paid-grid":
+            # append-only ledger records a best-effort estimate.
+            if tier == "paid-grid":
                 try:
                     _sg_detail = spend_guard.estimate_detail(result, upstream_model)
                     spend_guard.record(_sg_detail["amount_usd"],
@@ -1304,6 +1309,14 @@ def embed(
         if provider is None or not provider.available():
             attempts.append(Attempt(provider_name, upstream_model, ok=False,
                                     error="provider unavailable (no key/url)"))
+            continue
+
+        # Direct provider:model embedding overrides can select chargeable cloud
+        # models, but this path has no cloud spend guard or qualified quota data.
+        # Reject them before either cache lookup or transport.
+        if _tier_of(provider) != "sovereign":
+            attempts.append(Attempt(provider_name, upstream_model, ok=False,
+                                    error="cloud embeddings pricing/quota unqualified; route disabled"))
             continue
 
         payload: Dict[str, Any] = {"model": upstream_model, "input": request["input"]}
@@ -1561,8 +1574,8 @@ def should_soak_wasted_energy(allow_network: bool = True) -> bool:
 def fabric_status(include_harvest: bool = True, allow_network: bool = True) -> Dict[str, Any]:
     """Energy/sovereignty posture of the whole fabric — honest, live.
 
-    Maps the live provider registry onto the Sovereign-Resilience tier ladder
-    (sovereign own-metal first, then free grid faucets, then paid grid) and
+    Maps the provider registry onto the Sovereign-Resilience tier ladder
+    (sovereign own-metal, unqualified cloud candidates, paid grid) and
     reports a single posture: green = a sovereign node is up AND has a fallback;
     yellow = degraded (only one route, or no sovereign node up); red = nothing
     armed. Never claims sovereign/clean-energy that isn't literally true.
@@ -1572,7 +1585,7 @@ def fabric_status(include_harvest: bool = True, allow_network: bool = True) -> D
     window is open AND a sovereign node is up, surfaces a distinct, honest
     HARVESTING display state (real wasted grid power soaked on our own metal —
     not greenwash). The harvest overlay NEVER changes the sovereign label."""
-    sovereign, free_grid, paid_grid = [], [], []
+    sovereign, free_grid, paid_grid, unqualified_grid = [], [], [], []
     for name, p in PROVIDERS.items():
         rec = {
             "provider": name,
@@ -1584,7 +1597,8 @@ def fabric_status(include_harvest: bool = True, allow_network: bool = True) -> D
         tier = _tier_of(p)
         (sovereign if tier == "sovereign"
          else paid_grid if tier == "paid-grid"
-         else free_grid).append(rec)
+         else free_grid if tier == "free-grid"
+         else unqualified_grid).append(rec)
 
     sov_armed = [r for r in sovereign if r["armed"]]
     grid_armed = [r for r in (free_grid + paid_grid) if r["armed"]]
@@ -1634,9 +1648,14 @@ def fabric_status(include_harvest: bool = True, allow_network: bool = True) -> D
                 "what": "our own GPU node(s) over Tailscale; sovereign:true, grid power today",
             },
             "tier_2_free_grid_faucets": {
-                "status": "live" if [r for r in free_grid if r["armed"]] else "configured",
+                "status": "armed" if [r for r in free_grid if r["armed"]] else "unqualified",
                 "providers": free_grid,
-                "what": "free open-weight clouds (Groq, NIM, GLM-Flash, SiliconFlow); sovereign:false",
+                "what": "No cloud model is currently qualified as free by this source revision.",
+            },
+            "unqualified_grid_candidates": {
+                "status": "blocked",
+                "providers": unqualified_grid,
+                "what": "Keys and URLs do not prove model pricing, quota, or terms; routes are disabled.",
             },
             "tier_3_paid_grid": {
                 "providers": paid_grid,
@@ -1646,7 +1665,7 @@ def fabric_status(include_harvest: bool = True, allow_network: bool = True) -> D
         "honest_energy_sources": HONEST_ENERGY_SOURCES,
         "roadmap_energy_sources": ROADMAP_ENERGY_SOURCES,
         "doctrine": "sovereign:true ONLY on own metal; energy_source claims must be real; "
-                    "free faucets are honest sovereign:false; harvest is real grid data "
+                    "unqualified cloud candidates are disabled; harvest is real grid data "
                     "(never sovereign); joules SAMPLE until an on-box meter; no half-state.",
     }
     if harvest is not None:
