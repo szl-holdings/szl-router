@@ -18,7 +18,7 @@ described below is `szl_router.app`; the two receipt formats are distinct.
 [Run the local inference demo](demo/README.md) for one-command loopback inference,
 verified session receipts, and a hash-bound report using an installed Ollama model.
 
-One endpoint in front of many brains — our own GPU first, then free grid tiers,
+One endpoint in front of many brains — our own GPU first, then configured external routes,
 then a paid fallback — and every answer comes with a **verifiable receipt**
 (signed when a key is armed, else UNSIGNED-honest) of which model served it, on
 whose hardware, and at what energy/tier.
@@ -80,12 +80,13 @@ with `SZL_RECEIPT_EPHEMERAL=0` and no key, receipts are emitted UNSIGNED-honest
 
 Beyond provenance, usage and the request digest, every new receipt also carries:
 
-- **`cost`** — an honest per-call USD block for the served route. Paid tiers
-  carry the spend-guard's auditable **estimate** (`estimated:true`, the price-table
-  basis, and the token counts it priced — the *same* figure the append-only spend
-  ledger records, so receipt and ledger always agree). Free and sovereign tiers
-  carry `$0.00` **vendor charge** with an explicit basis string (sovereign metal:
-  "electricity not metered here" — we say so instead of inventing a number).
+- **`cost`** - a per-call USD block with its evidence basis. A paid route carries
+  a price-table **estimate** (`estimated:true`), not a guaranteed charge or
+  prepaid reservation. Ledger recording follows a successful call and can fail;
+  the receipt does not prove ledger completeness or a strict concurrent cap.
+  Unqualified cloud pricing/quota remains unknown (`amount_usd:null`), never
+  fabricated as `$0`. Sovereign metal records `$0.00` vendor charge only,
+  while electricity and other costs are unmetered here.
 - **`observer`** — the observer frame the receipt was issued under: endpoint,
   auth mode (`bearer`/`open`), and the requested model. A receipt's verdict is
   honest *relative to this frame* — what this caller asked and how they were
@@ -108,7 +109,7 @@ produced by older builds stay byte-identical.
 ---
 
 Our own unified, OpenAI-compatible LLM router. One endpoint in front of many
-brains — our own GPU first, then free grid tiers, then a paid fallback — with
+brains - our own GPU first, then configured external routes - with
 **honest provenance on every answer**.
 
 We studied the leaders (LiteLLM proxy, OpenRouter, lm-sys RouteLLM) and then
@@ -118,7 +119,7 @@ built our own, leaner version that fits our doctrine:
   any third-party cloud, before any paid tier.
 - **Honest labels.** Every response carries `x_szl_provenance` with `served_by`,
   `sovereign` (true *only* for hardware we own), `energy_source`, `tier`, and the
-  full `attempts` trail. A free/grid tier is never labelled sovereign.
+  full `attempts` trail. Third-party routes are never labelled sovereign.
 - **No secrets in the repo.** All upstream keys come from the environment. Nothing
   secret is ever written to disk or logged.
 - **No half-state.** A logical model either resolves to a working upstream or the
@@ -127,14 +128,16 @@ built our own, leaner version that fits our doctrine:
 
 ## Logical models
 
-| model       | intent              | fallback order (sovereign → free → paid)                          |
+| model       | intent              | configured order (unqualified routes skipped)                     |
 |-------------|---------------------|-------------------------------------------------------------------|
 | `szl-large` | general large brain | box_gpu → nvidia_gpu → groq → nvidia_nim → moonshot(Kimi)          |
 | `szl-fast`  | low-latency small   | box_gpu → groq → nvidia_nim                                        |
 | `szl-coder` | coding              | box_gpu → nvidia_gpu → nvidia_nim → groq                           |
 | `szl-auto`  | smart routing       | scores the prompt, then dispatches to one of the three above      |
 
-You can also call `provider:upstream_model` directly (e.g. `groq:llama-3.3-70b-versatile`).
+You can also request `provider:upstream_model` directly. Unqualified cloud-grid
+overrides are rejected before transport, including when a credential is
+configured. The separate paid Moonshot path remains estimate-based.
 
 ## Smart routing (`szl-auto`)
 
@@ -170,13 +173,16 @@ curl localhost:8099/v1/chat/completions -H 'content-type: application/json' \
 |---------------|------------|-----------|------------------------------------------|
 | box_gpu       | sovereign  | yes       | `A11OY_MODEL_BASE_URL` + `A11OY_GPU_TOKEN` |
 | nvidia_gpu    | sovereign  | yes       | `NVIDIA_GPU_BASE_URL` + `NVIDIA_GPU_TOKEN` |
-| groq          | free-grid  | no        | `GROQ_API_KEY`                           |
-| nvidia_nim    | free-grid  | no        | `NVIDIA_NIM_API_KEY`                     |
-| zhipu         | free-grid  | no        | `ZHIPU_API_KEY`                          |
-| siliconflow   | free-grid  | no        | `SILICONFLOW_API_KEY`                    |
+| groq          | unqualified-grid | no | `GROQ_API_KEY`                           |
+| nvidia_nim    | unqualified-grid | no | `NVIDIA_NIM_API_KEY`                     |
+| zhipu         | unqualified-grid | no | `ZHIPU_API_KEY`                          |
+| siliconflow   | unqualified-grid | no | `SILICONFLOW_API_KEY`                    |
 | moonshot/Kimi | paid-grid  | no        | `KIMI_API_KEY`                           |
 
-A provider is **armed** the moment its key (and url, for the GPU tiers) is set.
+A key and URL make a provider locally configured, not qualified, free, or live.
+Unqualified cloud-grid candidates are skipped. The Moonshot paid route retains
+an advisory estimate, not a strict spend cap. See
+[provider qualification](docs/PROVIDER_QUALIFICATION.md) for current gates.
 
 ## Run
 
@@ -197,9 +203,9 @@ Set `SZL_ROUTER_TOKEN` to require `Authorization: Bearer <token>` on callers.
 Two layers of resilience, both honest (a real failure is always surfaced in the
 `attempts` trail — never papered over):
 
-- **Route failover** — each logical model walks its ordered route list
-  (sovereign → free-grid → paid-grid) and returns the first upstream that
-  answers. An unavailable provider (no key/url) is skipped, never faked.
+- **Route failover** - each logical model walks its ordered route list and
+  returns the first eligible upstream that answers. Missing keys/URLs and
+  unqualified cloud-grid routes are skipped and recorded in the attempt trail.
 - **Same-provider transient retry** — before falling through to the next route, a
   provider that blips transiently (HTTP `429`/`500`/`502`/`503`/`504`, or a
   dropped connection) is retried with **exponential backoff + full jitter**, so
@@ -322,8 +328,8 @@ emits a governance receipt for every run.
 
 How the router embodies that same primitive (in `szl_router/core.py`, see **Reliability** above):
 
-- **Bounded.** Each logical model walks an *ordered, finite* route list (sovereign →
-  free-grid → paid-grid); each provider retries at most `SZL_RETRY_MAX_ATTEMPTS` times
+- **Bounded.** Each logical model walks an *ordered, finite* route list; each
+  eligible provider retries at most `SZL_RETRY_MAX_ATTEMPTS` times
   with exponential backoff + full jitter; a spent provider cools down. There is no
   unbounded retry — the loop always terminates, either on a working upstream or a loud
   `HTTP 502` carrying the complete `attempts` trail.

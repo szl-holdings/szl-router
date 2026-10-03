@@ -44,6 +44,8 @@ export SZL_ROUTER_ENABLE_EGRESS=1
 
 HTTPS provider endpoints must use the default port, an exact hostname in `SZL_ROUTER_ALLOWED_HOSTS`, and no embedded credentials, query, fragment, literal IP, or localhost name. The configured `base_url` should include the provider's OpenAI-compatible API prefix, commonly `/v1`; the router appends `/chat/completions`.
 
+Public model aliases and provider IDs remain bounded identifiers. An HTTPS upstream model name may contain namespace separators, for example `org/family/model:revision`; it is sent as a JSON model value and cannot be a URL, traversal path, or request destination. This syntax admission does not establish price, quota, terms, retention, model identity, or availability. Candidate records should remain `"enabled": false` until independently qualified. See [provider qualification and Hugging Face alignment](PROVIDER_QUALIFICATION.md).
+
 HTTPS upstream secrets are resolved only from each provider's named environment variable. The public registry reports `AVAILABLE` or `UNAVAILABLE` for those credentials, never the variable name, endpoint, or value. The fixed loopback provider needs no upstream credential and reports `NOT_REQUIRED_LOOPBACK`.
 
 For a model already installed on the router host, configure `provider_type: "ollama_loopback"` in the same registry. This type accepts neither `base_url` nor `token_env`. It contacts only the built-in `127.0.0.1:11434` address and requires a lowercase 64-character Ollama manifest digest for every public alias:

@@ -170,6 +170,82 @@ def test_literal_ip_and_non_https_provider_urls_are_rejected() -> None:
         module.validate_base_url("http://provider.example.test/v1", frozenset({"provider.example.test"}))
 
 
+@pytest.mark.parametrize("upstream", [
+    "Pro/zai-org/GLM-4.5",
+    "Qwen/Qwen3-8B:free",
+    "deepseek-ai/DeepSeek-V3.1",
+])
+def test_https_provider_accepts_bounded_qualified_model_names(upstream: str) -> None:
+    provider = module.ProviderRecord.model_validate({
+        "id": "remote",
+        "base_url": "https://remote.example.test/v1",
+        "models": {"szl-default": upstream},
+        "token_env": "REMOTE_TOKEN",
+        "enabled": False,
+    })
+    assert provider.models["szl-default"] == upstream
+    assert provider.enabled is False
+
+
+@pytest.mark.parametrize("upstream", [
+    "/model", "org/../model", "org//model", "org/model/", "https://example.test/model",
+    "https:/example.test/model", "org/model?key=x", "org/model#fragment", "org/%2e%2e/model",
+    "org\\model", "org/model\nheader: value", "org/" + "a" * 190,
+])
+def test_https_provider_rejects_unsafe_model_names(upstream: str) -> None:
+    with pytest.raises(ValueError, match="bounded upstream model names"):
+        module.ProviderRecord.model_validate({
+            "id": "remote",
+            "base_url": "https://remote.example.test/v1",
+            "models": {"szl-default": upstream},
+            "token_env": "REMOTE_TOKEN",
+        })
+
+
+def test_public_alias_and_provider_id_remain_strict() -> None:
+    for field, value in (("id", "org/remote"), ("models", {"org/szl-default": "org/model"})):
+        record = {
+            "id": "remote",
+            "base_url": "https://remote.example.test/v1",
+            "models": {"szl-default": "org/model"},
+            "token_env": "REMOTE_TOKEN",
+        }
+        record[field] = value
+        with pytest.raises(ValueError):
+            module.ProviderRecord.model_validate(record)
+
+
+def test_qualified_model_keeps_egress_and_classification_gates(monkeypatch: pytest.MonkeyPatch) -> None:
+    provider = {
+        "id": "remote",
+        "base_url": "https://remote.example.test/v1",
+        "models": {"szl-default": "Pro/zai-org/GLM-4.5"},
+        "token_env": "REMOTE_TOKEN",
+        "classifications": ["public"],
+        "enabled": True,
+    }
+    monkeypatch.setenv("SZL_ROUTER_PROVIDERS_JSON", json.dumps({"providers": [provider]}))
+    monkeypatch.setenv("SZL_ROUTER_ALLOWED_HOSTS", "remote.example.test")
+    monkeypatch.setenv("SZL_ROUTER_TOKEN", "test-router-client")
+    monkeypatch.setenv("REMOTE_TOKEN", "synthetic-secret")
+    calls = 0
+
+    async def forbidden(*args: Any, **kwargs: Any) -> tuple[dict[str, Any], int]:
+        nonlocal calls
+        calls += 1
+        raise AssertionError("transport must remain unused")
+
+    monkeypatch.setattr(module, "call_provider", forbidden)
+    disabled = client.post("/v1/chat/completions", json=chat_request())
+    assert disabled.status_code == 503
+    assert disabled.json()["detail"]["code"] == "EGRESS_DISABLED"
+    monkeypatch.setenv("SZL_ROUTER_ENABLE_EGRESS", "1")
+    classified = client.post("/v1/chat/completions", json=chat_request(data_classification="confidential"))
+    assert classified.status_code == 503
+    assert classified.json()["detail"]["code"] == "NO_ELIGIBLE_PROVIDER"
+    assert calls == 0
+
+
 def test_plan_is_deterministic_and_sovereignty_first(monkeypatch: pytest.MonkeyPatch) -> None:
     configure(monkeypatch)
     first = client.post(

@@ -3,7 +3,7 @@
   * per-upstream FAILURE COOLDOWN — a failed provider is skipped (honestly, in
     the attempt trail) while a warm fallback exists, is still TRIED as a last
     resort, and is cleared on success;
-  * honest per-call COST block — $0.00-with-basis for free/sovereign tiers,
+  * honest per-call COST block - $0.00-with-basis for sovereign tiers,
     the spend-guard's labelled ESTIMATE for paid tiers;
   * OBSERVER frame + cost land in the receipt envelope ONLY when passed
     (older callers stay byte-identical).
@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import io
 import os
+import tempfile
 import sys
 import urllib.error
 
@@ -45,7 +46,7 @@ _FAKE = {
 _MSGS = [{"role": "user", "content": "hi"}]
 
 _BOX = core.PROVIDERS["box_gpu"]
-_GROQ = core.PROVIDERS["groq"]
+_NVIDIA = core.PROVIDERS["nvidia_gpu"]
 _MOON = core.PROVIDERS["moonshot"]
 
 # HERMETIC: every provider's arming env var, so real keys in the host
@@ -91,7 +92,8 @@ def test_cooldown_skip_then_last_resort_then_clear() -> None:
     try:
         os.environ[_BOX.base_url_env] = "http://fake-gpu.local:11434/v1"
         os.environ[_BOX.key_env] = "test-token"
-        os.environ[_GROQ.key_env] = "fake-groq-key"
+        os.environ[_NVIDIA.base_url_env] = "http://fake-second-gpu.local:11434/v1"
+        os.environ[_NVIDIA.key_env] = "test-second-token"
         os.environ.pop("SZL_COOLDOWN_SECONDS", None)  # default 30s
 
         def post_box_fails(provider, payload, timeout):
@@ -101,10 +103,10 @@ def test_cooldown_skip_then_last_resort_then_clear() -> None:
 
         core._post_chat = post_box_fails
 
-        # Call 1: box_gpu fails (permanent 400, no retry sleep), groq serves.
+        # Call 1: box_gpu fails (permanent 400, no retry sleep), nvidia_gpu serves.
         r1 = core.chat("szl-large", _MSGS, timeout=1)
         prov1 = r1["x_szl_provenance"]
-        check(prov1["provider"] == "groq", "call1 served by groq after box_gpu failure")
+        check(prov1["provider"] == "nvidia_gpu", "call1 served by nvidia_gpu after box_gpu failure")
         check(core._cooldown_remaining("box_gpu") > 0, "box_gpu is cooling after failure")
 
         # Call 2: box_gpu must be SKIPPED with an honest trail entry.
@@ -113,23 +115,23 @@ def test_cooldown_skip_then_last_resort_then_clear() -> None:
         first = prov2["attempts"][0]
         check(first["provider"] == "box_gpu" and "cooldown-skip" in (first["error"] or ""),
               "cooled box_gpu skipped with 'cooldown-skip' recorded in the trail")
-        check(prov2["provider"] == "groq", "call2 served by groq")
+        check(prov2["provider"] == "nvidia_gpu", "call2 served by nvidia_gpu")
 
-        # Call 3: groq disarmed -> box_gpu is the LAST RESORT and must be tried
+        # Call 3: nvidia_gpu disarmed -> box_gpu is the LAST RESORT and must be tried
         # despite cooling; it now succeeds and the cooldown clears.
-        os.environ.pop(_GROQ.key_env, None)
+        os.environ.pop(_NVIDIA.key_env, None)
         core._post_chat = lambda provider, payload, timeout: dict(_FAKE)
         r3 = core.chat("szl-large", _MSGS, timeout=1)
         prov3 = r3["x_szl_provenance"]
         check(prov3["provider"] == "box_gpu", "cooling last-resort box_gpu still tried and served")
         check(core._cooldown_remaining("box_gpu") == 0, "success cleared box_gpu cooldown")
 
-        # Honest cost blocks: sovereign metal on call 3, free tier on call 1.
+        # Both calls used sovereign hardware; neither claims a cloud free tier.
         check(prov3["cost"]["amount_usd"] == 0.0 and "sovereign" in prov3["cost"]["basis"]
               and prov3["cost"]["estimated"] is False,
               "sovereign cost: $0 vendor charge, explicit basis, not an estimate")
-        check(prov1["cost"]["amount_usd"] == 0.0 and "free-tier" in prov1["cost"]["basis"],
-              "free-tier cost: $0 vendor charge with basis")
+        check(prov1["cost"]["amount_usd"] == 0.0 and prov1["cost"]["tier"] == "sovereign",
+              "second sovereign node cost: $0 vendor charge with basis")
 
         # SZL_COOLDOWN_SECONDS=0 disables the mechanism entirely.
         os.environ["SZL_COOLDOWN_SECONDS"] = "0"
@@ -145,15 +147,13 @@ def test_paid_cost_is_labelled_estimate() -> None:
     print("== paid tier: cost is the spend-guard's labelled estimate ==")
     saved = _snap_env()
     orig_post = core._post_chat
+    temp_dir = None
     _reset_cooldowns()
     try:
         os.environ[_MOON.key_env] = "fake-moonshot-key"
-        os.environ["SZL_SPEND_LEDGER_FILE"] = "/tmp/test-szl-spend-ledger.jsonl"
-        os.environ["SZL_SPEND_KILL_FILE"] = "/tmp/test-szl-spend-KILL-absent"
-        try:
-            os.remove("/tmp/test-szl-spend-ledger.jsonl")
-        except FileNotFoundError:
-            pass
+        temp_dir = tempfile.TemporaryDirectory(prefix="szl-router-spend-")
+        os.environ["SZL_SPEND_LEDGER_FILE"] = os.path.join(temp_dir.name, "ledger.jsonl")
+        os.environ["SZL_SPEND_KILL_FILE"] = os.path.join(temp_dir.name, "KILL-absent")
         core._post_chat = lambda provider, payload, timeout: dict(_FAKE)
         r = core.chat("moonshot:kimi-k2.5", _MSGS, timeout=1)
         cost = r["x_szl_provenance"]["cost"]
@@ -167,6 +167,8 @@ def test_paid_cost_is_labelled_estimate() -> None:
         core._post_chat = orig_post
         _restore_env(saved)
         _reset_cooldowns()
+        if temp_dir is not None:
+            temp_dir.cleanup()
 
 
 def test_envelope_carries_cost_and_observer_only_when_passed() -> None:
