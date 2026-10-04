@@ -17,6 +17,29 @@ szl:
   proof_url: https://github.com/szl-holdings/szl-router
 ---
 
+<p><a href="https://huggingface.co/spaces/SZLHOLDINGS/szl-command-lab"><img src="https://raw.githubusercontent.com/szl-holdings/.github/main/profile/assets/szl/logos/szl_mark_holographic.svg" alt="SZL Holdings" width="112" /></a></p>
+
+# SZL Router · LLM Gateway
+
+Explore routing status, source identity and receipts for the SZL gateway. The public Space presents the status surface; operators configure inference on their own gateway deployment.
+
+**Artifact:** Gateway status and source evidence · **Stage:** Source-owned public status surface
+
+[Explore in Command Lab](https://huggingface.co/spaces/SZLHOLDINGS/szl-command-lab) · [Build](https://github.com/szl-holdings/szl-router) · [Evidence](https://github.com/szl-holdings/szl-router/actions/workflows/hf-space-deploy.yml)
+
+## Before you use it
+
+- Provider snapshots carry their observation time and freshness state; a reachable status page does not establish live inference.
+- Provider access and signing depend on operator configuration. Receipts remain UNSIGNED when no persistent signing key is armed.
+- Routing scores are estimates. Lambda remains Conjecture 1, and this artifact does not authorize consequential actions.
+
+<details>
+<summary>Technical details and original evidence</summary>
+
+The retained source below is exact and may contain historical observations. Its dates, use restrictions, licenses and evidence boundaries continue to apply.
+
+<!-- SZL-PRESERVED-TECHNICAL-BODY:START -->
+
 # SZL Router — flagship LLM gateway
 
 **One OpenAI-compatible endpoint across owned compute and bounded hosted fallback, with an evidence-bearing receipt for every routed answer.**
@@ -127,3 +150,7 @@ No provider secret is required to inspect or test the deterministic routing and 
 ---
 
 **GitHub is the source of truth → Hugging Face is the public runtime mirror → A11oy is the integrated product interface → a11oy.net preserves proof and known bounds.**
+
+<!-- SZL-PRESERVED-TECHNICAL-BODY:END -->
+
+</details>

@@ -1,0 +1,46 @@
+{
+  "_notice": "SPDX-License-Identifier: Apache-2.0; (c) 2026 SZL Holdings",
+  "schema": "szl.hf.space-card-presentation.v1",
+  "source_repository": "szl-holdings/szl-router",
+  "cards": [
+    {
+      "kind": "spaces",
+      "repo_id": "SZLHOLDINGS/llm-router-live",
+      "source_repository": "szl-holdings/szl-router",
+      "source_revision_before_presentation": "8b402e3da5af9646a249468e222944a7e476f67b",
+      "source_path": "space/README.md",
+      "source_url": "https://github.com/szl-holdings/szl-router/blob/8b402e3da5af9646a249468e222944a7e476f67b/space/README.md",
+      "presentation": {
+        "title": "SZL Router · LLM Gateway",
+        "summary": "Explore routing status, source identity and receipts for the SZL gateway. The public Space presents the status surface; operators configure inference on their own gateway deployment.",
+        "artifact_type": "Gateway status and source evidence",
+        "stage": "Source-owned public status surface",
+        "build_url": "https://github.com/szl-holdings/szl-router",
+        "evidence_url": "https://github.com/szl-holdings/szl-router/actions/workflows/hf-space-deploy.yml",
+        "visible_limits": [
+          "Provider snapshots carry their observation time and freshness state; a reachable status page does not establish live inference.",
+          "Provider access and signing depend on operator configuration. Receipts remain UNSIGNED when no persistent signing key is armed.",
+          "Routing scores are estimates. Lambda remains Conjecture 1, and this artifact does not authorize consequential actions."
+        ]
+      },
+      "before_sha256": "270c04bbf281c4bfcf6eeeed63565e2435e04b3bcca3441a745895f947f206d0",
+      "after_sha256": "71c876b3875feb946b95028141c9a335f65dc0a84f230ccb80fe978649245225",
+      "front_matter_sha256": "9a8f49986edff501fe3c11bd9d1d79a6acb1bfdbebe57c8e4257f85e5f2b43c0",
+      "preserved_body_sha256": "a3e93b48c9b3c3d615cfafc427e6aebfc838d75327f77cb716f858df6a0d6ef6",
+      "bytes_before": 5821,
+      "bytes_after": 7336,
+      "front_matter_preserved": true,
+      "original_body_preserved": true,
+      "publisher_repository": "szl-holdings/szl-router",
+      "publisher_workflow": ".github/workflows/hf-space-deploy.yml",
+      "publisher_workflow_source_url": "https://github.com/szl-holdings/szl-router/blob/8b402e3da5af9646a249468e222944a7e476f67b/.github/workflows/hf-space-deploy.yml",
+      "publisher_readme_mapping": "scripts/hf_space_deploy.py::_source_snapshot projects the exact tracked space/ subtree, including space/README.md as README.md, and adds SOURCE_BINDING.json.",
+      "publication_trigger": "Main push filtered to space/** and the existing deployment-related paths; no workflow_dispatch event is declared.",
+      "publication_state_at_preparation": "SOURCE_CANDIDATE_ONLY_NO_HUB_EVENT_BY_THIS_LANE",
+      "publication_boundary": "The existing fixed-target writer publishes the full canonical Space projection, restores public visibility, restarts the Space, and checks provider/runtime/source parity. This source-only card change does not exercise that writer or establish inference, signing, performance, compliance, or action authorization.",
+      "writer_or_workflow_changed": false,
+      "runtime_or_artifact_code_changed": false,
+      "central_apply_allowed": false
+    }
+  ]
+}
