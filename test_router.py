@@ -42,7 +42,7 @@ def try_model(name):
     return True
 
 
-def test_harvest_classifier():
+def _check_harvest_classifier():
     """Pure, offline, deterministic check of the wasted-energy posture mapping.
 
     No network: validates _classify_harvest + the offline fabric overlay so the
@@ -84,6 +84,11 @@ def test_harvest_classifier():
     return failed == 0
 
 
+def test_harvest_classifier():
+    # The CLI uses the boolean; pytest requires a raised failure.
+    assert _check_harvest_classifier(), "harvest classifier checks failed"
+
+
 def show_harvest_live():
     """Best-effort live harvest probe (non-fatal — feeds may be unreachable)."""
     print("== harvest (live, real public grid feeds) ==")
@@ -107,7 +112,7 @@ def show_harvest_live():
 
 if __name__ == "__main__":
     show_status()
-    classifier_ok = test_harvest_classifier()
+    classifier_ok = _check_harvest_classifier()
     show_harvest_live()
     if not classifier_ok:
         print("RESULT: harvest classifier FAILED — posture mapping regressed.")
