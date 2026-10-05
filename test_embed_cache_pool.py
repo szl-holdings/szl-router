@@ -50,7 +50,7 @@ def _ok(cond, msg):
     return 0 if cond else 1
 
 
-def test_cache_hit_and_miss():
+def _check_cache_hit_and_miss():
     print("== embeddings exact-hash cache: hit + miss ==")
     failed = 0
     core.embed_cache_clear()
@@ -99,7 +99,7 @@ def test_cache_hit_and_miss():
     return failed == 0
 
 
-def test_cache_size_cap():
+def _check_cache_size_cap():
     print("== embeddings cache: size cap evicts oldest ==")
     failed = 0
     core.embed_cache_clear()
@@ -122,7 +122,7 @@ def test_cache_size_cap():
     return failed == 0
 
 
-def test_chat_not_cached():
+def _check_chat_not_cached():
     print("== chat path is NOT cached (correctness-sensitive) ==")
     failed = 0
     counter = _Counter()
@@ -146,7 +146,7 @@ def test_chat_not_cached():
     return failed == 0
 
 
-def test_pool_reuses_connection():
+def _check_pool_reuses_connection():
     print("== connection pool reuses keep-alive connections ==")
     failed = 0
 
@@ -198,7 +198,7 @@ def test_pool_reuses_connection():
     return failed == 0
 
 
-def test_pool_drops_connection_close():
+def _check_pool_drops_connection_close():
     print("== pool honors Connection: close (drops, does not reuse) ==")
     failed = 0
 
@@ -242,13 +242,35 @@ def test_pool_drops_connection_close():
     return failed == 0
 
 
+# Pytest ignores returned booleans. Keep the standalone runner's aggregate
+# reporting while making every collected test raise on a failed check.
+def test_cache_hit_and_miss():
+    assert _check_cache_hit_and_miss(), "embeddings cache hit/miss checks failed"
+
+
+def test_cache_size_cap():
+    assert _check_cache_size_cap(), "embeddings cache size-cap checks failed"
+
+
+def test_chat_not_cached():
+    assert _check_chat_not_cached(), "chat cache exclusion checks failed"
+
+
+def test_pool_reuses_connection():
+    assert _check_pool_reuses_connection(), "connection reuse checks failed"
+
+
+def test_pool_drops_connection_close():
+    assert _check_pool_drops_connection_close(), "connection-close checks failed"
+
+
 if __name__ == "__main__":
     results = [
-        test_cache_hit_and_miss(),
-        test_cache_size_cap(),
-        test_chat_not_cached(),
-        test_pool_reuses_connection(),
-        test_pool_drops_connection_close(),
+        _check_cache_hit_and_miss(),
+        _check_cache_size_cap(),
+        _check_chat_not_cached(),
+        _check_pool_reuses_connection(),
+        _check_pool_drops_connection_close(),
     ]
     if all(results):
         print("RESULT: embeddings cache + connection pool tests PASSED.")

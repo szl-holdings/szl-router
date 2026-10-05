@@ -36,6 +36,10 @@ def _check(cond: bool, label: str) -> None:
     else:
         FAILED += 1
         print(f"  FAIL {label}")
+        # Imported tests must raise; the standalone runner reports all failures
+        # together and returns its existing non-zero exit code below.
+        if __name__ != "__main__":
+            raise AssertionError(label)
 
 
 # A real-shape UK Carbon Intensity API response (national /intensity).
