@@ -30,6 +30,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from router_control.free_tier import dossier as free_provider_dossier
 from router_control.local_store import (
     HASH_BUDGET_SECONDS, LocalStoreError, manifest_relative_path, verify_store_bytes,
 )
@@ -777,9 +778,12 @@ def source() -> dict[str, Any]:
         Path(__file__),
         Path(__file__).with_name("local_store.py"),
         Path(__file__).with_name("verification.py"),
+        Path(__file__).with_name("free_tier.py"),
         STATIC / "index.html",
         STATIC / "app.js",
         STATIC / "styles.css",
+        STATIC / "free-options.js",
+        STATIC / "free-options.css",
     ]
     body = {
         "schema": SOURCE_SCHEMA,
@@ -795,6 +799,12 @@ def source() -> dict[str, Any]:
         "arbitrary_url_routing": False,
     }
     return {**body, "receipt": {"algorithm": "sha256", "digest": sha256(body)}}
+
+
+@app.get("/api/free-provider-options")
+def free_provider_options() -> dict[str, Any]:
+    """Dated public research and disabled proposals only; never inference or activation."""
+    return free_provider_dossier(source_revision())
 
 
 @app.get("/api/routes")

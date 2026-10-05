@@ -8,6 +8,8 @@
   <title>SZL Sovereign Router</title>
   <link rel="stylesheet" href="/static/styles.css">
   <script src="/static/app.js" defer></script>
+  <link rel="stylesheet" href="/static/free-options.css">
+  <script src="/static/free-options.js" defer></script>
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
@@ -83,6 +85,16 @@
       <p class="boundary"><strong>UNSIGNED_HONEST</strong> · These hashes bind content. A successful response may include a model identity claim, but signer and loaded weight identity require separate verification. Verification is performed by this router, with no independent witness.</p>
       <pre id="verify-output" tabindex="0">No consistency checks received.</pre>
       <details><summary>Exact completion or failure receipt</summary><pre id="completion-receipt" tabindex="0">No receipt received.</pre></details>
+    </section>
+
+    <section id="free-options-panel" class="panel free-options-panel" aria-labelledby="free-options-title" aria-busy="false">
+      <div class="panel-head"><div><p class="eyebrow">SEPARATE PROVIDER ALLOWANCES</p><h2 id="free-options-title">Free-tier evaluation options</h2></div><button id="free-options-load" type="button">Inspect options</button></div>
+      <p class="boundary">Read-only research, not free tokens added to Codex. Inspect exact models, dated source claims and disabled configuration proposals. Nothing here registers a provider, sends a prompt, reads a key or enables a paid fallback.</p>
+      <p id="free-options-state" role="status" aria-live="polite">NOT REQUESTED · account eligibility, quota and model quality unverified</p>
+      <p id="free-options-evidence" class="muted"></p>
+      <div id="free-options-list" class="free-options-list"></div>
+      <p class="boundary">Account-specific zero billing, remaining quota, disclosure rights and native synthetic tests must qualify separately before any activation. Cost tier zero is an ordinal, not a dollar cap. Existing completion and provider controls are unchanged.</p>
+      <noscript>JavaScript is unavailable. The read-only API is available at <a href="/api/free-provider-options">free-provider options</a>; it grants no execution permission.</noscript>
     </section>
 
     <section class="panel registry-panel">
