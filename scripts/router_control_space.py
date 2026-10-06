@@ -287,15 +287,18 @@ def _runtime_aligned(token: str, revision: str) -> bool:
     )
     stage = runtime.get("stage")
     observed = runtime.get("sha")
-    if stage in TERMINAL:
+    # The provider can briefly report the previous build after a new commit.
+    if observed is None:
+        return False
+    if exact_sha(observed, "SPACE_RUNTIME_SHA_INVALID") != revision:
+        return False
+    if stage in TERMINAL or stage == "NO_APP_FILE":
         raise ControlSpaceError("SPACE_RUNTIME_TERMINAL")
     if stage is None or stage in TRANSIENT or stage == "PAUSED":
         return False
     if stage != "RUNNING":
         raise ControlSpaceError("SPACE_RUNTIME_UNKNOWN")
-    if observed is None:
-        return False
-    return exact_sha(observed, "SPACE_RUNTIME_SHA_INVALID") == revision
+    return True
 
 
 def _witness(revision: str) -> None:

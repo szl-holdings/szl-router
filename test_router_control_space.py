@@ -234,6 +234,17 @@ class SpacePublisherTests(unittest.TestCase):
         self.assertEqual(attempt["write_outcome"], "MEASURED")
         self.assertTrue(attempt["space_created"])
 
+    def test_stale_provider_build_state_waits_without_admitting_failed_current_build(self):
+        for runtime in ({"stage": "NO_APP_FILE", "sha": None},
+                        {"stage": "BUILD_ERROR", "sha": PARENT}):
+            with self.subTest(runtime=runtime), \
+                 patch.object(control, "_request_json", return_value=runtime):
+                self.assertFalse(control._runtime_aligned("fixture-token", PUBLISHED))
+        with patch.object(control, "_request_json",
+                          return_value={"stage": "BUILD_ERROR", "sha": PUBLISHED}):
+            with self.assertRaisesRegex(control.ControlSpaceError, "SPACE_RUNTIME_TERMINAL"):
+                control._runtime_aligned("fixture-token", PUBLISHED)
+
     def test_denied_or_unknown_access_never_attempts_creation(self):
         for status in (401, 403, None):
             with self.subTest(status=status):
