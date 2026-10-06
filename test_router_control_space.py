@@ -82,6 +82,9 @@ class SpacePublisherTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
+        validator = patch.object(control, "validate_card")
+        self.card_validator = validator.start()
+        self.addCleanup(validator.stop)
 
     def download(self, api: FakeApi):
         def fake_download(*, repo_id, filename, repo_type, revision, token):
@@ -104,6 +107,8 @@ class SpacePublisherTests(unittest.TestCase):
         return result
 
     def test_bundle_is_closed_and_image_pinned_with_egress_denied(self):
+        from huggingface_hub import SpaceCard
+
         files = control.space_files(SOURCE, IMAGE_DIGEST)
         self.assertEqual(set(files), control.FILES)
         binding = json.loads(files["SOURCE_BINDING.json"])
@@ -115,6 +120,51 @@ class SpacePublisherTests(unittest.TestCase):
         self.assertIn(b"SZL_ROUTER_ENABLE_EGRESS=0", files["Dockerfile"])
         self.assertNotIn(b"HF_TOKEN", b"".join(files.values()))
         self.assertNotIn(b"SZLHOLDINGS/llm-router-live\nFROM", b"".join(files.values()))
+        card = SpaceCard(files["README.md"].decode())
+        self.assertLessEqual(len(card.data.short_description), 60)
+
+    def test_invalid_card_cannot_create_or_upload_target(self):
+        api = FakeApi()
+        self.card_validator.side_effect = control.ControlSpaceError("SPACE_CARD_METADATA_INVALID")
+        with patch.object(control, "require_protected_main"), \
+             patch.object(control, "anonymous_image_manifest"):
+            with self.assertRaisesRegex(control.ControlSpaceError, "SPACE_CARD_METADATA_INVALID"):
+                control.publish(api, self.download(api), token="fixture-token",
+                                source_revision=SOURCE, image_digest=IMAGE_DIGEST)
+        self.assertFalse(api.created)
+        self.assertFalse(api.uploaded)
+
+    def test_recorded_bootstrap_recovery_requires_exact_revision_tree_and_bytes(self):
+        scaffold = {control.PROVIDER_METADATA: PROVIDER_METADATA,
+                    "README.md": b"system-created card\n"}
+        binding = {
+            "schema": "szl.router-control-bootstrap/v1", "target": control.TARGET,
+            "source_repository": control.SOURCE_REPOSITORY, "parent_revision": PARENT,
+            "files_sha256": {name: hashlib.sha256(body).hexdigest() for name, body in scaffold.items()},
+        }
+        binding_path = Path(self.temporary.name) / "bootstrap.json"
+        binding_path.write_text(json.dumps(binding))
+        with patch.object(control, "BOOTSTRAP_BINDING", binding_path):
+            api = FakeApi(exists=True, files=dict(scaffold))
+            result = self.run_publish(api)
+            self.assertEqual(result["status"], "MEASURED")
+            self.assertFalse(api.created)
+            for mutation in ("revision", "readme", "extra_file"):
+                with self.subTest(mutation=mutation):
+                    api = FakeApi(exists=True, files=dict(scaffold))
+                    if mutation == "revision":
+                        api.sha = "e" * 40
+                    elif mutation == "readme":
+                        api.files["README.md"] += b"changed"
+                    else:
+                        api.files["app.py"] = b"unowned app"
+                    with patch.object(control, "require_protected_main"), \
+                         patch.object(control, "anonymous_image_manifest"):
+                        with self.assertRaises(control.ControlSpaceError):
+                            control.publish(api, self.download(api), token="fixture-token",
+                                            source_revision=SOURCE, image_digest=IMAGE_DIGEST)
+                    self.assertFalse(api.created)
+                    self.assertFalse(api.uploaded)
 
     def test_bootstrap_exact_target_cas_and_byte_readback(self):
         api = FakeApi()
@@ -183,6 +233,20 @@ class SpacePublisherTests(unittest.TestCase):
         self.assertEqual(attempt["parent_revision"], PARENT)
         self.assertEqual(attempt["write_outcome"], "MEASURED")
         self.assertTrue(attempt["space_created"])
+
+    def test_stale_provider_build_state_waits_without_admitting_failed_current_build(self):
+        for runtime in ({"stage": "NO_APP_FILE", "sha": None},
+                        {"stage": "BUILD_ERROR", "sha": PARENT}):
+            with self.subTest(runtime=runtime), \
+                 patch.object(control, "_request_json", return_value=runtime):
+                self.assertFalse(control._runtime_aligned("fixture-token", PUBLISHED))
+        with patch.object(control, "_request_json",
+                          return_value={"stage": "BUILD_ERROR", "sha": PUBLISHED}):
+            with self.assertRaisesRegex(control.ControlSpaceError, "SPACE_RUNTIME_TERMINAL"):
+                control._runtime_aligned("fixture-token", PUBLISHED)
+        with patch.object(control, "_request_json",
+                          return_value={"stage": "RUNNING", "sha": PUBLISHED}):
+            self.assertTrue(control._runtime_aligned("fixture-token", PUBLISHED))
 
     def test_denied_or_unknown_access_never_attempts_creation(self):
         for status in (401, 403, None):
