@@ -51,7 +51,7 @@
       <article class="panel policy-panel">
         <div class="panel-head"><div><p class="eyebrow">POLICY INPUT</p><h2>Plan a route</h2></div><button id="refresh" type="button">Refresh registry</button></div>
         <form id="plan-form">
-          <label><span>Public model alias</span><input id="model" list="model-aliases" placeholder="Choose or enter an alias" required maxlength="96" pattern="[A-Za-z0-9][A-Za-z0-9._:-]{0,95}" aria-describedby="model-alias-note"><datalist id="model-aliases"></datalist></label>
+          <label><span>Public model alias</span><input id="model" list="model-aliases" placeholder="Choose or enter an alias" required maxlength="96" pattern="[A-Za-z0-9][A-Za-z0-9._:\-]{0,95}" aria-describedby="model-alias-note"><datalist id="model-aliases"></datalist></label>
           <p id="model-alias-note" class="muted">Choose a listed alias or enter one to inspect policy. A listed alias does not establish a loaded model.</p>
           <p id="provider-binding" class="muted" role="status" aria-live="polite">No provider bound. Policy may choose any eligible provider.</p>
           <label><span>Data classification</span><select id="classification"><option>public</option><option>internal</option><option>confidential</option><option>restricted</option></select></label>

@@ -10,6 +10,7 @@ import json
 import re
 import shutil
 import subprocess
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
@@ -28,6 +29,33 @@ def test_browser_script_syntax() -> None:
         [node_runtime(), "--check", str(STATIC / "app.js")],
         capture_output=True, text=True, timeout=15,
     )
+    assert result.returncode == 0, result.stderr
+
+
+def test_model_alias_pattern_uses_current_browser_regex_semantics() -> None:
+    class ModelInput(HTMLParser):
+        pattern: str | None = None
+
+        def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+            attributes = dict(attrs)
+            if tag == "input" and attributes.get("id") == "model":
+                self.pattern = attributes.get("pattern")
+
+    parser = ModelInput()
+    parser.feed((STATIC / "index.html").read_text(encoding="utf-8"))
+    assert parser.pattern
+    script = r'''
+const assert = require("node:assert/strict");
+const alias = new RegExp("^(?:" + process.argv[1] + ")$", "v");
+for (const value of ["alias-name", "org.model:v1", "model_1", "a".repeat(96)]) {
+  assert(alias.test(value), "valid alias rejected: " + value);
+}
+for (const value of ["bad!alias", "model/name", "with space", "-alias", "a".repeat(97)]) {
+  assert(!alias.test(value), "invalid alias accepted: " + value);
+}
+'''
+    result = subprocess.run([node_runtime(), "-e", script, parser.pattern],
+                            capture_output=True, text=True, timeout=15)
     assert result.returncode == 0, result.stderr
 
 
