@@ -244,6 +244,9 @@ class SpacePublisherTests(unittest.TestCase):
                           return_value={"stage": "BUILD_ERROR", "sha": PUBLISHED}):
             with self.assertRaisesRegex(control.ControlSpaceError, "SPACE_RUNTIME_TERMINAL"):
                 control._runtime_aligned("fixture-token", PUBLISHED)
+        with patch.object(control, "_request_json",
+                          return_value={"stage": "RUNNING", "sha": PUBLISHED}):
+            self.assertTrue(control._runtime_aligned("fixture-token", PUBLISHED))
 
     def test_denied_or_unknown_access_never_attempts_creation(self):
         for status in (401, 403, None):
