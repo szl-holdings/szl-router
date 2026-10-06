@@ -37,6 +37,12 @@ claim. Publication receipts are checkpointed before each write and retain the so
 image, parent, and published revision if subsequent verification fails. A lost write
 response records an `UNKNOWN` effect and requires readback before another attempt.
 
+The initial attempt created the Space but its application upload failed README
+metadata validation. `publishing/router-control-bootstrap.v1.json` records that
+failed run, the exact initial parent commit, and both provider-file hashes. Only
+that unchanged scaffold may be recovered; any advanced revision, changed file, or
+additional file is rejected. Hub card validation now precedes target creation.
+
 Without a valid registry, `/api/plan` remains available for honest inspection but `/v1/chat/completions` fails closed. HTTPS providers also require an exact hostname allowlist. The optional local Ollama provider has a separate fixed loopback policy.
 
 ## Configuration

@@ -30,6 +30,7 @@ ENDPOINT = "https://szlholdings-szl-router-control.hf.space"
 SCHEMA = "szl.router-control-space/v1"
 FILES = frozenset({"README.md", "Dockerfile", "SOURCE_BINDING.json"})
 PROVIDER_METADATA = ".gitattributes"
+BOOTSTRAP_BINDING = Path(__file__).resolve().parents[1] / "publishing/router-control-bootstrap.v1.json"
 SHA = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 TRANSIENT = {"BUILDING", "APP_STARTING", "STARTING", "QUEUED", "PENDING", "RESTARTING", "RUNNING_BUILDING", "RUNNING_APP_STARTING"}
@@ -107,7 +108,7 @@ title: SZL Router Control
 sdk: docker
 app_port: 7860
 license: apache-2.0
-short_description: Egress-disabled control gateway canary, pinned to a verified image.
+short_description: Source-bound control interface with inference disabled.
 ---
 
 # SZL Router Control
@@ -218,6 +219,8 @@ def _verify_files(api: Any, download: Callable[..., str], revision: str,
 def _existing_target_admitted(api: Any, download: Callable[..., str],
                               revision: str, token: str) -> bytes:
     observed = set(api.list_repo_files(repo_id=TARGET, repo_type="space", revision=revision))
+    if observed == {PROVIDER_METADATA, "README.md"}:
+        return _recover_bootstrap_metadata(download, revision, token, observed)
     if observed != FILES | {PROVIDER_METADATA}:
         raise ControlSpaceError("EXISTING_SPACE_FILE_SET_REJECTED")
     try:
@@ -237,6 +240,35 @@ def _existing_target_admitted(api: Any, download: Callable[..., str],
         if _download_bytes(download, filename, revision, token) != body:
             raise ControlSpaceError("EXISTING_SPACE_BYTES_REJECTED")
     return _download_bytes(download, PROVIDER_METADATA, revision, token)
+
+
+def _recover_bootstrap_metadata(download: Callable[..., str], revision: str,
+                                token: str, observed: set[str]) -> bytes:
+    """Admit only the source-reviewed scaffold from the recorded failed creation."""
+    try:
+        binding = json.loads(BOOTSTRAP_BINDING.read_bytes())
+        if (binding.get("schema") != "szl.router-control-bootstrap/v1"
+                or binding.get("target") != TARGET
+                or binding.get("source_repository") != SOURCE_REPOSITORY
+                or binding.get("parent_revision") != revision
+                or set(binding.get("files_sha256", {})) != observed):
+            raise ValueError("bootstrap binding mismatch")
+        files = {name: _download_bytes(download, name, revision, token) for name in observed}
+        for name, body in files.items():
+            if hashlib.sha256(body).hexdigest() != binding["files_sha256"][name]:
+                raise ValueError("bootstrap bytes mismatch")
+    except (OSError, ValueError, TypeError, AttributeError) as exc:
+        raise ControlSpaceError("EXISTING_SPACE_BOOTSTRAP_REJECTED") from exc
+    return files[PROVIDER_METADATA]
+
+
+def validate_card(readme: bytes) -> None:
+    from huggingface_hub import SpaceCard
+
+    try:
+        SpaceCard(readme.decode("utf-8")).validate()
+    except ValueError as exc:
+        raise ControlSpaceError("SPACE_CARD_METADATA_INVALID") from exc
 
 
 def _new_target_metadata(api: Any, download: Callable[..., str], revision: str,
@@ -306,6 +338,8 @@ def publish(api: Any, download: Callable[..., str], *, token: str,
     expected = space_files(source_revision, image_digest)
     require_protected_main(source_revision)
     anonymous_image_manifest(image_digest)
+    validate_card(expected["README.md"])
+    record(card_validation="MEASURED")
 
     from huggingface_hub.errors import RepositoryNotFoundError
     created = False

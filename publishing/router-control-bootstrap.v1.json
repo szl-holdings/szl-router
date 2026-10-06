@@ -1,0 +1,21 @@
+{
+  "schema": "szl.router-control-bootstrap/v1",
+  "target": "SZLHOLDINGS/szl-router-control",
+  "source_repository": "szl-holdings/szl-router",
+  "parent_revision": "994208cd3825ce9ff9c545dd7deaa2b2b4af7c1d",
+  "files_sha256": {
+    ".gitattributes": "11ad7efa24975ee4b0c3c3a38ed18737f0658a5f75a0a96787b576a78a023361",
+    "README.md": "67eb6eb30e3399531493099fe0bd547663cce7cdf7754b61e99116fd4dd37be9"
+  },
+  "creation_evidence": {
+    "workflow_run": "https://github.com/szl-holdings/szl-router/actions/runs/37408856898",
+    "source_revision": "3333f51bbd12024a3d3843b5df43065df5a7b2a0",
+    "image_digest": "sha256:21dfed8eed453131b8e13d7325f65d10eff847016909269a5ffe0cd4fe5a8d8e",
+    "receipt_phase": "UPLOAD_REQUESTED",
+    "creation_outcome": "MEASURED",
+    "write_outcome": "UNKNOWN",
+    "failure_code": "ValueError",
+    "readback_class": "MEASURED",
+    "readback_result": "Initial provider scaffold unchanged after failed README metadata validation."
+  }
+}
