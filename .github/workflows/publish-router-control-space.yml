@@ -1,0 +1,143 @@
+name: Publish router control Space
+
+# Owner dispatch only. The image must first be published from this exact
+# protected-main commit by publish-router-control.yml. A merge advances main,
+# so an older digest is never promoted automatically.
+on:
+  workflow_dispatch:
+    inputs:
+      image_digest:
+        description: Immutable digest from the successful control-image receipt
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: hf-write/space/SZLHOLDINGS/szl-router-control
+  cancel-in-progress: false
+
+jobs:
+  admit:
+    name: Require protected main
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Reject alternate repository or ref
+        shell: bash
+        run: |
+          test "$GITHUB_REPOSITORY" = szl-holdings/szl-router
+          test "$GITHUB_REF" = refs/heads/main
+
+  publish:
+    needs: admit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+      attestations: read
+    env:
+      CONTROL_IMAGE: ghcr.io/szl-holdings/szl-router-control
+      IMAGE_DIGEST: ${{ inputs.image_digest }}
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+
+      - name: Checkout selected protected-main source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Admit exact source and immutable image input
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = szl-holdings/szl-router
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          test "$(git ls-remote https://github.com/szl-holdings/szl-router.git refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+          git diff --check
+
+      - name: Set up exact Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12.10"
+
+      - name: Install exact Hub client and test publisher contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check -r requirements-router-control-dev.txt "huggingface_hub==1.10.1"
+          python -B -m unittest -q test_router_control_space
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Verify published image identity and provenance
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_ref="$CONTROL_IMAGE@$IMAGE_DIGEST"
+          cosign verify \
+            --certificate-identity 'https://github.com/szl-holdings/szl-router/.github/workflows/publish-router-control.yml@refs/heads/main' \
+            --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+            "$image_ref" > "$RUNNER_TEMP/router-control-space-cosign.json"
+          gh attestation verify "oci://$image_ref" \
+            --repo "$GITHUB_REPOSITORY" \
+            --source-digest "$GITHUB_SHA" \
+            --source-ref refs/heads/main \
+            --signer-repo "$GITHUB_REPOSITORY" \
+            --deny-self-hosted-runners \
+            --format json > "$RUNNER_TEMP/router-control-space-provenance.json"
+
+      - name: Log in to GHCR for exact image exercise
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull and exercise the exact egress-disabled image
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_ref="$CONTROL_IMAGE@$IMAGE_DIGEST"
+          docker pull "$image_ref"
+          python scripts/check_router_control_image.py \
+            --image "$image_ref" --source-revision "$GITHUB_SHA"
+          test "$(git ls-remote https://github.com/szl-holdings/szl-router.git refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+
+      - name: Publish only the control Space and read back runtime
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$HF_TOKEN"
+          python scripts/router_control_space.py \
+            --source-revision "$GITHUB_SHA" \
+            --image-digest "$IMAGE_DIGEST" \
+            --receipt "$RUNNER_TEMP/router-control-space-receipt.json"
+
+      - name: Preserve bounded publication evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: router-control-space-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/router-control-space-receipt.json
+            ${{ runner.temp }}/router-control-space-cosign.json
+            ${{ runner.temp }}/router-control-space-provenance.json
+          if-no-files-found: warn
+          retention-days: 90

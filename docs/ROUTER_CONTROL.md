@@ -14,6 +14,29 @@ The container and application are **default deny**:
 SZL_ROUTER_ENABLE_EGRESS=0
 ```
 
+## Separate Hosted Control Interface
+
+The manually dispatched `publish-router-control-space.yml` workflow owns only
+`SZLHOLDINGS/szl-router-control`. It runs from protected `main` after the separate
+control-image publisher has produced an exact-source immutable digest. The Space
+publisher verifies that digest's Cosign identity and GitHub provenance, exercises
+the image, and requires anonymous registry access before publishing its pinned
+Dockerfile. The existing `SZLHOLDINGS/llm-router-live` status Space has its own publisher.
+
+Run the image publisher first, then dispatch the Space publisher with the verified
+`image_digest` output. Any new main commit requires a new image publication.
+`HF_TOKEN` is read from the GitHub environment; it is never a command-line argument
+or part of the generated Space. Only an authenticated 404 may bootstrap the target.
+Existing targets must match this publisher's complete generated file set and source
+binding before an exact-parent update is admitted.
+
+The Space forces inference egress off. A successful deployment witnesses the control
+interface and `/readyz`; `/readyz/inference` must remain 503 until a separately
+reviewed provider deployment is configured. It is not an inference or model-quality
+claim. Publication receipts are checkpointed before each write and retain the source,
+image, parent, and published revision if subsequent verification fails. A lost write
+response records an `UNKNOWN` effect and requires readback before another attempt.
+
 Without a valid registry, `/api/plan` remains available for honest inspection but `/v1/chat/completions` fails closed. HTTPS providers also require an exact hostname allowlist. The optional local Ollama provider has a separate fixed loopback policy.
 
 ## Configuration
