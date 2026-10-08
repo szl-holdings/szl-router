@@ -138,7 +138,7 @@ class ProviderRecord(BaseModel):
     sovereignty: int = Field(default=0, ge=0, le=100)
     cost_tier: int = Field(default=1, ge=0, le=10)
     classifications: list[str] = Field(default_factory=lambda: ["public"], min_length=1, max_length=4)
-    enabled: bool = True
+    enabled: bool = False
 
     @field_validator("models")
     @classmethod

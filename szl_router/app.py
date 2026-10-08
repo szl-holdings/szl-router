@@ -61,8 +61,8 @@ def status() -> Dict[str, Any]:
 
 @app.get("/v1/spend")
 def spend_state() -> Dict[str, Any]:
-    """Honest read-only view of the local spend cap + kill-switch + append-only
-    ledger this router enforces at the paid-tier chokepoint. Loopback-only."""
+    """Read-only legacy advisory ledger and kill-file state. Paid cloud routing
+    is blocked before transport; this is not an active spend cap. Loopback-only."""
     return spend_guard.state()
 
 

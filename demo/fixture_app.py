@@ -15,7 +15,8 @@ os.environ.update({
         {"id": name, "base_url": f"https://{host}/v1",
          "models": {"szl-default": "synthetic-contract-fixture"},
          "token_env": "OFFLINE_FIXTURE_TOKEN", "priority": priority,
-         "sovereignty": 0, "cost_tier": 0, "classifications": ["public"]}
+         "sovereignty": 0, "cost_tier": 0, "classifications": ["public"],
+         "enabled": True}
         for name, host, priority in [
             ("fixture-unavailable", "unavailable.example.test", 0),
             ("fixture-local", "fixture.example.test", 1),

@@ -24,7 +24,8 @@ def bundle(monkeypatch):
     monkeypatch.setenv("SZL_ROUTER_ALLOWED_HOSTS", "fixture.example.test")
     monkeypatch.setenv("SZL_ROUTER_PROVIDERS_JSON", json.dumps({"providers": [{
         "id": "fixture", "base_url": "https://fixture.example.test/v1",
-        "models": {"szl-default": "fixture-model"}, "token_env": "FIXTURE_TOKEN"}]}))
+        "models": {"szl-default": "fixture-model"}, "token_env": "FIXTURE_TOKEN",
+        "enabled": True}]}))
 
     async def fake_call(*args):
         return {"id": "completion-fixture", "model": "fixture-model", "choices": [
@@ -142,7 +143,7 @@ def test_gateway_never_emits_success_outside_verifier_bounds(monkeypatch, overfl
     monkeypatch.setenv("SZL_ROUTER_PROVIDERS_JSON", json.dumps({"providers": [{
         "id": name, "base_url": "https://fixture.example.test/v1",
         "models": {"szl-default": "fixture-model"}, "token_env": "FIXTURE_TOKEN",
-        "priority": priority,
+        "priority": priority, "enabled": True,
     } for priority, name in enumerate(("overbound", "fallback"))]}))
     extra = None
     if overflow == "depth":
@@ -185,7 +186,7 @@ def test_whole_provider_attempt_deadline_fails_over(monkeypatch):
     monkeypatch.setenv("SZL_ROUTER_PROVIDERS_JSON", json.dumps({"providers": [{
         "id": name, "base_url": "https://fixture.example.test/v1",
         "models": {"szl-default": "fixture-model"}, "token_env": "FIXTURE_TOKEN",
-        "priority": priority,
+        "priority": priority, "enabled": True,
     } for priority, name in enumerate(("slow", "fallback"))]}))
     monkeypatch.setattr(module, "MAX_TIMEOUT_SECONDS", 0.01)
     calls = []

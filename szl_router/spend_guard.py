@@ -1,18 +1,17 @@
-"""szl-router advisory paid-tier spend guard - SZL Sovereign Ops.
+"""Legacy advisory paid-tier estimator and ledger - SZL Sovereign Ops.
 
-The paid route in core.chat() checks prior recorded estimates and a kill-file
-before transport, then attempts to record an estimate after success. Calls are
-not pre-reserved, concurrent calls can exceed the configured threshold, and
-core.chat() does not fail a served response when ledger recording fails. This
-is not a strict USD cap or proof of actual provider charges. Unqualified cloud
-routes are blocked separately; owned hardware has no vendor charge here.
+Paid routing in core.chat() is blocked before transport. This module retains
+offline historical estimates and ledger inspection, but its allow()/record()
+helpers do not authorize a route. They do not reserve spend across processes,
+prove actual provider charges, or provide a strict USD cap. Owned hardware has
+no vendor charge here.
 
 Design:
   * Pure stdlib, zero deps, runs anywhere.
   * Append-only, hash-linked JSON-lines ledger (tamper-evident: each row's
     digest chains the previous one, exactly like a receipt chain).
-  * Checks the org kill-file convention (SZL_SPEND_KILL_FILE) at paid-call
-    preflight; already in-flight calls are not cancelled by this check.
+  * Retains the org kill-file convention (SZL_SPEND_KILL_FILE) for the legacy
+    advisory check; paid routing no longer calls that check.
   * Labels estimates and their rate basis. Missing usage or an unknown model
     uses a configurable fallback, which is not verified current pricing.
   * Historical per-model list-rate estimates are auditable but require current
@@ -20,7 +19,7 @@ Design:
 
 Env knobs (all optional):
   SZL_SPEND_CAP_USD      advisory recorded-spend threshold     (default 25)
-  SZL_SPEND_KILL_FILE    presence = emergency stop            (/opt/alloyscape/.spend-KILL)
+  SZL_SPEND_KILL_FILE    legacy advisory stop file             (/opt/alloyscape/.spend-KILL)
   SZL_SPEND_LEDGER_FILE  append-only ledger path              (/opt/alloyscape/.szl-router-spend.jsonl)
   SZL_PAID_USD_PER_1K    flat per-1k fallback for UNKNOWN paid models (default 0.003)
   SZL_PAID_CALL_USD      flat per-call estimate if no usage   (default 0.01)
@@ -44,7 +43,7 @@ _LOCK = threading.Lock()
 # Every ledger row labels the amount as estimated and records its rate basis.
 _MODEL_RATES: List[Tuple[str, float, float]] = [
     # (substring, usd_per_1k_input, usd_per_1k_output)
-    # -- Moonshot / Kimi (the armed paid-grid frontier route) --
+    # -- Moonshot / Kimi (offline historical paid-grid estimate) --
     ("kimi-k2",            0.00060, 0.00250),  # kimi-k2-*-preview (cache-miss input)
     ("moonshot-v1-128k",   0.00060, 0.00250),
     ("moonshot-v1-32k",    0.00030, 0.00120),
@@ -188,7 +187,7 @@ def estimate_usd(result: Optional[Dict[str, Any]], model: Optional[str] = None) 
 
 
 def allow(estimated_usd: float = 0.0) -> Tuple[bool, str]:
-    """Advisory gate for a PAID call. Returns (allowed, reason)."""
+    """Legacy advisory check; never authorizes a paid route. Returns (allowed, reason)."""
     if kill_engaged():
         return False, "kill-switch engaged (%s)" % kill_file()
     cap = cap_usd()
@@ -222,7 +221,7 @@ def record(amount_usd: float, source: str = "", meta: Optional[Dict[str, Any]] =
 
 
 def state() -> Dict[str, Any]:
-    """Honest snapshot for the /v1/spend readout (mirrors a11oy /spend/state)."""
+    """Legacy advisory ledger snapshot; not proof of an active strict cap."""
     entries = _read_entries()
     cap = cap_usd()
     spent = round(sum(float(e.get("amount_usd", 0) or 0) for e in entries), 6)
@@ -232,7 +231,7 @@ def state() -> Dict[str, Any]:
         "spent_usd": spent,
         "remaining_usd": round(cap - spent, 6),
         "pct_used": round(100.0 * spent / cap, 2) if cap > 0 else None,
-        "armed": True,
+        "armed": False,
         "tripped": spent >= cap,
         "kill_file_engaged": kill_engaged(),
         "kill_file": kill_file(),

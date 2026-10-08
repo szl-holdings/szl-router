@@ -3,8 +3,8 @@
   * per-upstream FAILURE COOLDOWN — a failed provider is skipped (honestly, in
     the attempt trail) while a warm fallback exists, is still TRIED as a last
     resort, and is cleared on success;
-  * honest per-call COST block - $0.00-with-basis for sovereign tiers,
-    the spend-guard's labelled ESTIMATE for paid tiers;
+  * honest per-call COST block - $0.00-with-basis for sovereign tiers;
+    paid tier estimates remain offline-only while paid routing is blocked;
   * OBSERVER frame + cost land in the receipt envelope ONLY when passed
     (older callers stay byte-identical).
 
@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import io
 import os
-import tempfile
 import sys
 import urllib.error
 
@@ -143,32 +142,33 @@ def test_cooldown_skip_then_last_resort_then_clear() -> None:
         _reset_cooldowns()
 
 
-def test_paid_cost_is_labelled_estimate() -> None:
-    print("== paid tier: cost is the spend-guard's labelled estimate ==")
+def test_paid_estimate_is_offline_only() -> None:
+    print("== paid tier: offline estimate does not authorize routing ==")
     saved = _snap_env()
     orig_post = core._post_chat
-    temp_dir = None
     _reset_cooldowns()
     try:
         os.environ[_MOON.key_env] = "fake-moonshot-key"
-        temp_dir = tempfile.TemporaryDirectory(prefix="szl-router-spend-")
-        os.environ["SZL_SPEND_LEDGER_FILE"] = os.path.join(temp_dir.name, "ledger.jsonl")
-        os.environ["SZL_SPEND_KILL_FILE"] = os.path.join(temp_dir.name, "KILL-absent")
-        core._post_chat = lambda provider, payload, timeout: dict(_FAKE)
-        r = core.chat("moonshot:kimi-k2.5", _MSGS, timeout=1)
-        cost = r["x_szl_provenance"]["cost"]
-        check(cost["estimated"] is True, "paid cost is labelled estimated:true")
-        check(cost["amount_usd"] > 0, "paid cost amount > 0")
-        check(str(cost["basis"]).startswith("table:kimi-k2"), "paid rate basis is auditable (price table)")
-        check(cost["tier"] == "paid-grid", "paid cost carries its tier")
+        calls = []
+        core._post_chat = lambda provider, payload, timeout: calls.append(provider.name) or dict(_FAKE)
+        cost = core._cost_detail(_MOON, dict(_FAKE), "kimi-k2.5")
+        check(cost["estimated"] is True, "offline paid amount is labelled an estimate")
+        check(cost["amount_usd"] > 0, "offline paid estimate is positive")
+        check(str(cost["basis"]).startswith("table:kimi-k2"), "offline estimate exposes its table basis")
+        check(cost["tier"] == "paid-grid", "offline estimate carries its tier")
         check(cost["prompt_tokens"] == 10 and cost["completion_tokens"] == 5,
-              "paid cost records the token counts it priced")
+              "offline estimate records token counts")
+        try:
+            core.chat("moonshot:kimi-k2.5", _MSGS, timeout=1)
+            check(False, "paid route blocked")
+        except core.RouterError as exc:
+            check(len(exc.attempts) == 1 and "pricing/reservation unqualified" in (exc.attempts[0].error or ""),
+                  "paid route records an unqualified attempt")
+        check(calls == [], "paid route never reaches transport")
     finally:
         core._post_chat = orig_post
         _restore_env(saved)
         _reset_cooldowns()
-        if temp_dir is not None:
-            temp_dir.cleanup()
 
 
 def test_envelope_carries_cost_and_observer_only_when_passed() -> None:
@@ -209,7 +209,7 @@ def test_envelope_carries_cost_and_observer_only_when_passed() -> None:
 
 if __name__ == "__main__":
     test_cooldown_skip_then_last_resort_then_clear()
-    test_paid_cost_is_labelled_estimate()
+    test_paid_estimate_is_offline_only()
     test_envelope_carries_cost_and_observer_only_when_passed()
     if FAILED:
         print(f"RESULT: {FAILED} check(s) FAILED")
