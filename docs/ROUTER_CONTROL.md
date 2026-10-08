@@ -37,6 +37,12 @@ claim. Publication receipts are checkpointed before each write and retain the so
 image, parent, and published revision if subsequent verification fails. A lost write
 response records an `UNKNOWN` effect and requires readback before another attempt.
 
+For a future separate inference target, the artifact-only
+[`prepare-router-inference.yml`](../.github/workflows/prepare-router-inference.yml)
+workflow prepares and checks a disabled package without changing either Space.
+See [disabled inference staging](INFERENCE_STAGING.md) for the source/image checks
+and the credentials, spending, target-admission, and runtime gates still required.
+
 The initial attempt created the Space but its application upload failed README
 metadata validation. `publishing/router-control-bootstrap.v1.json` records that
 failed run, the exact initial parent commit, and both provider-file hashes. Only
