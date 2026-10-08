@@ -39,6 +39,7 @@ def local_registry_payload(*, with_remote: bool = False) -> dict[str, Any]:
         "model_digests": {"a11oy-mini-r2": LOCAL_DIGEST},
         "sovereignty": 100,
         "classifications": ["public", "internal"],
+        "enabled": True,
     }]
     if with_remote:
         providers.append({
@@ -48,6 +49,7 @@ def local_registry_payload(*, with_remote: bool = False) -> dict[str, Any]:
             "token_env": "REMOTE_TOKEN",
             "sovereignty": 10,
             "classifications": ["public"],
+            "enabled": True,
         })
     return {"providers": providers}
 
@@ -483,6 +485,35 @@ def test_disabled_providers_do_not_satisfy_readiness(monkeypatch):
         provider["enabled"] = False
     monkeypatch.setenv("SZL_ROUTER_PROVIDERS_JSON", json.dumps(registry))
     assert client.get("/readyz/inference").status_code == 503
+
+
+def test_omitted_provider_enabled_stays_disabled_with_credential_and_egress(monkeypatch):
+    provider = registry_payload()["providers"][0]
+    provider.pop("enabled")
+    monkeypatch.setenv("SZL_ROUTER_PROVIDERS_JSON", json.dumps({"providers": [provider]}))
+    monkeypatch.setenv("SZL_ROUTER_ALLOWED_HOSTS", "regional.example.test")
+    monkeypatch.setenv("SZL_ROUTER_ENABLE_EGRESS", "1")
+    monkeypatch.setenv("SZL_ROUTER_TOKEN", "test-router-client")
+    monkeypatch.setenv("REGIONAL_TOKEN", "synthetic-secret")
+    calls = 0
+
+    async def forbidden_transport(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("disabled provider reached transport")
+
+    monkeypatch.setattr(module, "call_provider", forbidden_transport)
+    routes = client.get("/api/routes").json()
+    assert routes["state"] == "VALIDATED"
+    assert routes["providers"][0]["enabled"] is False
+    assert routes["providers"][0]["credential_state"] == "AVAILABLE"
+    assert client.get("/readyz/inference").status_code == 503
+    assert client.get("/v1/models").json()["data"] == []
+    assert client.post("/api/plan", json={"model": "szl-default"}).json()["candidates"] == []
+    response = client.post("/v1/chat/completions", json=chat_request())
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "NO_ELIGIBLE_PROVIDER"
+    assert calls == 0
 
 
 def test_invalid_configuration_does_not_echo_secret_input(monkeypatch):

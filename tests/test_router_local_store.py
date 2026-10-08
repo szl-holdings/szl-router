@@ -167,10 +167,11 @@ def configure(monkeypatch, root, manifest, weight):
         {"id": "local", "provider_type": "ollama_loopback",
          "models": {"szl-local": "szl-khipu:latest"},
          "model_digests": {"szl-local": manifest},
-         "model_weight_digests": {"szl-local": weight}, "priority": 0},
+         "model_weight_digests": {"szl-local": weight}, "priority": 0,
+         "enabled": True},
         {"id": "remote", "base_url": "https://remote.example.test/v1",
          "models": {"szl-local": "remote-model"}, "token_env": "REMOTE_TOKEN",
-         "priority": 10},
+         "priority": 10, "enabled": True},
     ]}
     monkeypatch.setenv("SZL_ROUTER_PROVIDERS_JSON", json.dumps(registry))
     monkeypatch.setenv("SZL_ROUTER_OLLAMA_MODELS_DIR", str(root))

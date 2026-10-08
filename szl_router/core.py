@@ -39,7 +39,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 try:
-    from . import spend_guard  # SZL Sovereign Ops: paid-tier spend cap + kill-switch
+    from . import spend_guard  # Legacy offline paid estimate and advisory ledger.
 except ImportError:  # test harness imports `core` top-level (sys.path=szl_router)
     import spend_guard  # type: ignore
 
@@ -203,7 +203,7 @@ PROVIDERS: Dict[str, Provider] = {
         energy_source="grid",
         note="Gemini API candidate; pricing, quota, terms, and data use unverified.",
     ),
-    # --- paid grid tier (last resort) ----------------------------------------
+    # --- paid grid candidate (blocked until qualified) -----------------------
     "moonshot": Provider(
         name="moonshot",
         base_url_env="MOONSHOT_BASE_URL",
@@ -211,7 +211,7 @@ PROVIDERS: Dict[str, Provider] = {
         key_env="KIMI_API_KEY",
         sovereign=False,
         energy_source="grid",
-        note="Kimi K2. Paid; used as a strong fallback.",
+        note="Kimi paid cloud candidate; routing blocked until pricing and strict pre-call spend reservation are qualified.",
     ),
 }
 
@@ -219,8 +219,8 @@ PROVIDERS: Dict[str, Provider] = {
 # ---------------------------------------------------------------------------
 # Logical model routes. Each logical name resolves to an ORDERED fallback list
 # of (provider, upstream_model). Order encodes the doctrine: sovereign first,
-# then grid candidates, then paid. Unqualified candidates are skipped even if
-# a key is present; key availability does not establish price or quota.
+# then grid candidates, then paid. Cloud candidates are skipped even if a key
+# is present; key availability does not establish price, quota, or a spend cap.
 # ---------------------------------------------------------------------------
 Route = Tuple[str, str]
 
@@ -240,7 +240,7 @@ MODEL_ROUTES: Dict[str, List[Route]] = {
         ("cerebras", "gpt-oss-120b"),
         ("openrouter", "qwen/qwen3-next-80b-a3b-instruct:free"),
         ("google", "gemini-2.5-flash"),
-        # Further grid candidates, then the existing paid last resort.
+        # Further grid candidates, then the blocked paid candidate.
         ("groq", "llama-3.3-70b-versatile"),
         ("nvidia_nim", "meta/llama-3.3-70b-instruct"),
         ("moonshot", "kimi-k2.5"),
@@ -592,7 +592,8 @@ def _warm_candidate_later(routes: List[Route], next_index: int) -> bool:
     i.e. skipping the current cooled provider still leaves a real candidate."""
     for provider_name, _up in routes[next_index:]:
         p = PROVIDERS.get(provider_name)
-        if (p is not None and p.available() and _tier_of(p) != "unqualified-grid"
+        if (p is not None and p.available()
+                and _tier_of(p) not in ("unqualified-grid", "paid-grid")
                 and _cooldown_remaining(provider_name) <= 0):
             return True
     return False
@@ -601,8 +602,8 @@ def _warm_candidate_later(routes: List[Route], next_index: int) -> bool:
 def _cost_detail(provider: Provider, result: Dict[str, Any], upstream_model: str) -> Dict[str, Any]:
     """Honest per-call USD cost block for the served route, signed into the receipt.
 
-    * paid-grid  -> the spend-guard's auditable ESTIMATE (labelled estimated:true,
-                    with rate basis + token counts); ledger recording is best effort;
+    * paid-grid  -> offline historical ESTIMATE only; paid routing is blocked
+                    until exact pricing and strict pre-call reservation qualify it;
     * sovereign  -> $0.00 vendor charge on our own metal (electricity is NOT
                     metered here - we say so instead of inventing a number).
     * unqualified-grid -> unknown vendor charge; never represented as free.
@@ -1004,6 +1005,11 @@ def chat(
                                     error="pricing/quota unqualified; grid route disabled"))
             continue
 
+        if tier == "paid-grid":
+            attempts.append(Attempt(provider_name, upstream_model, ok=False,
+                                    error="pricing/reservation unqualified; paid route disabled"))
+            continue
+
         # FAILURE COOLDOWN: skip a recently-failed upstream ONLY while a warm
         # candidate (available, not cooling) remains later in the chain. The
         # skip lands in the attempt trail so the receipt shows why this
@@ -1014,15 +1020,6 @@ def chat(
                                     error="cooldown-skip (%.0fs left after recent "
                                           "failure; warm fallback available)" % _cd_left))
             continue
-
-        # The paid preflight checks the current ledger and kill-switch; it does
-        # not reserve spend or prove that later ledger writes will succeed.
-        if tier == "paid-grid":
-            _sg_ok, _sg_why = spend_guard.allow()
-            if not _sg_ok:
-                attempts.append(Attempt(provider_name, upstream_model, ok=False,
-                                        error="spend-cap blocked paid tier: " + _sg_why))
-                continue
 
         payload: Dict[str, Any] = {"model": upstream_model, "messages": messages}
         if temperature is not None:
@@ -1053,26 +1050,10 @@ def chat(
             prov.energy_source = provider.energy_source
             prov.tier = tier
             prov.attempts = attempts
-            # Honest cost block for the served route - a paid estimate or a
-            # sovereign zero vendor charge.
+            # Honest cost block for the served sovereign route.
             # Signed into the receipt via app.py.
             prov.cost = _cost_detail(provider, result, upstream_model)
             result["x_szl_provenance"] = prov.to_dict()
-            # SPEND GUARD: record estimated USD for a served PAID call so the
-            # append-only ledger records a best-effort estimate.
-            if tier == "paid-grid":
-                try:
-                    _sg_detail = spend_guard.estimate_detail(result, upstream_model)
-                    spend_guard.record(_sg_detail["amount_usd"],
-                                       source=prov.served_by or provider_name,
-                                       meta={"model": model, "upstream_model": upstream_model,
-                                             "basis": _sg_detail.get("basis"),
-                                             "rate_in_per_1k": _sg_detail.get("rate_in_per_1k"),
-                                             "rate_out_per_1k": _sg_detail.get("rate_out_per_1k"),
-                                             "prompt_tokens": _sg_detail.get("prompt_tokens"),
-                                             "completion_tokens": _sg_detail.get("completion_tokens")})
-                except Exception:
-                    pass
             _emit_route_receipt(model=model, decision="served",
                                 provenance=prov, attempts=attempts)
             return result
@@ -1577,8 +1558,8 @@ def fabric_status(include_harvest: bool = True, allow_network: bool = True) -> D
     Maps the provider registry onto the Sovereign-Resilience tier ladder
     (sovereign own-metal, unqualified cloud candidates, paid grid) and
     reports a single posture: green = a sovereign node is up AND has a fallback;
-    yellow = degraded (only one route, or no sovereign node up); red = nothing
-    armed. Never claims sovereign/clean-energy that isn't literally true.
+    yellow = degraded (only one route, or no sovereign node up); red = no
+    admitted route. Never claims sovereign/clean-energy that isn't literally true.
 
     When include_harvest, overlays the live wasted-energy grid-price posture
     (R-HARVEST-FABRIC) under the HONEST grid source. If a real wasted-energy
@@ -1587,21 +1568,22 @@ def fabric_status(include_harvest: bool = True, allow_network: bool = True) -> D
     not greenwash). The harvest overlay NEVER changes the sovereign label."""
     sovereign, free_grid, paid_grid, unqualified_grid = [], [], [], []
     for name, p in PROVIDERS.items():
+        tier = _tier_of(p)
         rec = {
             "provider": name,
-            "armed": p.available(),
+            "armed": p.available() and tier in ("sovereign", "free-grid"),
             "sovereign": p.sovereign,
             "energy_source": p.energy_source,
             "note": p.note,
         }
-        tier = _tier_of(p)
         (sovereign if tier == "sovereign"
          else paid_grid if tier == "paid-grid"
          else free_grid if tier == "free-grid"
          else unqualified_grid).append(rec)
 
     sov_armed = [r for r in sovereign if r["armed"]]
-    grid_armed = [r for r in (free_grid + paid_grid) if r["armed"]]
+    # A configured paid key is not a route while strict pre-call reservation is absent.
+    grid_armed = [r for r in free_grid if r["armed"]]
     total_armed = len(sov_armed) + len(grid_armed)
     if sov_armed and total_armed >= 2:
         posture = "green"      # sovereign up + at least one fallback
@@ -1659,13 +1641,13 @@ def fabric_status(include_harvest: bool = True, allow_network: bool = True) -> D
             },
             "tier_3_paid_grid": {
                 "providers": paid_grid,
-                "what": "paid last-resort (Kimi); sovereign:false",
+                "what": "paid cloud candidate (Kimi); blocked until exact pricing and strict pre-call reservation qualify it; sovereign:false",
             },
         },
         "honest_energy_sources": HONEST_ENERGY_SOURCES,
         "roadmap_energy_sources": ROADMAP_ENERGY_SOURCES,
         "doctrine": "sovereign:true ONLY on own metal; energy_source claims must be real; "
-                    "unqualified cloud candidates are disabled; harvest is real grid data "
+                    "unqualified and paid cloud candidates are disabled; harvest is real grid data "
                     "(never sovereign); joules SAMPLE until an on-box meter; no half-state.",
     }
     if harvest is not None:

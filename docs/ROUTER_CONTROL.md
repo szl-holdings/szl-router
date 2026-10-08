@@ -53,7 +53,7 @@ Without a valid registry, `/api/plan` remains available for honest inspection bu
 
 ## Configuration
 
-The validated registry, explicit egress enablement and caller authentication must converge before a caller can invoke a provider. HTTPS providers also need an exact hostname allowlist and their named upstream credential:
+The validated registry, explicit egress enablement and caller authentication must converge before a caller can invoke a provider. An omitted `enabled` field defaults to `false` in the provider registry; the examples below explicitly opt in with `"enabled": true` after operator qualification. HTTPS providers also need an exact hostname allowlist and their named upstream credential:
 
 ```bash
 export SZL_ROUTER_ALLOWED_HOSTS="provider-a.example,provider-b.example"

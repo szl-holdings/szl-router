@@ -18,8 +18,8 @@ described below is `szl_router.app`; the two receipt formats are distinct.
 [Run the local inference demo](demo/README.md) for one-command loopback inference,
 verified session receipts, and a hash-bound report using an installed Ollama model.
 
-One endpoint in front of many brains — our own GPU first, then configured external routes,
-then a paid fallback — and every answer comes with a **verifiable receipt**
+One endpoint in front of many brains — our own GPU first, then declared external
+candidates whose dispatch is gated — and every answer comes with a **verifiable receipt**
 (signed when a key is armed, else UNSIGNED-honest) of which model served it, on
 whose hardware, and at what energy/tier.
 
@@ -27,20 +27,21 @@ whose hardware, and at what energy/tier.
 
 ```bash
 docker build -t szl-router .
-# Point it at any upstream via env (no key is baked into the image):
-docker run -p 8000:8000 -e GROQ_API_KEY=... szl-router
+# Starts the API for inspection; a cloud key alone does not qualify a route:
+docker run -p 8000:8000 szl-router
 ```
 
-Then point any OpenAI client at `http://localhost:8000/v1`:
+Point an OpenAI client at `http://localhost:8000/v1`. Without a qualified
+sovereign upstream, the completion below fails closed with an attempt trail:
 
 ```bash
 curl -i localhost:8000/v1/chat/completions -H 'content-type: application/json' \
   -d '{"model":"szl-large","messages":[{"role":"user","content":"hi"}]}'
 ```
 
-The response body carries the honest `x_szl_provenance` block, and the HTTP
-response carries an **`x-szl-receipt`** header: a base64-JSON DSSE/ECDSA-P256
-envelope you can verify independently.
+A successful completion body carries the honest `x_szl_provenance` block, and
+the HTTP response carries an **`x-szl-receipt`** header: a base64-JSON
+DSSE/ECDSA-P256 envelope you can verify independently.
 
 ```python
 from openai import OpenAI
@@ -80,10 +81,9 @@ with `SZL_RECEIPT_EPHEMERAL=0` and no key, receipts are emitted UNSIGNED-honest
 
 Beyond provenance, usage and the request digest, every new receipt also carries:
 
-- **`cost`** - a per-call USD block with its evidence basis. A paid route carries
-  a price-table **estimate** (`estimated:true`), not a guaranteed charge or
-  prepaid reservation. Ledger recording follows a successful call and can fail;
-  the receipt does not prove ledger completeness or a strict concurrent cap.
+- **`cost`** - a per-call USD block with its evidence basis. The named paid
+  Moonshot candidate is blocked before transport; the legacy price-table
+  estimate and ledger do not qualify a strict concurrent spend cap.
   Unqualified cloud pricing/quota remains unknown (`amount_usd:null`), never
   fabricated as `$0`. Sovereign metal records `$0.00` vendor charge only,
   while electricity and other costs are unmetered here.
@@ -128,7 +128,7 @@ built our own, leaner version that fits our doctrine:
 
 ## Logical models
 
-| model       | intent              | configured order (unqualified routes skipped)                     |
+| model       | intent              | declared order (blocked routes skipped)                            |
 |-------------|---------------------|-------------------------------------------------------------------|
 | `szl-large` | general large brain | box_gpu → nvidia_gpu → groq → nvidia_nim → moonshot(Kimi)          |
 | `szl-fast`  | low-latency small   | box_gpu → groq → nvidia_nim                                        |
@@ -136,8 +136,9 @@ built our own, leaner version that fits our doctrine:
 | `szl-auto`  | smart routing       | scores the prompt, then dispatches to one of the three above      |
 
 You can also request `provider:upstream_model` directly. Unqualified cloud-grid
-overrides are rejected before transport, including when a credential is
-configured. The separate paid Moonshot path remains estimate-based.
+and paid Moonshot overrides are rejected before transport, including when a
+credential is configured. The table preserves declaration order, not active
+fallback availability.
 
 ## Smart routing (`szl-auto`)
 
@@ -180,8 +181,9 @@ curl localhost:8099/v1/chat/completions -H 'content-type: application/json' \
 | moonshot/Kimi | paid-grid  | no        | `KIMI_API_KEY`                           |
 
 A key and URL make a provider locally configured, not qualified, free, or live.
-Unqualified cloud-grid candidates are skipped. The Moonshot paid route retains
-an advisory estimate, not a strict spend cap. See
+Unqualified cloud-grid candidates are skipped. The named paid Moonshot candidate
+is blocked before transport until exact model pricing and strict pre-call spend
+reservation are qualified. See
 [provider qualification](docs/PROVIDER_QUALIFICATION.md) for current gates.
 
 ## Run
@@ -204,8 +206,9 @@ Two layers of resilience, both honest (a real failure is always surfaced in the
 `attempts` trail — never papered over):
 
 - **Route failover** - each logical model walks its ordered route list and
-  returns the first eligible upstream that answers. Missing keys/URLs and
-  unqualified cloud-grid routes are skipped and recorded in the attempt trail.
+  returns the first eligible upstream that answers. Missing keys/URLs,
+  unqualified cloud-grid routes, and the blocked paid Moonshot candidate are
+  skipped and recorded in the attempt trail.
 - **Same-provider transient retry** — before falling through to the next route, a
   provider that blips transiently (HTTP `429`/`500`/`502`/`503`/`504`, or a
   dropped connection) is retried with **exponential backoff + full jitter**, so
@@ -223,8 +226,8 @@ Two layers of resilience, both honest (a real failure is always surfaced in the
   permanent error), it cools down for `SZL_COOLDOWN_SECONDS` (default `30`, `0`
   disables) so the very next callers don't pay the same failure latency again.
   Honest by construction: a cooled provider is skipped **only while a warm
-  fallback remains** — as the last resort it is *always* tried (trying loudly
-  beats refusing silently); every skip is recorded in the `attempts` trail as
+  eligible fallback remains** — if none remains, the cooled eligible provider
+  is tried; every skip is recorded in the `attempts` trail as
   `cooldown-skip (...)` so the receipt shows exactly why a provider was not
   consulted; and a single success clears the cooldown immediately.
 

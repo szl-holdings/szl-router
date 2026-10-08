@@ -4,8 +4,9 @@
 > answer is non-negotiable.
 
 `szl-router` is SZL's own unified, **OpenAI-compatible** LLM router: one endpoint in
-front of many brains — owned GPU first, then free grid tiers, then a paid fallback —
-with honest provenance on every response.
+front of declared routes, with owned GPU first and honest provenance on every
+response. Unqualified cloud-grid routes and the named paid Moonshot candidate
+are currently blocked before transport.
 
 ## Design principles
 
@@ -36,14 +37,19 @@ szl-router/
 
 ## Logical models & fallback
 
-| model       | intent              | fallback order (sovereign → free → paid)                  |
+| model       | intent              | declared order (qualification gates apply)                |
 |-------------|---------------------|-----------------------------------------------------------|
 | `szl-large` | general large brain | box_gpu → nvidia_gpu → groq → nvidia_nim → moonshot(Kimi)  |
 | `szl-fast`  | low-latency small   | box_gpu → groq → nvidia_nim                                |
 | `szl-coder` | coding              | box_gpu → nvidia_gpu → nvidia_nim → groq                   |
 
-Direct `provider:upstream_model` calls (e.g. `groq:llama-3.3-70b-versatile`) are also
-supported. The router was built after studying LiteLLM proxy, OpenRouter, and
+This table preserves route declaration order, not current fallback availability.
+A configured key does not bypass qualification. Moonshot requires exact model
+pricing and strict pre-call spend reservation before dispatch can be enabled.
+
+Direct `provider:upstream_model` syntax (e.g. `groq:llama-3.3-70b-versatile`) is
+supported, but unqualified cloud-grid and paid Moonshot overrides fail before
+transport. The router was built after studying LiteLLM proxy, OpenRouter, and
 lm-sys RouteLLM — leaner, and pinned to SZL doctrine.
 
 ## CI

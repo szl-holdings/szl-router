@@ -111,7 +111,7 @@ class UnqualifiedGridTests(unittest.TestCase):
         self.assertEqual(fabric["ladder"]["tier_2_free_grid_faucets"]["providers"], [])
         candidates = fabric["ladder"]["unqualified_grid_candidates"]
         self.assertEqual(candidates["status"], "blocked")
-        self.assertTrue(any(row["provider"] == "zhipu" and row["armed"]
+        self.assertTrue(any(row["provider"] == "zhipu" and not row["armed"]
                             for row in candidates["providers"]))
 
     def test_unqualified_cloud_does_not_hide_cooling_sovereign(self):
@@ -127,19 +127,35 @@ class UnqualifiedGridTests(unittest.TestCase):
         self.assertEqual(result["x_szl_provenance"]["cost"]["amount_usd"], 0.0)
         self.assertEqual(self.calls, [("chat", "box_gpu", "model")])
 
-    def test_paid_ledger_failure_remains_an_advisory_estimate(self):
+    def test_paid_routes_fail_closed_before_advisory_ledger_or_transport(self):
         provider = core.PROVIDERS["moonshot"]
         os.environ[provider.key_env] = "synthetic-key"
 
-        def broken_record(*args, **kwargs):
-            raise OSError("synthetic ledger failure")
-
-        with patch.object(core.spend_guard, "allow", return_value=(True, "ok")), \
-             patch.object(core.spend_guard, "record", side_effect=broken_record):
-            result = core.chat("moonshot:kimi-k2.5", MESSAGES)
-
-        self.assertTrue(result["x_szl_provenance"]["cost"]["estimated"])
-        self.assertEqual(self.calls, [("chat", "moonshot", "kimi-k2.5")])
+        with patch.object(core.spend_guard, "allow", side_effect=AssertionError("advisory preflight used")), \
+             patch.object(core.spend_guard, "record", side_effect=AssertionError("advisory ledger used")):
+            for model in ("moonshot:kimi-k2.5", "szl-large"):
+                with self.subTest(model=model):
+                    with self.assertRaises(core.RouterError) as raised:
+                        core.chat(model, MESSAGES)
+                    paid_attempts = [a for a in raised.exception.attempts if a.provider == "moonshot"]
+                    self.assertEqual(len(paid_attempts), 1)
+                    self.assertIn("pricing/reservation unqualified", paid_attempts[0].error)
+        self.assertEqual(self.calls, [])
+        self.assertFalse(core._warm_candidate_later([("moonshot", "kimi-k2.5")], 0))
+        status = next(row for row in core.status()["providers"] if row["provider"] == "moonshot")
+        self.assertTrue(status["available"])  # Key/URL presence, not route admission.
+        self.assertEqual(status["tier"], "paid-grid")
+        self.assertIn("blocked", status["note"])
+        fabric = core.fabric_status(include_harvest=False, allow_network=False)
+        self.assertEqual(fabric["routes_armed"], 0)
+        self.assertEqual(fabric["posture"], "red")
+        self.assertFalse(fabric["ladder"]["tier_3_paid_grid"]["providers"][0]["armed"])
+        self.assertIn("blocked", fabric["ladder"]["tier_3_paid_grid"]["what"])
+        self.assertTrue(all(not row["armed"] for row in
+                            fabric["ladder"]["unqualified_grid_candidates"]["providers"]))
+        with patch.object(core.spend_guard, "_read_entries", return_value=[]), \
+             patch.object(core.spend_guard, "kill_engaged", return_value=False):
+            self.assertFalse(core.spend_guard.state()["armed"])
 
 
 if __name__ == "__main__":
