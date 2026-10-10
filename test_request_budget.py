@@ -484,3 +484,111 @@ def test_direct_retry_uses_the_same_budget_object():
     assert budget.reserved == 2
     assert budget.terminal == "attempt_exhausted"
     assert len(budget.dispatches) == 2
+
+
+VECTOR = {"data": [{"index": 0, "embedding": [0.25, 0.5]}]}
+
+
+class _EmbedRoutes:
+    def __init__(self, specs):
+        self.calls = []
+        self._old_providers = core.PROVIDERS
+        self._had_route = "budget-embed" in core.EMBED_ROUTES
+        self._old_route = core.EMBED_ROUTES.get("budget-embed")
+        self._old_post = core._post_embeddings
+        providers = {}
+        routes = []
+        for name, sovereign in specs:
+            providers[name] = core.Provider(
+                name, "", f"http://{name}.invalid/v1", "", sovereign,
+                "self-hosted" if sovereign else "grid",
+            )
+            routes.append((name, "budget-embed-model"))
+        core.PROVIDERS = providers
+        core.EMBED_ROUTES["budget-embed"] = routes
+
+    def install(self, poster):
+        def post(provider, payload, timeout):
+            self.calls.append((provider.name, timeout))
+            return poster(provider, payload, timeout)
+        core._post_embeddings = post
+
+    def close(self):
+        core._post_embeddings = self._old_post
+        core.PROVIDERS = self._old_providers
+        if self._had_route:
+            core.EMBED_ROUTES["budget-embed"] = self._old_route
+        else:
+            core.EMBED_ROUTES.pop("budget-embed", None)
+
+
+def test_embed_retry_and_fallback_share_one_limit():
+    clock = Clock()
+    budget = _budget(clock, attempts=2, deadline=40)
+    routes = _EmbedRoutes((("first", True), ("second", True)))
+    try:
+        def poster(provider, payload, timeout):
+            raise _http_error(503)
+        routes.install(poster)
+        with pytest.raises(core.RouterError) as caught:
+            core.embed("budget-embed", "hello", timeout=20, use_cache=False,
+                       request_budget=budget)
+    finally:
+        routes.close()
+    assert [name for name, _timeout in routes.calls] == ["first", "first"]
+    assert budget.reserved == 2
+    assert budget.terminal == "attempt_exhausted"
+    assert caught.value.terminal_reason == "attempt_exhausted"
+
+
+def test_embed_fallback_stays_inside_the_shared_ceiling():
+    clock = Clock()
+    budget = _budget(clock, attempts=2, deadline=40)
+    routes = _EmbedRoutes((("first", True), ("second", True)))
+    try:
+        def poster(provider, payload, timeout):
+            if provider.name == "first":
+                raise _http_error(400)
+            return dict(VECTOR)
+        routes.install(poster)
+        result = core.embed("budget-embed", "hello", timeout=20, use_cache=False,
+                            request_budget=budget)
+    finally:
+        routes.close()
+    assert [name for name, _timeout in routes.calls] == ["first", "second"]
+    assert budget.reserved == 2
+    assert budget.terminal == "success"
+    assert result["x_szl_provenance"]["terminal_reason"] == "success"
+    assert result["x_szl_provenance"]["attempts_reserved"] == 2
+
+
+def test_embed_cache_hit_does_not_reserve_an_attempt():
+    clock = Clock()
+    budget = _budget(clock, attempts=2, deadline=40)
+    routes = _EmbedRoutes((("first", True),))
+    try:
+        routes.install(lambda provider, payload, timeout: dict(VECTOR))
+        first = core.embed("budget-embed", "cached-text", timeout=20,
+                           request_budget=budget)
+        assert budget.reserved == 1
+        assert budget.terminal == "success"
+        second_budget = _budget(clock, attempts=2, deadline=40, request_id="req-cache")
+        second = core.embed("budget-embed", "cached-text", timeout=20,
+                            request_budget=second_budget)
+    finally:
+        routes.close()
+    assert second["x_szl_provenance"]["served_by"].endswith(":cache")
+    assert second_budget.reserved == 0
+    assert second_budget.terminal is None
+    assert first["data"][0]["embedding"] == [0.25, 0.5]
+
+
+def test_embed_rejects_a_non_budget_before_transport():
+    routes = _EmbedRoutes((("first", True),))
+    try:
+        routes.install(lambda provider, payload, timeout: dict(VECTOR))
+        with pytest.raises(TypeError):
+            core.embed("budget-embed", "hello", use_cache=False, request_budget=True)
+    finally:
+        routes.close()
+    assert routes.calls == []
