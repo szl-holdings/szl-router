@@ -1469,6 +1469,7 @@ def embed(
     timeout: float = 60.0,
     extra: Optional[Dict[str, Any]] = None,
     use_cache: bool = True,
+    request_budget: Optional[RequestBudget] = None,
 ) -> Dict[str, Any]:
     """Run an embeddings call through the HOME-node-first sovereign chain.
 
@@ -1483,7 +1484,15 @@ def embed(
     served_by ...:cache. Set use_cache=False to force a fresh upstream call.
     Hidden upstream weight changes require a cache namespace rotation or bypass;
     neither a model alias nor the configured namespace proves a weights revision.
-    Non-JSON inputs and extra overrides of model/input raise ValueError."""
+    Non-JSON inputs and extra overrides of model/input raise ValueError.
+
+    `request_budget`, when supplied, is the same attempt counter and absolute
+    deadline as chat(). A cache hit is not a dispatch and does not reserve an
+    attempt. Without a budget, each provider keeps its own retry cap."""
+    if request_budget is not None and not isinstance(request_budget, RequestBudget):
+        raise TypeError("request_budget must be a RequestBudget")
+    if request_budget is not None:
+        request_budget.validate_caller_timeout(timeout)
     if type(model) is not str or not model:
         raise ValueError("embeddings model must be a non-empty string")
     if extra is not None and type(extra) is not dict:
@@ -1505,6 +1514,8 @@ def embed(
     attempts: List[Attempt] = []
 
     for provider_name, upstream_model, provider in routes:
+        if request_budget is not None and request_budget.terminal is not None:
+            break
         if provider is None or not provider.available():
             attempts.append(Attempt(provider_name, upstream_model, ok=False,
                                     error="provider unavailable (no key/url)"))
@@ -1529,43 +1540,75 @@ def embed(
 
         t0 = time.time()
         try:
-            # Embeddings do not take a request-wide budget yet. This keeps the
-            # per-provider retry cap and the pool's one uncounted stale resend.
-            result = _post_with_retry(_post_embeddings, provider, payload, timeout)
-            dt = int((time.time() - t0) * 1000)
-            detail = _embedding_response_error(result, payload)
-            if detail is not None:
-                attempts.append(Attempt(provider_name, upstream_model, ok=False,
-                                        status=200, error=detail, latency_ms=dt))
-                continue
-            attempts.append(Attempt(provider_name, upstream_model, ok=True,
-                                    status=200, latency_ms=dt))
-            prov.served_by = f"{provider_name}:{upstream_model}"
-            prov.provider = provider_name
-            prov.upstream_model = upstream_model
-            prov.base_url = provider.base_url()
-            prov.sovereign = provider.sovereign
-            prov.energy_source = provider.energy_source
-            prov.tier = _tier_of(provider)
-            prov.attempts = attempts
-            result["x_szl_provenance"] = prov.to_dict()
-            if cache_key is not None:
-                _embed_cache_put(cache_key, result)
-            return result
+            result = _post_with_retry(
+                _post_embeddings, provider, payload, timeout,
+                budget=request_budget,
+                on_attempt=attempts.append if request_budget is not None else None,
+            )
+        except BudgetStop:
+            break
         except urllib.error.HTTPError as e:
             dt = int((time.time() - t0) * 1000)
-            try:
-                err_body = e.read().decode("utf-8")[:200]
-            except Exception:
-                err_body = str(e)
-            attempts.append(Attempt(provider_name, upstream_model, ok=False,
-                                    status=e.code, error=err_body, latency_ms=dt))
+            if request_budget is None:
+                try:
+                    err_body = e.read().decode("utf-8")[:200]
+                except Exception:
+                    err_body = str(e)
+                attempts.append(Attempt(provider_name, upstream_model, ok=False,
+                                        status=e.code, error=err_body, latency_ms=dt))
+            if request_budget is not None and request_budget.terminal is not None:
+                break
+            continue
         except Exception as e:  # noqa: BLE001 - honest catch-all, recorded
             dt = int((time.time() - t0) * 1000)
-            attempts.append(Attempt(provider_name, upstream_model, ok=False,
-                                    error=f"{type(e).__name__}: {e}"[:200], latency_ms=dt))
+            if request_budget is None:
+                attempts.append(Attempt(provider_name, upstream_model, ok=False,
+                                        error=f"{type(e).__name__}: {e}"[:200],
+                                        latency_ms=dt))
+            if request_budget is not None and request_budget.terminal is not None:
+                break
+            continue
 
-    raise RouterError(f"all embed routes failed for model '{model}'", attempts)
+        dt = int((time.time() - t0) * 1000)
+        detail = _embedding_response_error(result, payload)
+        if detail is not None:
+            if request_budget is None:
+                attempts.append(Attempt(provider_name, upstream_model, ok=False,
+                                        status=200, error=detail, latency_ms=dt))
+            else:
+                failed = attempts[-1]
+                failed.ok = False
+                failed.status = 200
+                failed.error = detail
+                failed.latency_ms = dt
+            continue
+        if request_budget is None:
+            attempts.append(Attempt(provider_name, upstream_model, ok=True,
+                                    status=200, latency_ms=dt))
+        else:
+            attempts[-1].latency_ms = dt
+            request_budget.mark_success()
+            _budget_fields(prov, request_budget)
+        prov.served_by = f"{provider_name}:{upstream_model}"
+        prov.provider = provider_name
+        prov.upstream_model = upstream_model
+        prov.base_url = provider.base_url()
+        prov.sovereign = provider.sovereign
+        prov.energy_source = provider.energy_source
+        prov.tier = _tier_of(provider)
+        prov.attempts = attempts
+        result["x_szl_provenance"] = prov.to_dict()
+        if cache_key is not None:
+            _embed_cache_put(cache_key, result)
+        return result
+
+    reason = None
+    if request_budget is not None:
+        if request_budget.terminal is None:
+            request_budget.close(_closed_reason(attempts, request_budget.reserved))
+        reason = request_budget.terminal
+    raise RouterError(
+        f"all embed routes failed for model '{model}'", attempts, reason)
 
 
 def status() -> Dict[str, Any]:
