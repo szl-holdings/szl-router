@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import contextvars
 import hashlib
 import hmac
 import http.client
@@ -36,12 +37,17 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 try:
     from . import spend_guard  # Legacy offline paid estimate and advisory ledger.
 except ImportError:  # test harness imports `core` top-level (sys.path=szl_router)
     import spend_guard  # type: ignore
+
+try:
+    from .request_budget import BudgetStop, RequestBudget
+except ImportError:  # test harness imports `core` top-level (sys.path=szl_router)
+    from request_budget import BudgetStop, RequestBudget  # type: ignore
 
 
 # ---------------------------------------------------------------------------
@@ -323,6 +329,13 @@ class Provenance:
     # sovereign tier -> $0.00 vendor charge with an explicit basis string.
     # Additive: only present once a route is served.
     cost: Optional[Dict[str, Any]] = None
+    # Present only when the caller supplied a RequestBudget. Absent otherwise,
+    # so unbudgeted provenance stays the previous shape.
+    request_id: Optional[str] = None
+    policy_revision: Optional[str] = None
+    terminal_reason: Optional[str] = None
+    attempt_ceiling: Optional[int] = None
+    attempts_reserved: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
         d = {
@@ -339,6 +352,12 @@ class Provenance:
             d["routing"] = self.routing
         if self.cost is not None:
             d["cost"] = self.cost
+        if self.request_id is not None:
+            d["request_id"] = self.request_id
+            d["policy_revision"] = self.policy_revision
+            d["terminal_reason"] = self.terminal_reason
+            d["attempt_ceiling"] = self.attempt_ceiling
+            d["attempts_reserved"] = self.attempts_reserved
         return d
 
 
@@ -353,9 +372,11 @@ def _tier_of(p: Provider) -> str:
 
 
 class RouterError(RuntimeError):
-    def __init__(self, message: str, attempts: List[Attempt]):
+    def __init__(self, message: str, attempts: List[Attempt],
+                 terminal_reason: Optional[str] = None):
         super().__init__(message)
         self.attempts = attempts
+        self.terminal_reason = terminal_reason
 
 
 # ---------------------------------------------------------------------------
@@ -371,6 +392,12 @@ class RouterError(RuntimeError):
 # ---------------------------------------------------------------------------
 _POOL_MAX_PER_HOST = 4    # idle keep-alive conns kept per (scheme, host, port)
 _POOL_MAX_HOSTS = 16      # distinct hosts tracked before we stop caching new ones
+
+# Set only around a budgeted dispatch. While set, request_json must not send
+# a second request on its own: that resend would be an uncounted attempt.
+_REQUEST_BUDGET: "contextvars.ContextVar[Optional[RequestBudget]]" = contextvars.ContextVar(
+    "szl_request_budget", default=None,
+)
 
 
 class _ConnectionPool:
@@ -399,6 +426,16 @@ class _ConnectionPool:
             if bucket:
                 conn = bucket.pop()
                 conn.timeout = timeout
+                # http.client applies HTTPConnection.timeout when the socket is
+                # created. A kept-alive socket keeps its previous timeout unless
+                # it is updated here. Connect and later reads share this one
+                # socket timeout; it is not a separate overall deadline.
+                sock = getattr(conn, "sock", None)
+                if sock is not None:
+                    try:
+                        sock.settimeout(timeout)
+                    except OSError:
+                        pass
                 return conn
         return self._new_conn(scheme, host, port, timeout)
 
@@ -421,7 +458,14 @@ class _ConnectionPool:
         keep-alive connection when one is available.
 
         Raises urllib.error.HTTPError on a non-2xx status so the existing
-        failover/honesty handling in chat()/embed() is unchanged."""
+        failover/honesty handling in chat()/embed() is unchanged.
+
+        `timeout` is the socket timeout for both the connection attempt and
+        later blocking reads. http.client does not take separate connect and
+        read deadlines. It is not an overall request deadline. A timeout does
+        not prove the peer cancelled work that may already have been sent.
+        When a RequestBudget is active, a failed first send is not repeated
+        here; the budget has to reserve any later dispatch."""
         parts = urllib.parse.urlsplit(url)
         scheme = parts.scheme
         host = parts.hostname or ""
@@ -436,12 +480,18 @@ class _ConnectionPool:
                 conn.request("POST", path, body=data, headers=headers)
                 resp = conn.getresponse()
             except (http.client.HTTPException, OSError):
-                # A stale pooled connection can fail at send/recv; retry once on a
-                # fresh connection so pool reuse is never observable as an error.
                 try:
                     conn.close()
                 except Exception:  # noqa: BLE001
                     pass
+                if _REQUEST_BUDGET.get() is not None:
+                    # The failed send may have left the machine. Do not hide a
+                    # second dispatch inside the pool. The request budget records
+                    # the outcome as unknown and may reserve another attempt.
+                    raise
+                # Unbudgeted callers keep the previous behavior: a stale pooled
+                # connection can fail at send/recv and is retried once on a fresh
+                # connection. That resend is not a separate attempt counter.
                 conn = self._new_conn(scheme, host, port, timeout)
                 conn.request("POST", path, body=data, headers=headers)
                 resp = conn.getresponse()
@@ -496,6 +546,11 @@ _UPSTREAM_POOL = _ConnectionPool()
 # AWS-recommended shape: it spreads concurrent clients so they don't retry in
 # lockstep and stampede a recovering upstream.
 #
+# That per-provider cap remains the default. A caller that passes a
+# RequestBudget uses one shared attempt ceiling and one absolute monotonic
+# deadline for the initial send, every retry, and every fallback. The budget
+# does not reserve USD and does not qualify a paid or unqualified route.
+#
 # Only transient statuses are retried. A 4xx that is NOT 429 (e.g. 400 bad
 # request, 401 bad key, 404 model not found) is a permanent error for this
 # provider — retrying can't help, so we fail through to the next route at once.
@@ -520,26 +575,123 @@ def _backoff_sleep_seconds(attempt: int) -> float:
     return random.uniform(0, ceiling) if ceiling > 0 else 0.0
 
 
+def _latency_ms(now: float, started: float) -> int:
+    try:
+        return max(0, int((now - started) * 1000))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def _http_error_text(exc: urllib.error.HTTPError) -> str:
+    try:
+        return exc.read().decode("utf-8")[:200]
+    except Exception:  # noqa: BLE001
+        return str(exc)[:200]
+
+
+def _transport_attempt(provider: Provider, payload: Dict[str, Any], *,
+                       ok: bool, status: Optional[int], error: Optional[str],
+                       latency_ms: int) -> Attempt:
+    name = getattr(provider, "name", "") or ""
+    model = ""
+    if isinstance(payload, dict) and isinstance(payload.get("model"), str):
+        model = payload["model"]
+    return Attempt(name, model, ok, status=status, error=error, latency_ms=latency_ms)
+
+
 def _post_with_retry(poster, provider: Provider, payload: Dict[str, Any],
-                     timeout: float):
+                     timeout: float, budget: Optional[RequestBudget] = None,
+                     on_attempt: Optional[Callable[[Attempt], None]] = None):
     """Call `poster(provider, payload, timeout)` with same-provider transient
-    retry (exponential backoff + full jitter). Re-raises the LAST error once the
-    attempt budget is spent or the error is permanent, so the caller's existing
-    per-route honesty handling records it exactly as before."""
-    last_exc: Exception
-    for attempt in range(_RETRY_MAX_ATTEMPTS):
+    retry (exponential backoff + full jitter).
+
+    Without `budget`, each call has its own cap of `_RETRY_MAX_ATTEMPTS`.
+    The caller's existing per-route handling records one attempt row for the
+    whole sequence, as before.
+
+    With `budget`, every initiated dispatch reserves one attempt on that
+    shared counter, including later providers and retries. `on_attempt` is
+    called once per initiated dispatch. The pool's hidden stale-connection
+    resend is disabled for the duration of the poster call.
+    """
+    if budget is None:
+        if on_attempt is not None:
+            raise ValueError("on_attempt requires a request budget")
+        last_exc: Exception
+        for attempt in range(_RETRY_MAX_ATTEMPTS):
+            try:
+                return poster(provider, payload, timeout)
+            except urllib.error.HTTPError as e:
+                last_exc = e
+                if not _is_retryable_http(getattr(e, "code", None)):
+                    raise  # permanent (e.g. 400/401/404) — fail through now
+            except (http.client.HTTPException, OSError) as e:
+                last_exc = e  # connection-level blip — retryable
+            if attempt + 1 >= _RETRY_MAX_ATTEMPTS:
+                break
+            time.sleep(_backoff_sleep_seconds(attempt))
+        raise last_exc
+
+    last_budget_exc: Optional[Exception] = None
+    while True:
         try:
-            return poster(provider, payload, timeout)
-        except urllib.error.HTTPError as e:
-            last_exc = e
-            if not _is_retryable_http(getattr(e, "code", None)):
-                raise  # permanent (e.g. 400/401/404) — fail through now
-        except (http.client.HTTPException, OSError) as e:
-            last_exc = e  # connection-level blip — retryable
-        if attempt + 1 >= _RETRY_MAX_ATTEMPTS:
-            break
-        time.sleep(_backoff_sleep_seconds(attempt))
-    raise last_exc
+            attempt_no, send_timeout = budget.reserve(timeout)
+        except BudgetStop:
+            if last_budget_exc is not None:
+                raise last_budget_exc
+            raise
+        started = budget.clock()
+        token = _REQUEST_BUDGET.set(budget)
+        try:
+            try:
+                result = poster(provider, payload, send_timeout)
+            except urllib.error.HTTPError as e:
+                last_budget_exc = e
+                budget.note_outcome(attempt_no, "known")
+                if on_attempt is not None:
+                    on_attempt(_transport_attempt(
+                        provider, payload, ok=False, status=getattr(e, "code", None),
+                        error=_http_error_text(e),
+                        latency_ms=_latency_ms(budget.clock(), started),
+                    ))
+                if not _is_retryable_http(getattr(e, "code", None)):
+                    raise
+            except (http.client.HTTPException, OSError) as e:
+                last_budget_exc = e
+                # The peer may have received the request. Do not call this known.
+                budget.note_outcome(attempt_no, "unknown")
+                if on_attempt is not None:
+                    on_attempt(_transport_attempt(
+                        provider, payload, ok=False, status=None,
+                        error=f"{type(e).__name__}: {e}"[:200],
+                        latency_ms=_latency_ms(budget.clock(), started),
+                    ))
+            except Exception as e:
+                last_budget_exc = e
+                budget.note_outcome(attempt_no, "unknown")
+                if on_attempt is not None:
+                    on_attempt(_transport_attempt(
+                        provider, payload, ok=False, status=None,
+                        error=f"{type(e).__name__}: {e}"[:200],
+                        latency_ms=_latency_ms(budget.clock(), started),
+                    ))
+                raise
+            else:
+                budget.note_outcome(attempt_no, "known")
+                if on_attempt is not None:
+                    on_attempt(_transport_attempt(
+                        provider, payload, ok=True, status=200, error=None,
+                        latency_ms=_latency_ms(budget.clock(), started),
+                    ))
+                return result
+        finally:
+            _REQUEST_BUDGET.reset(token)
+        delay = _backoff_sleep_seconds(attempt_no - 1)
+        if not budget.allow_backoff(delay):
+            if last_budget_exc is None:
+                raise BudgetStop(budget.terminal or "attempt_exhausted", budget.in_flight)
+            raise last_budget_exc
+        budget.sleep(delay)
 
 
 # ---------------------------------------------------------------------------
@@ -959,6 +1111,28 @@ def _auto_routing_block(score: float, signals: List[str], chosen: str) -> Dict[s
     }
 
 
+def _budget_fields(prov: Provenance, budget: RequestBudget) -> None:
+    prov.request_id = budget.request_id
+    prov.policy_revision = budget.policy_revision
+    prov.terminal_reason = budget.terminal
+    prov.attempt_ceiling = budget.max_attempts
+    prov.attempts_reserved = budget.reserved
+
+
+def _closed_reason(attempts: List[Attempt], dispatched: int) -> str:
+    """Terminal reason after the route loop ends without a served response.
+
+    A dispatch that already failed is provider_unavailable. No dispatch, and
+    every recorded row is a pricing/qualification skip, is policy_blocked.
+    """
+    if dispatched:
+        return "provider_unavailable"
+    errors = [(attempt.error or "") for attempt in attempts]
+    if errors and all(error.startswith("pricing/") for error in errors):
+        return "policy_blocked"
+    return "provider_unavailable"
+
+
 def chat(
     model: str,
     messages: List[Dict[str, Any]],
@@ -967,11 +1141,17 @@ def chat(
     max_tokens: Optional[int] = None,
     timeout: float = 60.0,
     extra: Optional[Dict[str, Any]] = None,
+    request_budget: Optional[RequestBudget] = None,
 ) -> Dict[str, Any]:
     """Run a chat completion through the sovereign-first fallback chain.
 
     Returns the upstream OpenAI-shaped response with an added
     `x_szl_provenance` block. Raises RouterError if every route fails.
+
+    `request_budget`, when supplied, is the one attempt counter and absolute
+    deadline for every retry and fallback in this call. Omitting it keeps the
+    historical per-provider retry cap. The budget does not reserve USD and
+    does not qualify a paid or unqualified-grid route.
 
     The opt-in "szl-auto" model is intercepted here: its prompt is scored by a
     deterministic no-LLM heuristic and dispatched to the cheapest capable real
@@ -982,6 +1162,10 @@ def chat(
         raise ValueError("chat extra must be an object")
     if extra and {"model", "messages"}.intersection(extra):
         raise ValueError("chat extra cannot override model or messages")
+    if request_budget is not None and not isinstance(request_budget, RequestBudget):
+        raise TypeError("request_budget must be a RequestBudget")
+    if request_budget is not None:
+        request_budget.validate_caller_timeout(timeout)
     routing_block: Optional[Dict[str, Any]] = None
     route_model = model
     if model == AUTO_MODEL:
@@ -993,6 +1177,8 @@ def chat(
     attempts: List[Attempt] = []
 
     for _route_i, (provider_name, upstream_model) in enumerate(routes):
+        if request_budget is not None and request_budget.terminal is not None:
+            break
         provider = PROVIDERS.get(provider_name)
         if provider is None or not provider.available():
             attempts.append(Attempt(provider_name, upstream_model, ok=False,
@@ -1031,50 +1217,82 @@ def chat(
 
         t0 = time.time()
         try:
-            result = _post_with_retry(_post_chat, provider, payload, timeout)
-            dt = int((time.time() - t0) * 1000)
-            detail = _chat_response_error(result)
-            if detail is not None:
-                attempts.append(Attempt(provider_name, upstream_model, ok=False,
-                                        status=200, error=detail, latency_ms=dt))
-                _set_cooldown(provider_name)
-                continue
-            attempts.append(Attempt(provider_name, upstream_model, ok=True,
-                                    status=200, latency_ms=dt))
-            _clear_cooldown(provider_name)
-            prov.served_by = f"{provider_name}:{upstream_model}"
-            prov.provider = provider_name
-            prov.upstream_model = upstream_model
-            prov.base_url = provider.base_url()
-            prov.sovereign = provider.sovereign
-            prov.energy_source = provider.energy_source
-            prov.tier = tier
-            prov.attempts = attempts
-            # Honest cost block for the served sovereign route.
-            # Signed into the receipt via app.py.
-            prov.cost = _cost_detail(provider, result, upstream_model)
-            result["x_szl_provenance"] = prov.to_dict()
-            _emit_route_receipt(model=model, decision="served",
-                                provenance=prov, attempts=attempts)
-            return result
+            result = _post_with_retry(
+                _post_chat, provider, payload, timeout,
+                budget=request_budget,
+                on_attempt=attempts.append if request_budget is not None else None,
+            )
+        except BudgetStop:
+            break
         except urllib.error.HTTPError as e:
             dt = int((time.time() - t0) * 1000)
-            try:
-                err_body = e.read().decode("utf-8")[:200]
-            except Exception:
-                err_body = str(e)
-            attempts.append(Attempt(provider_name, upstream_model, ok=False,
-                                    status=e.code, error=err_body, latency_ms=dt))
+            if request_budget is None:
+                try:
+                    err_body = e.read().decode("utf-8")[:200]
+                except Exception:
+                    err_body = str(e)
+                attempts.append(Attempt(provider_name, upstream_model, ok=False,
+                                        status=e.code, error=err_body, latency_ms=dt))
             _set_cooldown(provider_name)
+            if request_budget is not None and request_budget.terminal is not None:
+                break
+            continue
         except Exception as e:  # noqa: BLE001 - honest catch-all, recorded
             dt = int((time.time() - t0) * 1000)
-            attempts.append(Attempt(provider_name, upstream_model, ok=False,
-                                    error=f"{type(e).__name__}: {e}"[:200], latency_ms=dt))
+            if request_budget is None:
+                attempts.append(Attempt(provider_name, upstream_model, ok=False,
+                                        error=f"{type(e).__name__}: {e}"[:200], latency_ms=dt))
             _set_cooldown(provider_name)
+            if request_budget is not None and request_budget.terminal is not None:
+                break
+            continue
 
+        dt = int((time.time() - t0) * 1000)
+        detail = _chat_response_error(result)
+        if detail is not None:
+            if request_budget is None:
+                attempts.append(Attempt(provider_name, upstream_model, ok=False,
+                                        status=200, error=detail, latency_ms=dt))
+            else:
+                failed = attempts[-1]
+                failed.ok = False
+                failed.status = 200
+                failed.error = detail
+                failed.latency_ms = dt
+            _set_cooldown(provider_name)
+            continue
+        if request_budget is None:
+            attempts.append(Attempt(provider_name, upstream_model, ok=True,
+                                    status=200, latency_ms=dt))
+        else:
+            attempts[-1].latency_ms = dt
+            request_budget.mark_success()
+            _budget_fields(prov, request_budget)
+        _clear_cooldown(provider_name)
+        prov.served_by = f"{provider_name}:{upstream_model}"
+        prov.provider = provider_name
+        prov.upstream_model = upstream_model
+        prov.base_url = provider.base_url()
+        prov.sovereign = provider.sovereign
+        prov.energy_source = provider.energy_source
+        prov.tier = tier
+        prov.attempts = attempts
+        # Honest cost block for the served sovereign route.
+        # Signed into the receipt via app.py. This is not a pre-call USD reservation.
+        prov.cost = _cost_detail(provider, result, upstream_model)
+        result["x_szl_provenance"] = prov.to_dict()
+        _emit_route_receipt(model=model, decision="served",
+                            provenance=prov, attempts=attempts)
+        return result
+
+    reason = None
+    if request_budget is not None:
+        if request_budget.terminal is None:
+            request_budget.close(_closed_reason(attempts, request_budget.reserved))
+        reason = request_budget.terminal
     _emit_route_receipt(model=model, decision="all-routes-failed",
                         provenance=None, attempts=attempts)
-    raise RouterError(f"all routes failed for model '{model}'", attempts)
+    raise RouterError(f"all routes failed for model '{model}'", attempts, reason)
 
 
 def _post_embeddings(provider: Provider, payload: Dict[str, Any], timeout: float) -> Dict[str, Any]:
@@ -1311,6 +1529,8 @@ def embed(
 
         t0 = time.time()
         try:
+            # Embeddings do not take a request-wide budget yet. This keeps the
+            # per-provider retry cap and the pool's one uncounted stale resend.
             result = _post_with_retry(_post_embeddings, provider, payload, timeout)
             dt = int((time.time() - t0) * 1000)
             detail = _embedding_response_error(result, payload)
