@@ -1,0 +1,30 @@
+{
+  "schema": "szl.native-frontend-projection/v1",
+  "repository": "szl-holdings/szl-brand",
+  "bundle_commit": "4309f6fce89179331b0b3ed8c99494e76c5be256",
+  "canonical_token_source": "27d12e77fc0f9f1a0e5fae8b34adf2380d51d070",
+  "scope": "Only listed installed files are present. The unchanged SOURCE manifest describes the full upstream bundle.",
+  "attribution": "SZL Holdings \u00b7 ORCID 0009-0001-0110-4173",
+  "license": {
+    "code": "Apache-2.0",
+    "brand_assets": "CC BY 4.0"
+  },
+  "limits": "Source and byte provenance only; not runtime or independent signature verification.",
+  "installed": {
+    "szl-tokens.css": {
+      "source_commit": "4309f6fce89179331b0b3ed8c99494e76c5be256",
+      "source_path": "kanchay/szl-tokens.css",
+      "sha256": "81f7c9baeef0b435e6e3f9d0c4e0d70e40fa17df5d1f30697f623cd3ef5f8eab"
+    },
+    "SOURCE.json": {
+      "source_commit": "4309f6fce89179331b0b3ed8c99494e76c5be256",
+      "source_path": "kanchay/SOURCE.json",
+      "sha256": "967a77235227f1d75852fb61873e46336e67403cbc0e7e12b141e31c83fbd93d"
+    },
+    "szl-icon-32.svg": {
+      "source_commit": "fd62fe5856ed8e5f660eaae5a9c52957cd71b0a7",
+      "source_path": "kit/logos/orbit-v2/suite/szl-icon-32.svg",
+      "sha256": "6e2b7d72a3af3d9602b79de41df0194ede6496a9661f057108ec224c0efc92e6"
+    }
+  }
+}

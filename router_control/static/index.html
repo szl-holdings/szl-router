@@ -1,24 +1,28 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-surface="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="color-scheme" content="dark light">
+  <meta name="color-scheme" content="dark">
   <meta name="description" content="Sovereign-first routing policy, provider readiness, and exact inference receipts.">
   <title>SZL Sovereign Router</title>
-  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="icon" type="image/svg+xml" href="/static/szl/szl-icon-32.svg">
+  <link rel="stylesheet" href="/static/szl/szl-tokens.css?v=81f7c9baeef0">
+  <link rel="stylesheet" href="/static/styles.css?v=f334ecc6ff2b">
   <script src="/static/app.js" defer></script>
-  <link rel="stylesheet" href="/static/free-options.css">
+  <link rel="stylesheet" href="/static/free-options.css?v=826e95359c2b">
   <script src="/static/free-options.js" defer></script>
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
   <header>
-    <a class="brand" href="/" aria-label="SZL Sovereign Router home"><span aria-hidden="true">⟡</span><strong>SZL</strong> Router</a>
+    <a class="brand" href="/" aria-label="SZL Sovereign Router home"><img class="native-mark" src="/static/szl/szl-icon-32.svg" alt="" width="40" height="40"><span class="brand-label"><strong>SZL Router</strong><small>Control interface</small></span></a>
     <div id="runtime" class="runtime" role="status" aria-live="polite">CONTROL PLANE · CHECKING</div>
   </header>
+  <nav class="workspace-nav" aria-label="Router workspaces"><a href="#readiness">Readiness</a><a href="#plan">Route plan</a><a href="#completion">Completion</a><a href="#registry">Providers</a><a href="#source">Source</a></nav>
 
   <main id="main">
+    <noscript><p class="boundary">JavaScript is unavailable. Planning and completion controls cannot run in this page. Read the <a href="/api/docs">API contract</a> for the direct interface; no runtime or provider readiness is inferred here.</p></noscript>
     <section class="hero">
       <p class="eyebrow">SOVEREIGN-FIRST · OPENAI-COMPATIBLE · RECEIPT-BOUND</p>
       <h1>Route by policy.<br><i>Inspect every hop.</i></h1>
@@ -29,7 +33,7 @@
       </div>
     </section>
 
-    <section class="panel admission-panel" aria-label="Separate control, model, and inference readiness">
+    <section class="panel admission-panel" id="readiness" aria-label="Separate control, model, and inference readiness">
       <div class="panel-head"><div><p class="eyebrow">CONFIGURATION ADMISSION</p><h2>Readiness boundaries</h2></div><span class="pill">EVIDENCE BY LAYER</span></div>
       <div class="admission-grid">
         <div><h3>Control interface</h3><p id="control-evidence" role="status">Checking control readiness.</p></div>
@@ -47,7 +51,7 @@
       <article><span>Plan receipt</span><strong id="receipt-short">—</strong></article>
     </section>
 
-    <section class="route-stage" aria-label="Routing stage">
+    <section class="route-stage" id="plan" aria-label="Routing stage">
       <article class="panel policy-panel">
         <div class="panel-head"><div><p class="eyebrow">POLICY INPUT</p><h2>Plan a route</h2></div><button id="refresh" type="button">Refresh registry</button></div>
         <form id="plan-form">
@@ -67,7 +71,7 @@
       </article>
     </section>
 
-    <section class="panel completion-panel" aria-labelledby="completion-title">
+    <section class="panel completion-panel" id="completion" aria-labelledby="completion-title">
       <div class="panel-head"><div><p class="eyebrow">BOUNDED INFERENCE</p><h2 id="completion-title">Send a completion</h2></div><span id="completion-state" class="pill" role="status" aria-live="polite">NOT RUN</span></div>
       <form id="completion-form" autocomplete="off">
         <p id="completion-policy" class="muted"></p>
@@ -97,7 +101,7 @@
       <noscript>JavaScript is unavailable. The read-only API is available at <a href="/api/free-provider-options">free-provider options</a>; it grants no execution permission.</noscript>
     </section>
 
-    <section class="panel registry-panel">
+    <section class="panel registry-panel" id="registry">
       <div class="panel-head"><div><p class="eyebrow">ALLOWLISTED REGISTRY</p><h2>Provider readiness</h2></div><span class="pill">SECRETS NEVER SHOWN</span></div>
       <div id="providers" class="providers" role="list" aria-live="polite"></div>
     </section>
@@ -107,7 +111,7 @@
       <pre id="output" tabindex="0">Waiting for a policy input.</pre>
     </section>
 
-    <section class="panel proof-panel">
+    <section class="panel proof-panel" id="source">
       <div class="panel-head"><div><p class="eyebrow">REPORTED SOURCE</p><h2>Source evidence</h2></div><span class="pill">EXTERNAL READBACK REQUIRED</span></div>
       <pre id="source-proof" tabindex="0">Checking source evidence.</pre>
       <p class="boundary">A reported revision and file hashes support inspection. Exact deployed source still requires comparison with canonical GitHub bytes.</p>

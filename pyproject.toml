@@ -39,7 +39,11 @@ Changelog = "https://github.com/szl-holdings/szl-router/releases"
 packages = ["szl_router", "router_control"]
 
 [tool.setuptools.package-data]
-router_control = ["static/*.html", "static/*.js", "static/*.css"]
+router_control = [
+  "static/*.html", "static/*.js", "static/*.css",
+  "static/szl/szl-tokens.css", "static/szl/szl-icon-32.svg",
+  "static/szl/SOURCE.json", "static/szl/PROJECTION.json",
+]
 
 [tool.szl.release]
 import_names = ["router_control", "szl_router"] # wheel top-level import names; the release gate fails if the built wheel differs

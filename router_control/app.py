@@ -784,6 +784,10 @@ def source() -> dict[str, Any]:
         STATIC / "styles.css",
         STATIC / "free-options.js",
         STATIC / "free-options.css",
+        STATIC / "szl" / "szl-tokens.css",
+        STATIC / "szl" / "szl-icon-32.svg",
+        STATIC / "szl" / "SOURCE.json",
+        STATIC / "szl" / "PROJECTION.json",
     ]
     body = {
         "schema": SOURCE_SCHEMA,

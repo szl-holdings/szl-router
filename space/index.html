@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark" data-szl-surface="router-flagship" data-paint="UNAVAILABLE">
+<html lang="en" data-theme="dark" data-surface="dark" data-szl-surface="router-flagship" data-paint="UNAVAILABLE">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
@@ -9,45 +9,17 @@
 <meta property="og:title" content="SZL Router — Sovereign LLM Gateway" />
 <meta property="og:description" content="Owned compute first. Bounded fallback. Provenance and a receipt on every routed answer." />
 <meta property="og:type" content="website" />
-<link rel="icon" type="image/svg+xml" href="assets/logo.svg" />
-<link rel="stylesheet" href="assets/style.css" />
-<style>
-  .skip-link{position:fixed;left:1rem;top:-5rem;z-index:1000;padding:.75rem 1rem;border-radius:.5rem;background:var(--text);color:var(--bg);font-weight:700}.skip-link:focus{top:1rem}
-  .topbar{background:color-mix(in srgb,var(--bg) 82%,transparent);backdrop-filter:blur(22px) saturate(125%)}
-  .topbar-inner{min-height:70px}.topbar-nav{display:flex;align-items:center;gap:.35rem;flex-wrap:wrap}.topbar-nav a{min-height:44px;display:inline-flex;align-items:center;padding:.45rem .72rem;border-radius:999px;color:var(--text-muted);font-size:.78rem}.topbar-nav a:hover,.topbar-nav a:focus-visible{color:var(--text);background:rgba(255,255,255,.04)}
-  .flagship-pill{border-color:rgba(154,107,255,.48);background:linear-gradient(120deg,rgba(43,217,200,.1),rgba(154,107,255,.13));box-shadow:0 0 32px rgba(154,107,255,.12)}
-  .hero{padding-top:clamp(4rem,10vw,8rem)}.hero-grid{grid-template-columns:minmax(0,1.03fr) minmax(310px,.97fr);gap:clamp(2.2rem,7vw,7rem)}
-  .hero h1{max-width:12ch;font-size:clamp(3.2rem,7vw,6.9rem);font-weight:520;line-height:.88;letter-spacing:-.065em}.hero-lede{max-width:58ch;font-size:clamp(1rem,1.4vw,1.24rem)}
-  .hero-kicker{display:flex;align-items:center;gap:.7rem;flex-wrap:wrap;margin-bottom:1.25rem}.micro{font:700 .66rem/1.35 var(--font-mono);letter-spacing:.13em;text-transform:uppercase;color:var(--text-faint)}
-  .holo-router{position:relative;min-height:490px;overflow:hidden;border:1px solid var(--border-strong);border-radius:28px;background:radial-gradient(circle at 50% 45%,rgba(43,217,200,.12),transparent 24%),radial-gradient(circle at 70% 25%,rgba(154,107,255,.13),transparent 31%),linear-gradient(145deg,rgba(12,22,38,.88),rgba(4,7,14,.96));box-shadow:0 40px 110px rgba(0,0,0,.45),0 0 65px rgba(43,217,200,.08)}
-  .holo-router:before{content:"";position:absolute;inset:0;background:linear-gradient(rgba(56,224,255,.055) 1px,transparent 1px),linear-gradient(90deg,rgba(56,224,255,.055) 1px,transparent 1px);background-size:42px 42px;mask-image:radial-gradient(circle,#000 15%,transparent 78%)}
-  .holo-router:after{content:"";position:absolute;inset:8%;border:1px solid rgba(56,224,255,.17);border-radius:50%;box-shadow:0 0 0 42px transparent,0 0 0 43px rgba(154,107,255,.12),0 0 0 86px transparent,0 0 0 87px rgba(43,217,200,.09);animation:holo-breathe 5s ease-in-out infinite}
-  .holo-core{position:absolute;left:50%;top:46%;z-index:3;transform:translate(-50%,-50%);width:152px;aspect-ratio:1;display:grid;place-content:center;text-align:center;border:1px solid var(--teal-bright);border-radius:50%;background:rgba(5,8,15,.82);box-shadow:0 0 38px rgba(43,217,200,.22),inset 0 0 32px rgba(43,217,200,.08)}.holo-core span,.holo-core strong,.holo-core small{display:block}.holo-core span{font:800 .66rem/1 var(--font-mono);letter-spacing:.18em;color:var(--teal-bright)}.holo-core strong{margin:.55rem 0 .25rem;font-size:1.1rem}.holo-core small{color:var(--text-muted);font:600 .62rem var(--font-mono)}
-  .orbit-node{position:absolute;z-index:4;min-width:125px;padding:.72rem .82rem;border:1px solid var(--border-strong);border-radius:12px;background:rgba(6,12,22,.86);box-shadow:0 0 24px rgba(56,224,255,.08)}.orbit-node small,.orbit-node strong{display:block}.orbit-node small{font:700 .58rem/1.3 var(--font-mono);letter-spacing:.1em;text-transform:uppercase;color:var(--text-faint)}.orbit-node strong{margin-top:.22rem;font-size:.86rem}.orbit-node.one{left:7%;top:14%}.orbit-node.two{right:6%;top:21%}.orbit-node.three{left:9%;bottom:21%}.orbit-node.four{right:8%;bottom:16%}
-  .holo-line{position:absolute;z-index:2;left:50%;top:46%;height:1px;transform-origin:left;background:linear-gradient(90deg,var(--cyan),transparent);filter:drop-shadow(0 0 5px var(--cyan))}.holo-line.l1{width:37%;transform:rotate(208deg)}.holo-line.l2{width:35%;transform:rotate(-31deg)}.holo-line.l3{width:36%;transform:rotate(151deg)}.holo-line.l4{width:34%;transform:rotate(31deg)}
-  .holo-footer{position:absolute;z-index:5;left:1rem;right:1rem;bottom:1rem;display:grid;grid-template-columns:repeat(3,1fr);gap:1px;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--border)}.holo-footer div{padding:.75rem;background:rgba(5,8,15,.91)}.holo-footer small,.holo-footer strong{display:block}.holo-footer small{font:700 .56rem var(--font-mono);letter-spacing:.1em;text-transform:uppercase;color:var(--text-faint)}.holo-footer strong{margin-top:.25rem;font-size:.75rem}
-  .proof-rail{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));margin-top:2rem;border:1px solid var(--border);border-radius:16px;overflow:hidden;background:var(--border)}.proof-rail article{padding:1rem;background:rgba(8,13,23,.94)}.proof-rail article+article{border-left:1px solid var(--border)}.proof-rail small,.proof-rail strong{display:block}.proof-rail small{font:700 .58rem var(--font-mono);letter-spacing:.11em;text-transform:uppercase;color:var(--text-faint)}.proof-rail strong{margin-top:.35rem;font-size:.85rem}
-  .section{border-top:1px solid rgba(120,170,200,.09)}.section-wide{max-width:none}.section-number{display:inline-grid;place-content:center;width:2rem;height:2rem;margin-bottom:1rem;border:1px solid var(--border-strong);border-radius:50%;font:700 .64rem var(--font-mono);color:var(--teal-bright)}
-  .kpi-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.kpi{min-height:150px;display:flex;flex-direction:column}.kpi-value{margin-top:auto}
-  .route-grid{display:grid;grid-template-columns:minmax(0,.82fr) minmax(0,1.18fr);gap:1rem}.route-stack{display:grid;gap:.75rem}.route-card{position:relative;padding:1rem 1.1rem;overflow:hidden}.route-card:before{content:"";position:absolute;inset:0 auto 0 0;width:3px;background:var(--teal-bright)}.route-card.hosted:before{background:var(--cyan)}.route-card.fallback:before{background:var(--violet)}.route-card small,.route-card strong,.route-card span{display:block}.route-card small{font:700 .6rem var(--font-mono);letter-spacing:.1em;text-transform:uppercase;color:var(--text-faint)}.route-card strong{margin:.35rem 0;font-size:1.05rem}.route-card span{color:var(--text-muted);font-size:.85rem}
-  .logic-board{position:relative;min-height:380px;padding:1.25rem}.logic-board h3{font-size:1rem}.logic-board p{color:var(--text-muted);font-size:.86rem;max-width:52ch}.logic-flow{display:grid;grid-template-columns:repeat(4,1fr);gap:.6rem;margin-top:2.4rem}.logic-step{position:relative;min-height:126px;padding:.85rem;border:1px solid var(--border);border-radius:12px;background:rgba(5,8,15,.6)}.logic-step:not(:last-child):after{content:"→";position:absolute;right:-.58rem;top:46%;z-index:2;color:var(--cyan)}.logic-step b,.logic-step small{display:block}.logic-step b{font-size:.82rem}.logic-step small{margin-top:1.6rem;color:var(--text-faint);font:600 .58rem var(--font-mono);text-transform:uppercase}.model-chips{margin-top:1.3rem}
-  .evidence-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1rem}.evidence-card{min-height:225px;padding:1.2rem;display:flex;flex-direction:column}.evidence-card .index{font:800 .62rem var(--font-mono);color:var(--teal-bright)}.evidence-card h3{margin:.85rem 0 .55rem;font-size:1.05rem}.evidence-card p{color:var(--text-muted);font-size:.86rem}.evidence-card code{margin-top:auto;padding-top:1rem;color:var(--cyan);font-size:.72rem;overflow-wrap:anywhere}
-  .source-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.source-card{padding:1.25rem}.source-card h3{font-size:1.05rem}.source-card p{color:var(--text-muted);font-size:.88rem}.source-card a{display:inline-flex;min-height:44px;align-items:center;margin-top:.75rem;font-weight:650}
-  .boundary{padding:1.25rem;border:1px solid rgba(232,181,74,.26);border-radius:16px;background:rgba(232,181,74,.055)}.boundary strong{color:var(--warn)}.boundary p{color:var(--text-muted);font-size:.88rem}
-  .footer-grid{grid-template-columns:1fr auto}.footer-links a{min-height:44px;display:flex;align-items:center}
-  @keyframes holo-breathe{50%{transform:scale(1.025);opacity:.78}}
-  @media(max-width:960px){.hero-grid,.route-grid,.source-grid{grid-template-columns:1fr}.hero h1{max-width:14ch}.proof-rail{grid-template-columns:repeat(2,1fr)}.proof-rail article:nth-child(3){border-left:0}.proof-rail article:nth-child(n+3){border-top:1px solid var(--border)}.kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.evidence-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-  @media(max-width:680px){.topbar-nav{display:none}.holo-router{min-height:420px}.holo-router:after{inset:16%}.orbit-node{min-width:102px;padding:.58rem}.orbit-node.one{left:3%;top:16%}.orbit-node.two{right:3%;top:20%}.orbit-node.three{left:3%;bottom:24%}.orbit-node.four{right:3%;bottom:20%}.holo-core{width:118px}.holo-footer{grid-template-columns:1fr}.holo-footer div{padding:.48rem .7rem}.holo-footer div+div{border-top:1px solid var(--border)}.proof-rail,.kpi-grid,.evidence-grid{grid-template-columns:1fr}.proof-rail article+article{border-left:0;border-top:1px solid var(--border)}.logic-flow{grid-template-columns:1fr 1fr}.logic-step:nth-child(2):after{display:none}.footer-grid{grid-template-columns:1fr}.footer-links{align-items:flex-start}}
-  @media(prefers-reduced-motion:reduce){.holo-router:after{animation:none}.flow-edge,.dot.live{animation:none!important}}
-  @media(forced-colors:active){.holo-router:before,.holo-router:after,.holo-line{display:none}.orbit-node,.holo-core,.route-card,.logic-step{border:1px solid CanvasText}}
-</style>
+<link rel="icon" type="image/svg+xml" href="assets/szl/szl-icon-32.svg" />
+<link rel="stylesheet" href="assets/szl/szl-tokens.css?v=81f7c9baeef0" />
+<link rel="stylesheet" href="assets/style.css?v=9cb4cc9e1e3b" />
+
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to router evidence</a>
 <header class="topbar">
   <div class="wrap topbar-inner">
     <a class="brand" href="#top" aria-label="SZL Router home">
-      <img class="brand-mark" src="assets/logo.svg" alt="" width="38" height="38" />
+      <img class="brand-mark" src="assets/szl/szl-icon-32.svg" alt="" width="40" height="40" />
       <span class="brand-text">
         <span class="brand-name">SZL / ROUTER</span>
         <span class="brand-sub">sovereign inference gateway</span>
@@ -90,13 +62,13 @@
           <span class="badge warn">Λ = Conjecture 1</span>
         </div>
         <div class="hero-cta">
-          <a class="btn btn-ghost" id="inspect-evidence" href="#status">Inspect live evidence</a>
+          <a class="btn btn-ghost" id="inspect-evidence" href="#status">Inspect evidence</a>
           <a class="btn btn-ghost" href="https://github.com/szl-holdings/szl-router" target="_blank" rel="noopener">Build from source</a>
           <a class="btn btn-ghost" href="https://a-11-oy.com/code" target="_blank" rel="noopener">Open in A11oy</a>
         </div>
       </div>
 
-      <aside class="holo-router" aria-label="Holographic model-routing topology">
+      <aside class="holo-router" aria-label="Holographic model-routing topology" aria-describedby="routing-illustration-note">
         <div class="holo-line l1" aria-hidden="true"></div>
         <div class="holo-line l2" aria-hidden="true"></div>
         <div class="holo-line l3" aria-hidden="true"></div>
@@ -105,7 +77,8 @@
         <div class="orbit-node two"><small>route 02</small><strong>Hosted free tier</strong></div>
         <div class="orbit-node three"><small>route 03</small><strong>Paid fallback</strong></div>
         <div class="orbit-node four"><small>proof plane</small><strong>Receipt verifier</strong></div>
-        <div class="holo-core"><span>SZL</span><strong>ROUTER</strong><small>policy before provider</small></div>
+        <div class="holo-core"><span>POLICY STRUCTURE</span><strong>ROUTER</strong><small>policy before provider</small></div>
+        <p class="sr-only" id="routing-illustration-note">This routing structure is an illustration. Provider and model reachability require separate evidence.</p>
         <div class="holo-footer">
           <div><small>Model authority</small><strong>ADVISORY</strong></div>
           <div><small>Secrets exposed</small><strong>NONE</strong></div>
@@ -255,7 +228,7 @@
   <div class="wrap footer-grid">
     <div>
       <a class="brand" href="#top" aria-label="SZL Router">
-        <img class="brand-mark" src="assets/logo.svg" alt="" width="32" height="32" />
+        <img class="brand-mark" src="assets/szl/szl-icon-32.svg" alt="" width="32" height="32" />
         <span class="brand-text"><span class="brand-name">SZL Router</span><span class="brand-sub">flagship sovereign LLM gateway</span></span>
       </a>
       <p style="margin-top:var(--space-3)">Owned compute first · bounded fallback · provenance and receipts.</p>
@@ -275,6 +248,11 @@
 
 <script type="module" src="assets/app.js"></script>
 <script src="assets/szl_verify_widget.js"></script>
-<script>SZLVerify.mount('#szl-verify', { base: 'https://a-11-oy.com' });</script>
+<script>
+  SZLVerify.mount('#szl-verify', { base: 'https://a-11-oy.com' });
+  // The consumer names the embedded widget's fields without changing its verifier.
+  document.querySelector('#szl-verify .szlv-ta')?.setAttribute('aria-label', 'Receipt JSON or signed envelope');
+  document.querySelector('#szl-verify .szlv-url')?.setAttribute('aria-label', 'Public receipt URL');
+</script>
 </body>
 </html>
