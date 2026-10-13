@@ -99,18 +99,20 @@ async function main(){
   await Promise.all([preview('public'),preview('control')]);
   browser=await chromium.launch({executablePath:process.env.CHROME_PATH,args:['--no-sandbox','--disable-dev-shm-usage'],headless:true});
   for(const kind of ['public','control']){
-   for(const spec of [{width:320},{width:375},{width:768},{width:1440},{width:1440,zoom:2},{width:1440,zoom:4},{width:375,forced:true},{width:320,js:false}]){
-    const label=`${kind}-${spec.width}${spec.zoom?'-zoom'+spec.zoom:''}${spec.forced?'-forced':''}${spec.js===false?'-nojs':''}`;
+   for(const spec of [{width:320},{width:375},{width:768},{width:1440},{width:1440,zoom:2},{width:1440,zoom:4},{width:375,forced:true},{width:320,js:false},...(kind==='control'?[{width:1440,print:true}]:[])]){
+    const label=`${kind}-${spec.width}${spec.zoom?'-zoom'+spec.zoom:''}${spec.forced?'-forced':''}${spec.js===false?'-nojs':''}${spec.print?'-print':''}`;
     const page=await browser.newPage({viewport:{width:spec.width,height:1000},reducedMotion:'reduce',forcedColors:spec.forced?'active':'none',javaScriptEnabled:spec.js!==false});
+    if(spec.print)await page.emulateMedia({media:'print'});
     const observed=await fixture(page,kind);await page.goto(origins[kind],{waitUntil:'load'});
     if(spec.js!==false)await page.waitForFunction(kind=>kind==='public'?document.querySelector('.source-label').textContent!=='connecting…':!document.querySelector('#runtime').textContent.includes('CHECKING'),kind);
     if(spec.zoom)await page.evaluate(z=>document.documentElement.style.zoom=String(z),spec.zoom);
     if(kind==='public'&&spec.js!==false)check(`${label}: snapshot limits visible`,/not measured|unmeasured/i.test(await page.locator('#data-source-note').innerText()));
     if(kind==='control'&&spec.js!==false)check(`${label}: separate configuration`,/UNAVAILABLE.*LOCAL_CONFIGURATION_ONLY/.test(await page.locator('#inference-state').innerText()));
-    const geometry=await inspect(page,{contrast:!spec.forced,targets:true});observations.push({label,...geometry});
+    const geometry=await inspect(page,{contrast:!spec.forced,targets:!spec.print});observations.push({label,...geometry});
     check(`${label}: reflow`,geometry.scrollWidth<=geometry.viewport+2&&!geometry.overflowingText.length,geometry.overflowingText);
     check(`${label}: text pairs`,!geometry.contrastFailures.length,{minimum:geometry.lowestContrast,failures:geometry.contrastFailures});
-    check(`${label}: targets`,!geometry.targetFailures.length,geometry.targetFailures);
+    if(!spec.print)check(`${label}: targets`,!geometry.targetFailures.length,geometry.targetFailures);
+    if(spec.print)check(`${label}: paper background`,await page.evaluate(()=>getComputedStyle(document.body).backgroundColor==='rgb(255, 255, 255)'));
     check(`${label}: no passive writes`,observed.writes.length===0,observed.writes);
     check(`${label}: no external requests`,observed.external.length===0,observed.external);
     check(`${label}: no page errors`,observed.errors.length===0,observed.errors);
@@ -121,7 +123,7 @@ async function main(){
       if(spec.js!==false){await page.keyboard.press('Tab');check(`${label}: keyboard focus`,await page.evaluate(()=>getComputedStyle(document.activeElement).outlineStyle!=='none'));}
       await page.evaluate(()=>scrollTo(0,0));
     }
-    if(spec.js!==false&&spec.width===1440&&!spec.zoom){
+    if(spec.js!==false&&spec.width===1440&&!spec.zoom&&!spec.print){
      if(kind==='public'){
       check('public: receipt inputs named',await page.getByRole('textbox',{name:'Receipt JSON or signed envelope'}).count()===1&&await page.getByRole('textbox',{name:'Public receipt URL'}).count()===1);
       await page.locator('.szlv-go').click();check('public: empty receipt stays local',/paste a receipt/i.test(await page.locator('.szlv-out').innerText())&&observed.writes.length===0);
@@ -133,7 +135,7 @@ async function main(){
      }
     }
     if((spec.width===1440&&!spec.zoom)||spec.width===320||spec.forced){await page.evaluate(()=>scrollTo(0,0));await page.screenshot({path:resolve(output,`${label}.png`)});}
-    if(spec.width===1440&&!spec.zoom){await page.locator(kind==='public'?'#verify':'#plan').scrollIntoViewIfNeeded();await page.screenshot({path:resolve(output,`${kind}-workspace.png`)});}
+    if(spec.width===1440&&!spec.zoom&&!spec.print){await page.locator(kind==='public'?'#verify':'#plan').scrollIntoViewIfNeeded();await page.screenshot({path:resolve(output,`${kind}-workspace.png`)});}
     await page.close();
    }
    for(const mode of ['unavailable',...(kind==='public'?['stale']:[])]){
