@@ -185,7 +185,7 @@ def test_existing_html_integration_and_source_no_external_execution():
     html = (static / "index.html").read_text()
     assert 'id="free-options-panel"' in html and 'aria-labelledby="free-options-title"' in html
     assert 'src="/static/free-options.js"' in html
-    assert 'href="/static/free-options.css"' in html
+    assert 'href="/static/free-options.css?v=' in html
     assert 'id="completion-form"' in html and 'src="/static/app.js"' in html
     js = (static / "free-options.js").read_text()
     for forbidden in ("innerHTML", "localStorage", "sessionStorage", "document.cookie", "/v1/chat/completions", "Authorization:", "WebSocket(", "EventSource(", "eval("):

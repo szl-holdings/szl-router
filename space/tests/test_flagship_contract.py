@@ -50,6 +50,8 @@ class RouterFlagshipContractTests(unittest.TestCase):
 
     def test_frontend_is_distinct_accessible_and_source_linked(self) -> None:
         text = INDEX.read_text(encoding="utf-8")
+        style = (SPACE / "assets" / "style.css").read_text(encoding="utf-8")
+        self.assertIn('href="assets/style.css?v=', text)
         lowered = text.lower()
         required = (
             'data-szl-surface="router-flagship"',
@@ -61,9 +63,6 @@ class RouterFlagshipContractTests(unittest.TestCase):
             "https://github.com/szl-holdings/szl-router",
             "https://a-11-oy.com/code",
             'href="#main"',
-            "prefers-reduced-motion:reduce",
-            "forced-colors:active",
-            "min-height:44px",
             'id="source-pill"',
             'id="data-source-note"',
             'id="model-chips"',
@@ -72,6 +71,8 @@ class RouterFlagshipContractTests(unittest.TestCase):
         )
         for marker in required:
             self.assertIn(marker, text)
+        for marker in ("prefers-reduced-motion:reduce", "forced-colors:active", "min-height:44px"):
+            self.assertIn(marker, style)
 
         self.assertNotIn("router internals stay private", lowered)
         self.assertNotIn("codebase and its routing logic stay private", lowered)

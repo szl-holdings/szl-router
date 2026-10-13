@@ -8,6 +8,9 @@ on:
     branches: [main]
     paths:
       - "router_control/**"
+      - "space/**"
+      - "scripts/test_native_frontends_browser.cjs"
+      - "tests/test_native_frontend_assets.py"
       - "demo/CONTRACT.md"
       - "demo/__init__.py"
       - "demo/fixture_app.py"
@@ -27,6 +30,9 @@ on:
     branches: [main]
     paths:
       - "router_control/**"
+      - "space/**"
+      - "scripts/test_native_frontends_browser.cjs"
+      - "tests/test_native_frontend_assets.py"
       - "demo/CONTRACT.md"
       - "demo/__init__.py"
       - "demo/fixture_app.py"
@@ -207,3 +213,53 @@ jobs:
 
       - name: Exercise running container without network access
         run: python scripts/check_router_control_image.py --image szl-router:${{ github.sha }} --source-revision ${{ github.sha }}
+
+  browser:
+    name: router/native-browser
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - name: Checkout exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          persist-credentials: false
+      - name: Set up exact Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12.10"
+      - name: Set up browser Node runtime
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          package-manager-cache: false
+      - name: Qualify native source and install isolated browser harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          python -m pip install --requirement requirements-router-control-dev.txt
+          python -m pytest -q tests/test_native_frontend_assets.py
+          npm install --prefix "$RUNNER_TEMP/router-browser" --ignore-scripts --no-audit --no-fund playwright@1.62.0
+          "$RUNNER_TEMP/router-browser/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Exercise both native frontends with synthetic providers
+        shell: bash
+        run: |
+          set -euo pipefail
+          NODE_PATH="$RUNNER_TEMP/router-browser/node_modules" \
+          ROUTER_BROWSER_EVIDENCE="$RUNNER_TEMP/router-browser-evidence" \
+          node scripts/test_native_frontends_browser.cjs
+      - name: Preserve unsigned local-source browser observations
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: router-native-browser-${{ env.SOURCE_SHA }}
+          path: ${{ runner.temp }}/router-browser-evidence
+          if-no-files-found: warn
+          retention-days: 14
