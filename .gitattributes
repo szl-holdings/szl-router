@@ -3,3 +3,8 @@ router_control/*.py text eol=lf
 router_control/static/*.html text eol=lf
 router_control/static/*.js text eol=lf
 router_control/static/*.css text eol=lf
+# Native SZL projections and content-versioned stylesheets are pinned by SHA-256
+# (/api/source controlled files, PROJECTION.json, and ?v= stylesheet URLs).
+router_control/static/szl/* text eol=lf
+space/assets/szl/* text eol=lf
+space/assets/*.css text eol=lf
