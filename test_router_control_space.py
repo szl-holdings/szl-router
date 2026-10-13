@@ -123,6 +123,41 @@ class SpacePublisherTests(unittest.TestCase):
         card = SpaceCard(files["README.md"].decode())
         self.assertLessEqual(len(card.data.short_description), 60)
 
+    def test_native_card_preserves_original_yaml_body_and_other_payloads(self):
+        original = control._legacy_space_files(SOURCE, IMAGE_DIGEST)
+        native = control.space_files(SOURCE, IMAGE_DIGEST)
+        self.assertEqual(native["Dockerfile"], original["Dockerfile"])
+        self.assertEqual(native["SOURCE_BINDING.json"], original["SOURCE_BINDING.json"])
+        old, new = original["README.md"].decode(), native["README.md"].decode()
+        boundary = old.index("\n---\n", 4) + len("\n---\n")
+        self.assertEqual(new[:boundary], old[:boundary])
+        self.assertTrue(new.endswith(old[boundary:]))
+        self.assertIn('width="40" height="40"', new)
+        self.assertIn("[CC BY 4.0]", new)
+        self.assertIn("[Trademark notice]", new)
+
+    def test_exact_legacy_card_migrates_without_loosening_other_payloads(self):
+        files = {control.PROVIDER_METADATA: PROVIDER_METADATA,
+                 **control._legacy_space_files(SOURCE, IMAGE_DIGEST)}
+        api = FakeApi(exists=True, files=files)
+        result = self.run_publish(api)
+        self.assertTrue(api.uploaded)
+        self.assertEqual(api.files["README.md"], control.space_files(SOURCE, IMAGE_DIGEST)["README.md"])
+
+    def test_legacy_and_native_card_drift_is_rejected_before_upload(self):
+        for renderer in (control._legacy_space_files, control.space_files):
+            for old, new in ((b"license: apache-2.0", b"license: mit"),
+                             (b"forces inference egress off", b"grants inference authority")):
+                with self.subTest(renderer=renderer.__name__, changed=old):
+                    files = {control.PROVIDER_METADATA: PROVIDER_METADATA,
+                             **renderer(SOURCE, IMAGE_DIGEST)}
+                    self.assertIn(old, files["README.md"])
+                    files["README.md"] = files["README.md"].replace(old, new)
+                    api = FakeApi(exists=True, files=files)
+                    with self.assertRaisesRegex(control.ControlSpaceError, "EXISTING_SPACE_BYTES_REJECTED"):
+                        self.run_publish(api)
+                    self.assertFalse(api.uploaded)
+
     def test_invalid_card_cannot_create_or_upload_target(self):
         api = FakeApi()
         self.card_validator.side_effect = control.ControlSpaceError("SPACE_CARD_METADATA_INVALID")

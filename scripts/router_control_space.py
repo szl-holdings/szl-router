@@ -90,7 +90,7 @@ def _json_bytes(value: dict[str, object]) -> bytes:
     return (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 
-def space_files(revision: str, digest: str) -> dict[str, bytes]:
+def _legacy_space_files(revision: str, digest: str) -> dict[str, bytes]:
     exact_sha(revision, "SOURCE_REVISION_INVALID")
     exact_digest(digest)
     binding: dict[str, object] = {
@@ -130,6 +130,21 @@ CMD ["sh", "-c", "exec env SZL_ROUTER_ENABLE_EGRESS=0 uvicorn router_control.app
         "Dockerfile": dockerfile.encode("utf-8"),
         "SOURCE_BINDING.json": _json_bytes(binding),
     }
+
+
+def space_files(revision: str, digest: str) -> dict[str, bytes]:
+    """Project native artwork outside the exact original card YAML and body."""
+    files = _legacy_space_files(revision, digest)
+    readme = files["README.md"].decode("utf-8")
+    boundary = readme.index("\n---\n", 4) + len("\n---\n")
+    artwork = (
+        '\n<p><img src="https://raw.githubusercontent.com/szl-holdings/szl-brand/27d12e77fc0f9f1a0e5fae8b34adf2380d51d070/kit/logos/orbit-v2/suite/szl-icon-32.svg" alt="SZL Holdings" width="40" height="40" /></p>\n'
+        '\nArtwork: SZL Orbit · © 2026 SZL Holdings / Stephen Lutar · '
+        '[CC BY 4.0](https://github.com/szl-holdings/szl-brand/blob/27d12e77fc0f9f1a0e5fae8b34adf2380d51d070/kit/LICENSE) · '
+        '[Trademark notice](https://github.com/szl-holdings/szl-brand/blob/27d12e77fc0f9f1a0e5fae8b34adf2380d51d070/NOTICE).\n'
+    )
+    files["README.md"] = (readme[:boundary] + artwork + readme[boundary:]).encode("utf-8")
+    return files
 
 
 def _request_json(url: str, *, token: str | None = None, status: int = 200,
@@ -236,8 +251,13 @@ def _existing_target_admitted(api: Any, download: Callable[..., str],
         old_expected = space_files(binding.get("source_revision"), binding.get("image_digest"))
     except ControlSpaceError as exc:
         raise ControlSpaceError("EXISTING_SPACE_BINDING_REJECTED") from exc
+    # One source-owned presentation migration: compare two complete deterministic
+    # card versions. Every other file stays exact; arbitrary card edits still deny.
+    legacy_card = _legacy_space_files(binding.get("source_revision"), binding.get("image_digest"))["README.md"]
     for filename, body in old_expected.items():
-        if _download_bytes(download, filename, revision, token) != body:
+        observed_body = _download_bytes(download, filename, revision, token)
+        accepted = (body, legacy_card) if filename == "README.md" else (body,)
+        if observed_body not in accepted:
             raise ControlSpaceError("EXISTING_SPACE_BYTES_REJECTED")
     return _download_bytes(download, PROVIDER_METADATA, revision, token)
 
