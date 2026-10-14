@@ -60,7 +60,7 @@ goes through that gateway; this facade is an internal hop.
     other peer gets 403. Existing dev behaviour (upstream key injection, caller
     header passthrough) is kept for loopback peers only, explicitly.
   * Request bodies are bounded: missing Content-Length on POST (or any
-    Transfer-Encoding) -> 411, malformed/negative -> 400, over
+    Transfer-Encoding) -> 411, malformed/negative/duplicate Content-Length -> 400, over
     `SZL_MESH_MAX_BODY_BYTES` (default 4 MiB) -> 413, short body -> 400, and a
     socket read timeout (`SZL_MESH_READ_TIMEOUT_S`, default 30 s) -> 408.
 
@@ -623,24 +623,33 @@ def make_handler(
 
         def _read_body(self, method: str) -> Tuple[bool, Optional[bytes]]:
             """Bounded body read. Returns (ok, body); on failure the error is sent."""
-            if self.headers.get("Transfer-Encoding"):
+            # Any occurrence is unsupported, including empty or repeated fields.
+            if self.headers.get_all("Transfer-Encoding"):
                 self._err(411, "length_required",
                           "Transfer-Encoding not supported; send Content-Length")
                 return False, None
-            raw = self.headers.get("Content-Length")
-            if raw is None:
+            lengths = self.headers.get_all("Content-Length", [])
+            if not lengths:
                 if method == "POST":
                     self._err(411, "length_required", "Content-Length required")
                     return False, None
                 return True, None
-            raw = raw.strip()
+            if len(lengths) != 1:
+                self._err(400, "bad_content_length", "multiple Content-Length headers")
+                return False, None
+            raw = lengths[0].strip(" \t")  # HTTP optional whitespace only
             if not _DIGITS.fullmatch(raw):
                 self._err(400, "bad_content_length", "malformed or negative Content-Length")
                 return False, None
-            length = int(raw)
-            if length > max_body_bytes:
+            # Compare normalized ASCII decimals before int(): an attacker-controlled
+            # digit count must not reach Python's integer-string conversion limit.
+            digits = raw.lstrip("0") or "0"
+            limit = str(max_body_bytes)
+            if (max_body_bytes < 0 or len(digits) > len(limit)
+                    or (len(digits) == len(limit) and digits > limit)):
                 self._err(413, "payload_too_large", "body exceeds %d bytes" % max_body_bytes)
                 return False, None
+            length = int(digits)
             if length == 0:
                 return True, None
             try:

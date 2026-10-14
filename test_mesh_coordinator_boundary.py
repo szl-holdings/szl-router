@@ -249,6 +249,79 @@ def test_short_body_is_400(server, fake_upstream):
     assert fake_upstream == []
 
 
+@pytest.mark.parametrize("value", [b"9" * 5000, b"0" * 5000 + b"65"],
+                         ids=["huge-number", "zero-padded-oversize"])
+def test_long_numeric_content_length_is_413(server, fake_upstream, value):
+    port = server(caller_token=FAKE_CALLER, max_body_bytes=64)
+    req = (b"POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\n" + AUTH
+           + b"Content-Length: " + value + b"\r\n\r\n")
+    assert _raw(port, req) == 413
+    assert fake_upstream == []
+
+
+@pytest.mark.parametrize("body", [b"", b"{}", b"x" * 64],
+                         ids=["zero", "two-bytes", "exact-limit"])
+def test_long_zero_padded_content_length_is_bounded(server, fake_upstream, body):
+    port = server(caller_token=FAKE_CALLER, max_body_bytes=64)
+    value = b"0" * 5000 + str(len(body)).encode("ascii")
+    req = (b"POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\n" + AUTH
+           + b"Content-Length: " + value + b"\r\n\r\n" + body)
+    assert _raw(port, req) == 200
+    assert len(fake_upstream) == 1
+    assert fake_upstream[0]["body"] == (body or None)
+
+
+@pytest.mark.parametrize("values", [(b"2", b"100000"), (b"100000", b"2"),
+                                  (b"2", b"2"), (b"", b"2"), (b"02", b"2")])
+def test_duplicate_content_length_is_400(server, fake_upstream, values):
+    port = server(caller_token=FAKE_CALLER, max_body_bytes=64)
+    fields = b"".join(b"Content-Length: " + value + b"\r\n" for value in values)
+    req = b"POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\n" + AUTH + fields + b"\r\n{}"
+    assert _raw(port, req) == 400
+    assert fake_upstream == []
+
+
+@pytest.mark.parametrize("values", [(b"",), (b"", b"chunked"),
+                                  (b"chunked", b""), (b"", b"")])
+def test_any_transfer_encoding_field_is_411(server, fake_upstream, values):
+    port = server(caller_token=FAKE_CALLER)
+    fields = b"".join(b"Transfer-Encoding: " + value + b"\r\n" for value in values)
+    req = (b"POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\n" + AUTH + fields
+           + b"Content-Length: 2\r\n\r\n{}")
+    assert _raw(port, req) == 411
+    assert fake_upstream == []
+
+
+@pytest.mark.parametrize("value", [b"\xb2", b"2, 2", b"9" * 5000 + b"x",
+                                  b"\xa02\xa0", b"\x0b2\x0b"],
+                         ids=["non-ascii-digit", "comma-list", "long-malformed",
+                              "non-breaking-space", "vertical-tab"])
+def test_content_length_requires_single_ascii_decimal(server, fake_upstream, value):
+    port = server(caller_token=FAKE_CALLER, max_body_bytes=64)
+    req = (b"POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\n" + AUTH
+           + b"Content-Length: " + value + b"\r\n\r\n{}")
+    assert _raw(port, req) == 400
+    assert fake_upstream == []
+
+
+def test_content_length_allows_http_optional_whitespace(server, fake_upstream):
+    port = server(caller_token=FAKE_CALLER, max_body_bytes=64)
+    req = (b"POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\n" + AUTH
+           + b"Content-Length: \t2\t \r\n\r\n{}")
+    assert _raw(port, req) == 200
+    assert len(fake_upstream) == 1
+    assert fake_upstream[0]["body"] == b"{}"
+
+
+def test_auth_rejection_precedes_framing_validation(server, fake_upstream):
+    port = server(caller_token=FAKE_CALLER, max_body_bytes=64)
+    req = (b"POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\n"
+           b"Transfer-Encoding:\r\nTransfer-Encoding: chunked\r\n"
+           b"Content-Length: " + b"9" * 5000 + b"\r\nContent-Length: 2\r\n\r\n{}")
+    assert _raw(port, req) == 401
+    assert fake_upstream == []
+
+
 def test_slow_body_read_times_out_408(server, fake_upstream):
     port = server(caller_token=FAKE_CALLER, read_timeout=0.5)
     req = (b"POST /v1/chat/completions HTTP/1.1\r\nHost: x\r\n" + AUTH
