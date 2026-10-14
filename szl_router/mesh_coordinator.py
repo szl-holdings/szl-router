@@ -43,15 +43,39 @@ HARD DOCTRINE (never weakened here)
     claim a down node served one.
   * Keys ONLY from the environment; nothing secret is written to disk or logged.
 
+TRUST AND RESOURCE BOUNDARY (RQ-20)
+-----------------------------------
+This legacy coordinator is NOT the guarded `router_control` gateway. External use
+goes through that gateway; this facade is an internal hop.
+  * Default bind is 127.0.0.1 (loopback). Binding any non-loopback address needs
+    BOTH an explicit opt-in (`--allow-non-loopback` or
+    `SZL_MESH_ALLOW_NON_LOOPBACK=1`) AND a caller bearer token
+    (`SZL_MESH_CALLER_TOKEN`). Without both, `serve()` refuses to start.
+  * When a caller token is configured, every /v1/* and status request must send
+    `Authorization: Bearer <token>`, compared in constant time
+    (`hmac.compare_digest`). A rejected request never reaches `proxy()`, so no
+    upstream provider credential is ever attached for it. The caller's own
+    Authorization header is stripped before forwarding (never leaked upstream).
+  * Loopback dev mode (no caller token): only loopback peers are served; any
+    other peer gets 403. Existing dev behaviour (upstream key injection, caller
+    header passthrough) is kept for loopback peers only, explicitly.
+  * Request bodies are bounded: missing Content-Length on POST (or any
+    Transfer-Encoding) -> 411, malformed/negative/duplicate Content-Length -> 400, over
+    `SZL_MESH_MAX_BODY_BYTES` (default 4 MiB) -> 413, short body -> 400, and a
+    socket read timeout (`SZL_MESH_READ_TIMEOUT_S`, default 30 s) -> 408.
+
 Pure stdlib (http.server + urllib + http.client), zero third-party deps, so it runs
 on the box with no install — exactly like `examples/forge-mesh-router.py`.
 """
 
 from __future__ import annotations
 
+import hmac
 import http.client
+import ipaddress
 import json
 import os
+import re
 import socket
 import threading
 import time
@@ -170,6 +194,56 @@ class Attempt:
     latency_ms: Optional[int] = None
 
 
+class CoordinatorConfigError(RuntimeError):
+    """Refusal to start: the requested bind would cross the trust boundary."""
+
+
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_MAX_BODY_BYTES = 4 * 1024 * 1024
+DEFAULT_READ_TIMEOUT_S = 30.0
+CALLER_TOKEN_ENV = "SZL_MESH_CALLER_TOKEN"
+ALLOW_NON_LOOPBACK_ENV = "SZL_MESH_ALLOW_NON_LOOPBACK"
+_DIGITS = re.compile(r"[0-9]+")
+
+
+def is_loopback_host(host: str) -> bool:
+    """True only for a loopback literal (127.0.0.0/8, ::1) or `localhost`."""
+    h = (host or "").strip().strip("[]")
+    if h.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(h).is_loopback
+    except ValueError:
+        return False
+
+
+def check_bind(host: str, caller_token: Optional[str], allow_non_loopback: bool) -> None:
+    """Fail closed: a non-loopback bind needs explicit opt-in AND a caller token."""
+    if is_loopback_host(host):
+        return
+    if not allow_non_loopback:
+        raise CoordinatorConfigError(
+            "refusing non-loopback bind %r: pass --allow-non-loopback or set %s=1 "
+            "(and configure %s)" % (host, ALLOW_NON_LOOPBACK_ENV, CALLER_TOKEN_ENV))
+    if not caller_token:
+        raise CoordinatorConfigError(
+            "refusing non-loopback bind %r: %s is not configured" % (host, CALLER_TOKEN_ENV))
+
+
+def caller_authorized(header_value: Optional[str], token: Optional[str]) -> bool:
+    """Constant-time bearer check. No configured token -> never authorized here."""
+    if not token or not header_value:
+        return False
+    scheme, _, cred = header_value.strip().partition(" ")
+    if scheme.lower() != "bearer":
+        return False
+    return hmac.compare_digest(cred.strip().encode("utf-8"), token.encode("utf-8"))
+
+
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
 @dataclass
 class CoordinatorError(RuntimeError):
     message: str
@@ -283,7 +357,8 @@ class MeshCoordinator:
 
     # -- proxy one request -------------------------------------------------
     def proxy(self, method: str, sub_path: str, body: Optional[bytes],
-              in_headers: Dict[str, str]) -> Tuple[int, Dict[str, str], bytes, List[Attempt]]:
+              in_headers: Dict[str, str],
+              inject_upstream_key: bool = True) -> Tuple[int, Dict[str, str], bytes, List[Attempt]]:
         """Proxy `method sub_path` (e.g. POST /chat/completions) to the chosen
         worker(s). Tries the picked order until one answers; records every attempt.
         Returns (status, out_headers, body_bytes, attempts). Raises CoordinatorError
@@ -309,7 +384,7 @@ class MeshCoordinator:
                         if k.lower() not in HOP_BY_HOP and k.lower() != "host"}
                 hdrs["Host"] = "%s:%d" % (host, port)
                 # Inject this worker's upstream key from env if configured (never logged).
-                key = _worker_key(w)
+                key = _worker_key(w) if inject_upstream_key else None
                 if key:
                     hdrs["Authorization"] = "Bearer " + key
                 conn.request(method, full_path, body=body, headers=hdrs)
@@ -500,38 +575,118 @@ def build_workers_from_env() -> Tuple[List[Worker], Optional[Worker]]:
 # HTTP facade. OpenAI-/v1-compatible: it proxies /v1/* to the chosen worker and
 # adds /coordinator/status + /healthz. Pure stdlib server (forge pattern).
 # ---------------------------------------------------------------------------
-def make_handler(coord: MeshCoordinator) -> type:
+def make_handler(
+    coord: MeshCoordinator,
+    caller_token: Optional[str] = None,
+    max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
+    read_timeout: float = DEFAULT_READ_TIMEOUT_S,
+) -> type:
+    token = (caller_token or "").strip() or None
+
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
+        timeout = read_timeout  # socket read timeout (headers + body)
 
         def log_message(self, *_a: Any) -> None:  # quiet; no secret leakage
             pass
 
-        def _send_json(self, code: int, obj: Any) -> None:
+        def _send_json(self, code: int, obj: Any, extra: Optional[Dict[str, str]] = None) -> None:
             payload = json.dumps(obj).encode("utf-8")
             self.send_response(code)
             self.send_header("Content-Type", "application/json")
+            for k, v in (extra or {}).items():
+                self.send_header(k, v)
             self.send_header("Content-Length", str(len(payload)))
             self.send_header("Connection", "close")
             self.end_headers()
             self.wfile.write(payload)
             self.close_connection = True
 
+        def _err(self, code: int, kind: str, msg: str,
+                 extra: Optional[Dict[str, str]] = None) -> None:
+            return self._send_json(code, {"error": {"message": msg, "type": kind}}, extra)
+
+        def _authorize(self) -> bool:
+            """Caller gate. Sends the rejection itself and returns False."""
+            if token:
+                if caller_authorized(self.headers.get("Authorization"), token):
+                    return True
+                self._err(401, "unauthorized", "caller bearer token required",
+                          {"WWW-Authenticate": "Bearer"})
+                return False
+            # Loopback dev mode: no token configured -> loopback peers only.
+            peer = self.client_address[0] if self.client_address else ""
+            if is_loopback_host(str(peer)):
+                return True
+            self._err(403, "forbidden", "no caller token configured; loopback peers only")
+            return False
+
+        def _read_body(self, method: str) -> Tuple[bool, Optional[bytes]]:
+            """Bounded body read. Returns (ok, body); on failure the error is sent."""
+            # Any occurrence is unsupported, including empty or repeated fields.
+            if self.headers.get_all("Transfer-Encoding"):
+                self._err(411, "length_required",
+                          "Transfer-Encoding not supported; send Content-Length")
+                return False, None
+            lengths = self.headers.get_all("Content-Length", [])
+            if not lengths:
+                if method == "POST":
+                    self._err(411, "length_required", "Content-Length required")
+                    return False, None
+                return True, None
+            if len(lengths) != 1:
+                self._err(400, "bad_content_length", "multiple Content-Length headers")
+                return False, None
+            raw = lengths[0].strip(" \t")  # HTTP optional whitespace only
+            if not _DIGITS.fullmatch(raw):
+                self._err(400, "bad_content_length", "malformed or negative Content-Length")
+                return False, None
+            # Compare normalized ASCII decimals before int(): an attacker-controlled
+            # digit count must not reach Python's integer-string conversion limit.
+            digits = raw.lstrip("0") or "0"
+            limit = str(max_body_bytes)
+            if (max_body_bytes < 0 or len(digits) > len(limit)
+                    or (len(digits) == len(limit) and digits > limit)):
+                self._err(413, "payload_too_large", "body exceeds %d bytes" % max_body_bytes)
+                return False, None
+            length = int(digits)
+            if length == 0:
+                return True, None
+            try:
+                body = self.rfile.read(length)
+            except (socket.timeout, TimeoutError):
+                self._err(408, "request_timeout", "body read timed out")
+                return False, None
+            if len(body) != length:
+                self._err(400, "short_body", "body shorter than Content-Length")
+                return False, None
+            return True, body
+
         def _route(self, method: str) -> None:
             path = self.path.split("?", 1)[0]
             if path == "/healthz":
                 return self._send_json(200, {"ok": True, "service": "szl-mesh-coordinator",
                                              "ts": int(time.time())})
-            if path in ("/coordinator/status", "/status"):
-                return self._send_json(200, coord.status())
-            if not path.startswith("/v1/"):
+            is_status = path in ("/coordinator/status", "/status")
+            if not is_status and not path.startswith("/v1/"):
                 return self._send_json(404, {"error": "not found", "path": path})
-            length = int(self.headers.get("Content-Length") or 0)
-            body = self.rfile.read(length) if length else None
+            if not self._authorize():
+                return None
+            if is_status:
+                return self._send_json(200, coord.status())
+            ok, body = self._read_body(method)
+            if not ok:
+                return None
             sub = path[len("/v1"):]  # e.g. /chat/completions
             in_headers = {k: v for k, v in self.headers.items()}
+            if token:
+                # never forward the caller's coordinator token upstream
+                in_headers = {k: v for k, v in in_headers.items()
+                              if k.lower() != "authorization"}
             try:
-                status, out_headers, raw, _attempts = coord.proxy(method, sub, body, in_headers)
+                # Only an authorized (token or loopback-dev) caller gets here.
+                status, out_headers, raw, _attempts = coord.proxy(
+                    method, sub, body, in_headers, inject_upstream_key=True)
             except CoordinatorError as e:
                 # fail LOUD — full attempt trail, never a fabricated answer
                 return self._send_json(502, {
@@ -561,14 +716,26 @@ def make_handler(coord: MeshCoordinator) -> type:
     return Handler
 
 
-def serve(host: str = "0.0.0.0", port: int = 11500) -> None:  # pragma: no cover - runtime entry
+def serve(host: str = DEFAULT_HOST, port: int = 11500,
+          allow_non_loopback: Optional[bool] = None,
+          caller_token: Optional[str] = None) -> None:  # pragma: no cover - runtime entry
+    token = (caller_token if caller_token is not None
+             else os.environ.get(CALLER_TOKEN_ENV, "")).strip() or None
+    allow = (_env_truthy(ALLOW_NON_LOOPBACK_ENV) if allow_non_loopback is None
+             else allow_non_loopback)
+    check_bind(host, token, allow)  # raises CoordinatorConfigError (fail closed)
+    max_body = int(os.environ.get("SZL_MESH_MAX_BODY_BYTES", "") or DEFAULT_MAX_BODY_BYTES)
+    read_timeout = float(os.environ.get("SZL_MESH_READ_TIMEOUT_S", "") or DEFAULT_READ_TIMEOUT_S)
     workers, failover = build_workers_from_env()
     coord = MeshCoordinator(workers, failover=failover)
     coord.refresh_reachability(force=True)
-    srv = ThreadingHTTPServer((host, port), make_handler(coord))
+    srv = ThreadingHTTPServer((host, port), make_handler(coord, caller_token=token,
+                                                         max_body_bytes=max_body,
+                                                         read_timeout=read_timeout))
     srv.daemon_threads = True
     live = [w.name for w in coord.reachable_sovereign()]
-    print("szl-mesh-coordinator listening on %s:%d" % (host, port), flush=True)
+    print("szl-mesh-coordinator listening on %s:%d (caller auth: %s)"
+          % (host, port, "bearer" if token else "none; loopback peers only"), flush=True)
     print("  sovereign workers: %s" % ", ".join(w.name for w in workers), flush=True)
     print("  reachable sovereign now: %s" % (", ".join(live) or "(none — will fail loud or failover)"),
           flush=True)
@@ -581,7 +748,12 @@ if __name__ == "__main__":  # pragma: no cover
     import argparse
 
     ap = argparse.ArgumentParser(description="SZL Mesh Coordinator — sovereign /v1 load balancer")
-    ap.add_argument("--host", default=os.environ.get("SZL_MESH_HOST", "0.0.0.0"))
+    ap.add_argument("--host", default=os.environ.get("SZL_MESH_HOST", DEFAULT_HOST))
+    ap.add_argument("--allow-non-loopback", action="store_true", default=None,
+                    help="opt in to a non-loopback bind (also needs %s)" % CALLER_TOKEN_ENV)
     ap.add_argument("--port", type=int, default=int(os.environ.get("SZL_MESH_PORT", "11500")))
     args = ap.parse_args()
-    serve(args.host, args.port)
+    try:
+        serve(args.host, args.port, allow_non_loopback=args.allow_non_loopback)
+    except CoordinatorConfigError as exc:
+        raise SystemExit("szl-mesh-coordinator: %s" % exc)
