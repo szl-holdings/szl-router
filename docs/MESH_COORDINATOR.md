@@ -51,7 +51,12 @@ export SZL_MESH_FAILOVER_BASE_URL=https://integrate.api.nvidia.com/v1
 export SZL_MESH_NVIDIA_NIM_TOKEN=<nim-key>     # optional; only if the failover needs auth
 
 # run the balancer (stdlib only — no pip install needed)
-python3 -m szl_router.mesh_coordinator --host 0.0.0.0 --port 11500
+python3 -m szl_router.mesh_coordinator --port 11500   # binds 127.0.0.1 (loopback dev mode, loopback peers only)
+# A non-loopback bind needs BOTH an explicit opt-in AND a caller bearer token, or it refuses to start:
+#   SZL_MESH_CALLER_TOKEN=<caller-token> python3 -m szl_router.mesh_coordinator --host <tailnet-ip> --allow-non-loopback
+# Callers then send 'Authorization: Bearer <caller-token>'. Bodies are capped (SZL_MESH_MAX_BODY_BYTES,
+# default 4 MiB) with a read timeout (SZL_MESH_READ_TIMEOUT_S, default 30 s). External use belongs on
+# the guarded router_control gateway, not this legacy coordinator.
 # or: python3 szl_router/mesh_coordinator.py --port 11500
 ```
 
