@@ -23,6 +23,9 @@ import mesh_coordinator as mc  # noqa: E402
 FAKE_CALLER = "fake-caller-token-for-tests"
 FAKE_UPSTREAM = "fake-upstream-key-for-tests"
 
+# Keep the real loopback client: fake_upstream patches the shared http.client module.
+CLIENT = http.client.HTTPConnection
+
 
 class _FakeResp:
     status = 200
@@ -40,10 +43,12 @@ def fake_upstream(monkeypatch):
 
     class FakeConn:
         def __init__(self, host, port, timeout=None):
+            assert (host, port) == ("omen.example", 11434), "fake intercepted a non-upstream connection"
             self.host = host
+            self.port = port
 
         def request(self, method, path, body=None, headers=None):
-            sent.append({"host": self.host, "path": path, "headers": dict(headers or {}),
+            sent.append({"host": self.host, "port": self.port, "path": path, "headers": dict(headers or {}),
                          "body": body})
 
         def getresponse(self):
@@ -103,7 +108,7 @@ def _raw(port, data: bytes, half_close: bool = False, timeout: float = 5.0):
 
 
 def _post(port, headers, body=b"{}"):
-    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    conn = CLIENT("127.0.0.1", port, timeout=5)
     conn.request("POST", "/v1/chat/completions", body=body, headers=headers)
     r = conn.getresponse()
     r.read()
@@ -165,24 +170,28 @@ def test_auth_reject_sends_no_upstream_credential(server, fake_upstream):
 
 def test_auth_status_requires_token(server, fake_upstream):
     port = server(caller_token=FAKE_CALLER)
-    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    conn = CLIENT("127.0.0.1", port, timeout=5)
     conn.request("GET", "/coordinator/status")
     r = conn.getresponse()
     r.read()
     conn.close()
     assert r.status == 401
-    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    assert fake_upstream == []
+    conn = CLIENT("127.0.0.1", port, timeout=5)
     conn.request("GET", "/healthz")
     r = conn.getresponse()
     r.read()
     conn.close()
     assert r.status == 200
+    assert fake_upstream == []
 
 
 def test_auth_accept_forwards_upstream_key_not_caller_token(server, fake_upstream):
     port = server(caller_token=FAKE_CALLER)
     assert _post(port, {"Authorization": "Bearer " + FAKE_CALLER}) == 200
     assert len(fake_upstream) == 1
+    assert (fake_upstream[0]["host"], fake_upstream[0]["port"]) == ("omen.example", 11434)
+    assert fake_upstream[0]["path"] == "/v1/chat/completions"
     hdrs = fake_upstream[0]["headers"]
     assert hdrs.get("Authorization") == "Bearer " + FAKE_UPSTREAM
     assert FAKE_CALLER not in json.dumps(hdrs)
@@ -191,6 +200,7 @@ def test_auth_accept_forwards_upstream_key_not_caller_token(server, fake_upstrea
 def test_loopback_dev_mode_without_token_keeps_existing_behaviour(server, fake_upstream):
     port = server()  # no caller token: loopback peers only
     assert _post(port, {}) == 200
+    assert len(fake_upstream) == 1
     assert fake_upstream[0]["headers"].get("Authorization") == "Bearer " + FAKE_UPSTREAM
 
 
@@ -249,13 +259,14 @@ def test_slow_body_read_times_out_408(server, fake_upstream):
 
 def test_rejected_request_never_logs_or_echoes_secret(server, fake_upstream, capsys):
     port = server(caller_token=FAKE_CALLER)
-    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    conn = CLIENT("127.0.0.1", port, timeout=5)
     conn.request("POST", "/v1/chat/completions", body=b"{}",
                  headers={"Authorization": "Bearer wrong"})
     r = conn.getresponse()
     body = r.read().decode()
     conn.close()
     assert r.status == 401
+    assert fake_upstream == []
     assert FAKE_CALLER not in body and FAKE_UPSTREAM not in body
     out = capsys.readouterr()
     assert FAKE_CALLER not in out.out + out.err
