@@ -72,6 +72,22 @@ OPTIONS = (
         (("requests_per_minute", 30), ("requests_per_day", 1000),
          ("tokens_per_minute", 8000), ("tokens_per_day", 200000)),
     ),
+    Option(
+        "openrouter-nemotron3-ultra-free-review", "OpenRouter Free Plan",
+        "openrouter-nemotron3-ultra-review",
+        "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY",
+        "SOURCE_MODEL_PAGE_CURRENTLY_LISTS_FREE_INPUT_AND_OUTPUT",
+        ("https://openrouter.ai/pricing",
+         "https://openrouter.ai/nvidia/nemotron-3-ultra-550b-a55b%3Afree",
+         "https://openrouter.ai/openrouter/free"),
+        ("Exact :free model slug, not the random openrouter/free selector; executing weights remain unverified.",
+         "Free plan lists 50 requests/day, not this account's remaining quota or a permanent offer.",
+         "NVIDIA free endpoint says not to upload confidential or personal data; sessions are logged for improvement.",
+         "Free plan lists no budget/spend controls; no paid fallback or overage is authorized.",
+         "Account rights, retention, tool compatibility, and zero-charge enforcement are unqualified."),
+        (("requests_per_day", 50),),
+    ),
 )
 
 BLOCKERS = (

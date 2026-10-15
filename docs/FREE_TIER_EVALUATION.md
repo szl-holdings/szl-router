@@ -15,6 +15,20 @@ API `glm-4.7-flash` / `glm-4.5-flash` candidates and Groq Free Plan
 endpoints and account contracts. FlashX/5.x and paid built-in tools are not
 substitutes. Groq's published limits are not this account's remaining quota.
 
+The October 13 source review adds a disabled OpenRouter Free Plan candidate for
+the exact `nvidia/nemotron-3-ultra-550b-a55b:free` slug. Its
+[model page](https://openrouter.ai/nvidia/nemotron-3-ultra-550b-a55b%3Afree)
+currently lists zero input/output price, but the NVIDIA free endpoint asks users
+not to upload confidential or personal data and says sessions are logged for product
+improvement. [OpenRouter pricing](https://openrouter.ai/pricing) lists 50 free
+requests/day and no budget/spend controls on that plan. This is neither the
+randomly selected [`openrouter/free`](https://openrouter.ai/openrouter/free)
+route nor a pinned executing-weight identity. Model availability, account
+eligibility, remaining quota, terms, data retention, and zero-charge enforcement
+remain unverified. The dossier's existing October 11 recheck deadline is **not**
+extended by adding this option, so the entire response remains RECHECK_REQUIRED
+and HOLD. Do not try a paid variant or fallback when the free route is exhausted.
+
 The October 8 terms check keeps all options on **HOLD**. [Z.ai pricing](https://docs.z.ai/guides/overview/pricing)
 lists the two standard-API Flash models as free for input/output, but built-in
 Web Search is paid and [account rate limits](https://z.ai/manage-apikey/rate-limits)
@@ -107,3 +121,6 @@ is created or changed. Preserve the issue and original test/review history.
 - https://console.groq.com/docs/rate-limits
 - https://console.groq.com/docs/openai
 - https://console.groq.com/docs/your-data
+- https://openrouter.ai/pricing
+- https://openrouter.ai/nvidia/nemotron-3-ultra-550b-a55b%3Afree
+- https://openrouter.ai/openrouter/free
