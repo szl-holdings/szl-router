@@ -33,6 +33,7 @@ def test_exact_candidate_identity_and_disabled_schema():
         ("zai-standard-flash47-review", "glm-4.7-flash"),
         ("zai-standard-flash45-review", "glm-4.5-flash"),
         ("groq-oss120-free-review", "openai/gpt-oss-120b"),
+        ("openrouter-nemotron3-ultra-free-review", "nvidia/nemotron-3-ultra-550b-a55b:free"),
     ]
     providers = []
     for row in value["options"]:
@@ -41,7 +42,7 @@ def test_exact_candidate_identity_and_disabled_schema():
         assert provider.sovereignty == 0 and provider.priority == 10000
         providers.append(provider)
     registry = control.Registry(providers=providers)
-    settings = control.Settings(registry, frozenset({"api.z.ai", "api.groq.com"}), True, "VALIDATED")
+    settings = control.Settings(registry, frozenset({"api.z.ai", "api.groq.com", "openrouter.ai"}), True, "VALIDATED")
     for provider in providers:
         alias = next(iter(provider.models))
         assert control.route_candidates(settings, control.PlanRequest(model=alias)) == []
@@ -52,6 +53,7 @@ def test_exact_standard_endpoints_not_paid_or_region_substitution():
     assert [r["disabled_provider_proposal"]["base_url"] for r in rows] == [
         "https://api.z.ai/api/paas/v4", "https://api.z.ai/api/paas/v4",
         "https://api.groq.com/openai/v1",
+        "https://openrouter.ai/api/v1",
     ]
     assert all(r["disabled_provider_proposal"]["models"] for r in rows)
     assert all("tools" not in r["disabled_provider_proposal"] for r in rows)
@@ -73,7 +75,20 @@ def test_price_and_quota_do_not_claim_user_balance_or_license():
         assert row["basis"] == "REPORTED_NOT_SZL_MEASURED"
         assert "DISCLOSURE_AND_RETENTION_UNQUALIFIED" in row["blockers"]
         assert "ZERO_BILLING_ENFORCEMENT_UNVERIFIED" in row["blockers"]
-    assert fixture()["options"][-1]["reported_quota"]["tokens_per_day"] == 200000
+    quotas = {item["id"]: item["reported_quota"] for item in fixture()["options"]}
+    assert quotas["groq-oss120-free-review"]["tokens_per_day"] == 200000
+    assert quotas["openrouter-nemotron3-ultra-free-review"]["requests_per_day"] == 50
+
+
+def test_openrouter_free_is_named_and_never_a_random_paid_fallback():
+    row = next(item for item in fixture()["options"] if item["id"] == "openrouter-nemotron3-ultra-free-review")
+    proposal = row["disabled_provider_proposal"]
+    assert proposal["enabled"] is False
+    assert proposal["token_env"] == "OPENROUTER_API_KEY"
+    assert proposal["models"] == {"openrouter-nemotron3-ultra-review": "nvidia/nemotron-3-ultra-550b-a55b:free"}
+    assert all("openrouter/free" not in model for model in proposal["models"].values())
+    assert any("not to upload confidential or personal data" in note for note in row["limitations"])
+    assert row["remaining_quota"] is None and row["actual_charge_usd"] is None
 
 
 @pytest.mark.parametrize("now,state", [
@@ -128,6 +143,7 @@ def test_returned_data_cannot_mutate_next_dossier():
 
 def test_bounded_module_cli_and_no_environment_reflection(monkeypatch):
     monkeypatch.setenv("ZAI_API_KEY", "secret-fixture-not-to-publish")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "secret-fixture-not-to-publish")
     result = subprocess.run([sys.executable, "-m", "router_control.free_tier"],
                             cwd=ROOT, capture_output=True, text=True, timeout=10)
     assert result.returncode == 0 and result.stderr == ""
@@ -144,6 +160,7 @@ def test_real_mounted_get_has_no_registry_or_transport_side_effect(monkeypatch):
     monkeypatch.setattr(control, "call_provider", forbidden)
     monkeypatch.setenv("SOURCE_REVISION", "a" * 40)
     monkeypatch.setenv("ZAI_API_KEY", "secret-fixture-not-to-publish")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "secret-fixture-not-to-publish")
     with TestClient(control.app) as client:
         response = client.get("/api/free-provider-options")
         assert response.status_code == 200
@@ -158,15 +175,17 @@ def test_proposals_are_not_registered_even_with_credentials(monkeypatch):
     monkeypatch.delenv("SZL_ROUTER_PROVIDERS_JSON", raising=False)
     monkeypatch.delenv("SZL_ROUTER_ENABLE_EGRESS", raising=False)
     monkeypatch.setenv("ZAI_API_KEY", "synthetic-unused-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "synthetic-unused-key")
     with TestClient(control.app) as client:
         before = client.get("/api/routes").json()
         assert client.get("/api/free-provider-options").status_code == 200
         after = client.get("/api/routes").json()
         assert before == after and before["providers"] == []
-        result = client.post("/v1/chat/completions", json={
-            "model": "zai-flash47-review", "messages": [{"role": "user", "content": "synthetic"}],
-        })
-        assert result.status_code == 503 and result.json()["detail"]["code"] == "EGRESS_DISABLED"
+        for alias in ("zai-flash47-review", "openrouter-nemotron3-ultra-review"):
+            result = client.post("/v1/chat/completions", json={
+                "model": alias, "messages": [{"role": "user", "content": "synthetic"}],
+            })
+            assert result.status_code == 503 and result.json()["detail"]["code"] == "EGRESS_DISABLED"
 
 
 def test_new_assets_and_module_in_actual_source_witness():
@@ -245,11 +264,11 @@ const click=()=>nodes['free-options-load'].listeners.click();
   fetchFn=options=>new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>reject(Error('synthetic-abort'))));
   const pending=click();timer();await pending;
  } else if (scenario==='stale-clear') {
-  await click();assert.equal(nodes['free-options-list'].children.length,3);
+  await click();assert.equal(nodes['free-options-list'].children.length,4);
   fetchFn=async()=>{throw Error('private diagnostic should not render');};await click();
  } else await click();
  const good=['success','expired','xss','duplicate-click'].includes(scenario);
- assert.equal(nodes['free-options-list'].children.length,good?3:0);
+ assert.equal(nodes['free-options-list'].children.length,good?4:0);
  assert.equal(nodes['free-options-load'].disabled,false);
  assert.equal(nodes['free-options-panel'].attrs['aria-busy'],'false');assert.equal(timers,0);
  if (good) assert(nodes['free-options-state'].textContent.includes('ALL HOLD'));

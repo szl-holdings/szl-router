@@ -13,6 +13,7 @@
     "zai-standard-flash47-review": "glm-4.7-flash",
     "zai-standard-flash45-review": "glm-4.5-flash",
     "groq-oss120-free-review": "openai/gpt-oss-120b",
+    "openrouter-nemotron3-ultra-free-review": "nvidia/nemotron-3-ultra-550b-a55b:free",
   };
   let busy = false;
   const text = (value, max = 600) => typeof value === "string" && value.length > 0 && value.length <= max;
@@ -35,7 +36,7 @@
         !/^\d{4}-\d{2}-\d{2}$/.test(data.reviewed_on || "") || !/^\d{4}-\d{2}-\d{2}$/.test(data.recheck_on || "") ||
         !/^(?:[0-9a-f]{40}|[0-9a-f]{64}|UNAVAILABLE)$/.test(data.source_revision || "") ||
         !/^[0-9a-f]{64}$/.test(data.semantic_progress_key || "") ||
-        !Array.isArray(data.options) || data.options.length !== 3) return false;
+        !Array.isArray(data.options) || data.options.length !== 4) return false;
     for (const key of ["dispatch_authorized", "provider_calls_performed", "registry_mutated", "production_authorized",
       "paid_fallback_authorized", "private_data_disclosure_authorized", "codex_balance_changed"]) {
       if (data[key] !== false) return false;
@@ -118,7 +119,7 @@
       }
       evidence.textContent = `Reviewed ${data.reviewed_on}; local recheck deadline ${data.recheck_on}. ` +
         `Source ${data.source_revision}. Content key ${data.semantic_progress_key}. Neither is provider qualification.`;
-      state.textContent = `${data.evidence_state} · 3 options · ALL HOLD · quota and billing unverified`;
+      state.textContent = `${data.evidence_state} · ${data.options.length} options · ALL HOLD · quota and billing unverified`;
     } catch (_) {
       list.replaceChildren();
       evidence.textContent = "";
