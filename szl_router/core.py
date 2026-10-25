@@ -1357,6 +1357,7 @@ class _ResolvedEmbeddingProvider(Provider):
             name=provider.name, base_url_env=provider.base_url_env,
             base_url_default=provider.base_url_default, key_env=provider.key_env,
             sovereign=provider.sovereign, energy_source=provider.energy_source,
+            enable_env=provider.enable_env,
             note=provider.note, _resolved_url=provider.base_url(),
             _resolved_key=provider.api_key(),
         )
