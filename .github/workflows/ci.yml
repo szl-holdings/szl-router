@@ -38,6 +38,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  gateway-image:
+    name: Gateway image smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build gateway package image
+        run: docker build --tag szl-router:ci .
+      - name: Boot without egress, credentials, or filesystem writes
+        run: |
+          docker run --rm --interactive --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges \
+            --workdir /tmp --entrypoint python szl-router:ci - < scripts/check_gateway_image.py
+
   test:
     name: Test (py3.12)
     runs-on: ubuntu-latest
