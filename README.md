@@ -213,6 +213,15 @@ curl localhost:8099/v1/chat/completions -H 'content-type: application/json' \
 
 Set `SZL_ROUTER_TOKEN` to require `Authorization: Bearer <token>` on callers.
 
+`GET /v1/spend` is a local operator endpoint exposing the legacy advisory ledger.
+It admits only a loopback peer (`127.0.0.0/8`, `::1`, or an IPv4-mapped loopback
+address). When `SZL_ROUTER_TOKEN` is configured, that existing bearer token is
+also required; a valid token does not grant remote access to this endpoint.
+Missing or invalid peer addresses are denied before ledger state is read.
+The check uses the ASGI server's client address and does not itself trust
+`Forwarded` or `X-Forwarded-For` headers. Keep this route excluded from public
+reverse-proxy routing: a local proxy can otherwise appear to be a loopback peer.
+
 ## Reliability
 
 Two layers of resilience, both honest (a real failure is always surfaced in the
