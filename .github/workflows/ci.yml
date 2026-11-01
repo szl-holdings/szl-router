@@ -4,7 +4,7 @@
 # Added 2026-06-16: repo previously had NO CI (flagged in the audit).
 #
 # Jobs:
-#   test      — Python 3.12, install requirements + pytest, syntax gate
+#   test      — Python 3.12, install the package's test/sign extras, syntax gate
 #               (compileall), then run the offline/deterministic test suite.
 #   doctrine  — calls the org-canonical reusable SZL Doctrine Check, same as
 #               every other szl-holdings repo's doctrine.yml.
@@ -68,12 +68,36 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          # szl-receipt is git-only (the optional 'sign' extra); install it so the
-          # signed-receipt tests run for real. httpx backs the FastAPI TestClient.
-          pip install "git+https://github.com/szl-holdings/szl-receipt.git@v0.2.0"
-          pip install pytest httpx
-          pip install "huggingface_hub==1.10.1"
+          # Exercise the same dependency contract users get from pyproject.toml,
+          # including the published szl-receipt-dsse distribution in `sign`.
+          python -m pip install ".[test,sign]" "huggingface_hub==1.10.1"
+          python -m pip check
+
+      - name: Smoke the installed gateway outside the checkout
+        working-directory: ${{ runner.temp }}
+        env:
+          SZL_RECEIPT_EPHEMERAL: "0"
+        run: |
+          python -I - <<'PY'
+          from importlib.metadata import version
+          from pathlib import Path
+          import sys
+          from fastapi.testclient import TestClient
+          import router_control.app
+          import szl_router.app
+
+          assert version("szl-router")
+          assert version("szl-receipt-dsse")
+          for module in (router_control.app, szl_router.app):
+              assert Path(module.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
+          with TestClient(szl_router.app.app) as client:
+              health = client.get("/healthz")
+              assert health.status_code == 200 and health.json()["ok"] is True
+              receipt = client.get("/v1/receipt/pubkey").json()
+              assert receipt["library_available"] is True
+              assert receipt["public_key_pem"] is None
+              assert receipt["ephemeral"] is False
+          PY
 
       - name: Syntax gate (compileall)
         run: python -m compileall szl_router

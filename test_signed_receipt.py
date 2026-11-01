@@ -18,7 +18,6 @@ Run: python3 test_signed_receipt.py   (also collected by pytest)
 from __future__ import annotations
 
 import json
-import os
 import sys
 
 sys.path.insert(0, "szl_router")
@@ -127,10 +126,14 @@ def test_tampered_body_fails_verification(monkeypatch, armed_router):
                                  "messages": [{"role": "user", "content": "hi"}]})
     env = R.decode_header(resp.headers["x-szl-receipt"])
 
+    assert szl_receipt.verify_receipt(env, public_key_pem=pub) == (True, "ok")
     body = json.loads(base64.b64decode(env["payload"]))
     body["sovereign"] = False  # forge a non-sovereign claim
+    # Keep the payload canonical so this tests the signature boundary, rather
+    # than failing earlier at the receipt library's canonical-JSON check.
     env["payload"] = base64.b64encode(
-        json.dumps(body, separators=(",", ":")).encode()).decode("ascii")
+        json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        .encode("utf-8")).decode("ascii")
 
     ok, detail = szl_receipt.verify_receipt(env, public_key_pem=pub)
     assert not ok and detail == "signature mismatch"
