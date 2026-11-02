@@ -149,6 +149,7 @@ class RequestBudget:
 
     @property
     def in_flight(self) -> str:
+        """Unknown while any initiated dispatch lacks a known remote outcome."""
         with self._lock:
             return self._in_flight
 
@@ -205,6 +206,7 @@ class RequestBudget:
 
         `known` means a response was observed. `unknown` means the peer may
         still be working. A timeout or dropped socket stays unknown.
+        One response cannot resolve another dispatch's unknown outcome.
         """
         if type(attempt) is not int or attempt < 1:
             raise ValueError("attempt must be a positive int")
@@ -217,7 +219,10 @@ class RequestBudget:
                     break
             else:
                 raise ValueError("attempt was not reserved")
-            self._in_flight = outcome
+            self._in_flight = (
+                "unknown" if any(row["outcome"] == "unknown" for row in self._dispatches)
+                else "known"
+            )
 
     def allow_backoff(self, delay: float) -> bool:
         """Return whether a later attempt can still start after `delay` seconds.
