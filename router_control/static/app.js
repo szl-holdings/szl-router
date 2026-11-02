@@ -53,9 +53,14 @@
   }
 
   function failureText(error) {
-    return error.name === "AbortError"
-      ? "Request timed out. Provider outcome is unknown; no answer is established."
-      : error.payload ? error.message : "Network or response error. Evidence is unavailable.";
+    if (error.name === "AbortError") {
+      return "Request timed out. Provider outcome is unknown; no answer is established.";
+    }
+    const detail = error.payload && error.payload.detail;
+    if (detail && detail.state === "ATTEMPT_OUTCOME_UNKNOWN") {
+      return "A provider attempt timed out after dispatch may have begun. Automatic failover stopped; reconcile the recorded attempt before retrying.";
+    }
+    return error.payload ? error.message : "Network or response error. Evidence is unavailable.";
   }
 
   function element(tag, className, value) {
@@ -364,7 +369,10 @@
   function renderAttempts(receipt) {
     const attempts = $("#attempts");
     attempts.replaceChildren();
-    const rows = receipt && Array.isArray(receipt.attempts) ? receipt.attempts : [];
+    const rows = receipt && Array.isArray(receipt.attempts)
+      ? receipt.attempts.map((row) => row && row.outcome === "UNKNOWN"
+        ? { ...row, state: `${row.state} / OUTCOME UNKNOWN` } : row)
+      : [];
     if (!rows.length) attempts.append(element("li", "", "No provider attempt evidence received."));
     rows.forEach((row) => attempts.append(element("li", "", `${row.provider_id} · ${row.state}${row.status_code ? ` · HTTP ${row.status_code}` : ""}`)));
   }

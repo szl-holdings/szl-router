@@ -397,6 +397,20 @@ async function run() {
     assert(s.nodes["#completion-receipt"].textContent.includes("failure-digest"));
     assert(s.nodes["#completion-state"].textContent.includes("NO ANSWER ESTABLISHED"));
     assert.equal(s.calls.filter(call => call.url === "/api/verify").length, 0);
+  } else if (scenario === "ambiguous") {
+    const s = await setup(); s.enter();
+    s.handlers["/v1/chat/completions"] = () => response({ detail: {
+      state: "ATTEMPT_OUTCOME_UNKNOWN", digest: "ambiguous-digest",
+      secret_material_recorded: false, automatic_retry_safe: false,
+      reconciliation: "REQUIRED_BEFORE_RETRY",
+      attempts: [{ provider_id: "first", state: "UPSTREAM_DEADLINE_EXCEEDED", outcome: "UNKNOWN" }],
+    } }, 504);
+    await s.nodes["#completion-form"].fire("submit");
+    assert(s.nodes["#answer-output"].textContent.includes("Automatic failover stopped"));
+    assert(s.nodes["#attempts"].textContent.includes("OUTCOME UNKNOWN"));
+    assert(s.nodes["#completion-receipt"].textContent.includes("REQUIRED_BEFORE_RETRY"));
+    assert(s.nodes["#completion-state"].textContent.includes("NO ANSWER ESTABLISHED"));
+    assert.equal(s.calls.filter(call => call.url === "/api/verify").length, 0);
   } else if (scenario === "timeout") {
     const s = await setup(); s.enter();
     s.handlers["/v1/chat/completions"] = options => new Promise((resolve, reject) => {
@@ -427,7 +441,7 @@ run().catch(error => { console.error(error); process.exitCode = 1; });
 
 
 @pytest.mark.parametrize(
-    "scenario", ["success", "insecure", "loopback", "readiness", "local-ready", "local-unavailable", "local-mismatch", "local-cached-busy", "local-clock-expiry", "divergent", "verifier-unavailable", "missing-header", "precise-json", "failure", "timeout", "bounds"],
+    "scenario", ["success", "insecure", "loopback", "readiness", "local-ready", "local-unavailable", "local-mismatch", "local-cached-busy", "local-clock-expiry", "divergent", "verifier-unavailable", "missing-header", "precise-json", "failure", "ambiguous", "timeout", "bounds"],
 )
 def test_browser_completion_and_evidence_boundaries(scenario: str) -> None:
     ids = re.findall(r'\bid="([^"]+)"', (STATIC / "index.html").read_text(encoding="utf-8"))
