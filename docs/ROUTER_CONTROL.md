@@ -174,7 +174,22 @@ source identity.
 The v1 receipt-verified route intentionally rejects streaming. It limits message count, individual and total content, stop sequences, output bytes, redirects, timeout, and connection pool size. `httpx` environment proxy inheritance is disabled.
 The whole provider attempt, including local metadata checks, has a 45-second wall deadline. A request has a 660-second total route deadline; the browser allows longer for its response and verification. Deadline exhaustion is retained in the bounded failure attempt trail.
 
-Failover proceeds only when a provider credential is unavailable, a transport or response-contract error occurs, a rate limit occurs, or an upstream server fails. Ordinary upstream 4xx responses stop the route rather than silently changing providers.
+A provider-attempt timeout is terminal for the logical request. Cancelling the
+gateway's wait does not prove that the provider stopped generation or billing,
+so the failure receipt records `outcome: UNKNOWN`,
+`automatic_retry_safe: false`, and `REQUIRED_BEFORE_RETRY`; the gateway does not
+dispatch the prompt to a fallback provider. This follows the retry boundary in
+[RFC 9110 section 9.2.2](https://www.rfc-editor.org/rfc/rfc9110.html#section-9.2.2):
+a non-idempotent request should not be retried automatically unless its semantics
+are known to be idempotent or the original request is known not to have applied.
+Providers that later offer a request-bound idempotency key and status readback
+can qualify a narrower retry path. The repository does not currently claim that
+contract for any provider.
+
+Failover proceeds only when a provider credential is unavailable, a non-timeout
+transport or response-contract error occurs, a rate limit occurs, or an upstream
+server fails. Provider-attempt timeouts stop as UNKNOWN. Ordinary upstream 4xx
+responses stop the route rather than silently changing providers.
 For a selected local provider, an absent or changed manifest digest, or a mismatched resident digest, stops the route without sending the same prompt to a cloud provider. A cold installed model may be absent from the resident list before its first completion; successful completion requires the resident digest to match afterward. The local observation endpoint is a snapshot, so completion repeats identity checks around the provider call.
 When local-store byte admission is enabled for that alias, a failed file-hash scan also stops the route before inference. The scan consumes part of the local provider's 45-second attempt deadline; a pinned local attempt that exhausts that deadline does not fall through to a cloud candidate.
 

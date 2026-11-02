@@ -751,12 +751,24 @@ def test_metadata_phase_is_inside_attempt_and_global_route_deadlines(monkeypatch
     monkeypatch.setattr(module, "ollama_inventory", slow_inventory)
     monkeypatch.setattr(module, "MAX_TIMEOUT_SECONDS", 0.01)
     response = client.post("/v1/chat/completions", json=chat_request(model="a11oy-mini-r2"))
-    assert response.status_code == 502
-    assert response.json()["detail"]["attempts"][0]["state"] == "UPSTREAM_DEADLINE_EXCEEDED"
+    assert response.status_code == 504
+    detail = response.json()["detail"]
+    assert detail["state"] == "ATTEMPT_OUTCOME_UNKNOWN"
+    assert detail["attempts"][0] == {
+        "provider_id": "local-ollama",
+        "state": "UPSTREAM_DEADLINE_EXCEEDED",
+        "outcome": "UNKNOWN",
+    }
     monkeypatch.setattr(module, "MAX_ROUTE_SECONDS", 0.002)
     response = client.post("/v1/chat/completions", json=chat_request(model="a11oy-mini-r2"))
-    assert response.status_code == 502
-    assert response.json()["detail"]["attempts"][0]["state"] == "ROUTE_DEADLINE_EXCEEDED"
+    assert response.status_code == 504
+    detail = response.json()["detail"]
+    assert detail["state"] == "ATTEMPT_OUTCOME_UNKNOWN"
+    assert detail["attempts"][0] == {
+        "provider_id": "local-ollama",
+        "state": "ROUTE_DEADLINE_EXCEEDED",
+        "outcome": "UNKNOWN",
+    }
 
 
 @pytest.mark.parametrize("body", [

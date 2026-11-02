@@ -249,7 +249,10 @@ def test_opted_in_local_attempt_deadline_cannot_fall_through_to_cloud(tmp_path, 
     assert response.json()["detail"]["state"] == "LOCAL_ROUTE_UNAVAILABLE"
     assert response.json()["detail"]["attempts"] == [{
         "provider_id": "local", "state": "LOCAL_ROUTE_DEADLINE_EXCEEDED",
+        "outcome": "UNKNOWN",
     }]
+    assert response.json()["detail"]["automatic_retry_safe"] is False
+    assert response.json()["detail"]["reconciliation"] == "REQUIRED_BEFORE_RETRY"
     assert calls == ["local"]
 
 

@@ -7,13 +7,60 @@ import json
 import subprocess
 import sys
 
+import httpx
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 from router_control import app as module
 from router_control.verification import MAX_JSON_DEPTH, MAX_VERIFICATION_BYTES, sha256
 
 client = TestClient(module.app)
+
+
+def _direct_http_request() -> Request:
+    return Request({
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "https",
+        "path": "/v1/chat/completions",
+        "raw_path": b"/v1/chat/completions",
+        "query_string": b"",
+        "headers": [(b"authorization", b"Bearer fixture-caller")],
+        "client": ("127.0.0.1", 41000),
+        "server": ("router.example.test", 443),
+    })
+
+
+def _configure_timeout_pair(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SZL_ROUTER_ENABLE_EGRESS", "1")
+    monkeypatch.setenv("SZL_ROUTER_TOKEN", "fixture-caller")
+    monkeypatch.setenv("FIXTURE_TOKEN", "fixture-provider")
+    monkeypatch.setenv(
+        "SZL_ROUTER_ALLOWED_HOSTS",
+        "slow.example.test,fallback.example.test",
+    )
+    monkeypatch.setenv("SZL_ROUTER_PROVIDERS_JSON", json.dumps({"providers": [
+        {
+            "id": "slow",
+            "base_url": "https://slow.example.test/v1",
+            "models": {"szl-default": "fixture-model"},
+            "token_env": "FIXTURE_TOKEN",
+            "priority": 0,
+            "enabled": True,
+        },
+        {
+            "id": "fallback",
+            "base_url": "https://fallback.example.test/v1",
+            "models": {"szl-default": "fixture-model"},
+            "token_env": "FIXTURE_TOKEN",
+            "priority": 1,
+            "enabled": True,
+        },
+    ]}))
 
 
 @pytest.fixture
@@ -178,7 +225,7 @@ def test_gateway_never_emits_success_outside_verifier_bounds(monkeypatch, overfl
     assert verified.json()["status"] == "CONSISTENT"
 
 
-def test_whole_provider_attempt_deadline_fails_over(monkeypatch):
+def test_whole_provider_attempt_deadline_stops_ambiguous_failover(monkeypatch):
     monkeypatch.setenv("SZL_ROUTER_ENABLE_EGRESS", "1")
     monkeypatch.setenv("SZL_ROUTER_TOKEN", "fixture-caller")
     monkeypatch.setenv("FIXTURE_TOKEN", "fixture-provider")
@@ -205,16 +252,75 @@ def test_whole_provider_attempt_deadline_fails_over(monkeypatch):
     request = {"model": "szl-default", "messages": [{"role": "user", "content": "Verify deadline"}]}
     response = client.post("/v1/chat/completions", json=request,
                            headers={"Authorization": "Bearer fixture-caller"})
-    assert response.status_code == 200
-    assert calls == ["slow", "fallback"]
+    assert response.status_code == 504
+    assert calls == ["slow"]
     assert slow_cancelled == [True]
-    completion = response.json()
-    assert [attempt["state"] for attempt in completion["szl_receipt"]["attempts"]] == [
-        "UPSTREAM_DEADLINE_EXCEEDED", "SUCCESS",
-    ]
-    verified = client.post("/api/verify", json={"completion": completion, "request": request})
-    assert verified.status_code == 200
-    assert verified.json()["status"] == "CONSISTENT"
+    failure = response.json()["detail"]
+    assert failure["state"] == "ATTEMPT_OUTCOME_UNKNOWN"
+    assert failure["attempts"] == [{
+        "provider_id": "slow",
+        "state": "UPSTREAM_DEADLINE_EXCEEDED",
+        "outcome": "UNKNOWN",
+    }]
+    assert failure["automatic_retry_safe"] is False
+    assert failure["reconciliation"] == "REQUIRED_BEFORE_RETRY"
+    assert failure["secret_material_recorded"] is False
+    assert len(failure["digest"]) == 64
+
+
+@pytest.mark.parametrize("timeout_error", [
+    asyncio.TimeoutError(),
+    httpx.ReadTimeout("provider response deadline expired"),
+])
+def test_timeout_variants_are_receipted_without_fallback(
+    monkeypatch: pytest.MonkeyPatch, timeout_error: Exception,
+) -> None:
+    """Exercise both wall-timer and httpx deadlines without a Windows event loop."""
+    _configure_timeout_pair(monkeypatch)
+    calls: list[str] = []
+
+    async def timeout_then_forbidden(provider, request, upstream_model):
+        del request, upstream_model
+        calls.append(provider.id)
+        if provider.id == "slow":
+            raise timeout_error
+        raise AssertionError("an ambiguous timeout reached the fallback provider")
+
+    async def immediate_wait(awaitable, timeout):
+        # The audit sandbox cannot create asyncio's Windows self-pipe. Hosted CI
+        # retains the integration test above for the real wait_for deadline.
+        del timeout
+        return await awaitable
+
+    monkeypatch.setattr(module, "attempt_candidate", timeout_then_forbidden)
+    monkeypatch.setattr(module.asyncio, "wait_for", immediate_wait)
+    request = module.ChatRequest.model_validate({
+        "model": "szl-default",
+        "messages": [{"role": "user", "content": "one logical request"}],
+    })
+    operation = module.chat(request, _direct_http_request())
+    with pytest.raises(HTTPException) as caught:
+        operation.send(None)
+
+    assert caught.value.status_code == 504
+    detail = caught.value.detail
+    assert calls == ["slow"]
+    assert detail["state"] == "ATTEMPT_OUTCOME_UNKNOWN"
+    assert detail["attempts"] == [{
+        "provider_id": "slow",
+        "state": "UPSTREAM_DEADLINE_EXCEEDED",
+        "outcome": "UNKNOWN",
+    }]
+    assert detail["automatic_retry_safe"] is False
+    assert detail["reconciliation"] == "REQUIRED_BEFORE_RETRY"
+    assert detail["secret_material_recorded"] is False
+    assert detail["digest"] == module.sha256({
+        key: value for key, value in detail.items() if key != "digest"
+    })
+    serialized = json.dumps(detail)
+    assert "fixture-provider" not in serialized
+    assert "slow.example.test" not in serialized
+    assert "fallback.example.test" not in serialized
 
 
 def test_version_and_source_controlled_verifier_are_honest(monkeypatch):
