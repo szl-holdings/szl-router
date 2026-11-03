@@ -21,8 +21,22 @@ dependencies = [
 # szl-receipt-dsse (import name szl_receipt) is published on PyPI; signing is an OPT-IN extra. Install:
 #   pip install "szl-receipt-dsse>=0.3.1"   (PyPI dist; the import name stays szl_receipt)
 # Keyless (extra not installed) stays UNSIGNED-honest — never a fabricated signature.
-sign = ["szl-receipt-dsse>=0.3.1"]
-test = ["pytest", "httpx"]
+# szl_router/receipts.py also imports cryptography directly (_derive_public_pem), so the
+# extra lists it instead of relying on szl-receipt-dsse to bring it in.
+sign = ["szl-receipt-dsse>=0.3.1", "cryptography>=42.0.0"]
+# Hugging Face publishers: scripts/hf_space_bootstrap.py, scripts/hf_space_deploy.py and
+# scripts/router_control_space.py (the deploy workflows pin huggingface_hub==1.10.1).
+hf-publish = ["huggingface-hub>=1.10.1"]
+# test_local_demo.py and test_router_control_space.py import szl_receipt and huggingface_hub
+# at module scope, so test repeats sign and hf-publish. tests/test_dependency_contract.py
+# maps every import to these groups; the floors added here are the lowest versions tested.
+test = [
+  "pytest",
+  "httpx",
+  "szl-receipt-dsse>=0.3.1",
+  "cryptography>=42.0.0",
+  "huggingface-hub>=1.10.1",
+]
 
 [project.scripts]
 szl-router = "szl_router.app:main"
