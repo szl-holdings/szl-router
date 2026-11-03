@@ -18,6 +18,8 @@ Upstream keys are read from the environment by core.py and never logged.
 from __future__ import annotations
 
 import ipaddress
+import json
+import math
 import os
 import time
 from typing import Any, Dict, List, Optional
@@ -48,6 +50,32 @@ def _check_auth(request: Request) -> None:
     got = request.headers.get("authorization", "")
     if got != f"Bearer {want}":
         raise HTTPException(status_code=401, detail="invalid SZL_ROUTER_TOKEN")
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError("non-finite JSON number")
+
+
+def _finite_json_float(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("non-finite JSON number")
+    return number
+
+
+async def _json_object(request: Request) -> Dict[str, Any]:
+    """Reject malformed or non-object JSON before endpoint field access."""
+    try:
+        body = json.loads(await request.body(), parse_constant=_reject_json_constant,
+                          parse_float=_finite_json_float)
+    except (ValueError, RecursionError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="request body must be finite JSON within parser limits",
+        ) from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="request body must be a JSON object")
+    return body
 
 
 @app.get("/healthz")
@@ -111,7 +139,7 @@ def models() -> Dict[str, Any]:
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request) -> JSONResponse:
     _check_auth(request)
-    body = await request.json()
+    body = await _json_object(request)
     messages: Optional[List[Dict[str, Any]]] = body.get("messages")
     if not messages:
         raise HTTPException(status_code=400, detail="messages is required")
@@ -178,7 +206,7 @@ async def receipt_verify(request: Request) -> Dict[str, Any]:
     the UNSIGNED-honest verdict. Returns {valid, detail, signed}. Honest by
     construction: a keyless envelope always returns valid=false/'unsigned-honest',
     and tampering with the body fails verification."""
-    body = await request.json()
+    body = await _json_object(request)
     env = body.get("envelope")
     if env is None:
         raise HTTPException(status_code=400, detail="envelope is required")
@@ -221,7 +249,7 @@ async def embeddings(request: Request) -> JSONResponse:
     full attempts trail). Sequential failover across separate sovereign workers —
     never fused VRAM. Fails loud (502) with the attempt trail if no route answers."""
     _check_auth(request)
-    body = await request.json()
+    body = await _json_object(request)
     input_ = body.get("input")
     if input_ is None:
         raise HTTPException(status_code=400, detail="input is required")
