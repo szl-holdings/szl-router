@@ -1085,7 +1085,8 @@ async def chat(request: ChatRequest, http_request: Request) -> JSONResponse:
             if (provider.provider_type == "ollama_loopback"
                     and request.model in provider.model_weight_digests):
                 attempts.append({"provider_id": provider.id,
-                                 "state": "LOCAL_ROUTE_DEADLINE_EXCEEDED"})
+                                 "state": "LOCAL_ROUTE_DEADLINE_EXCEEDED",
+                                 "outcome": "UNKNOWN"})
                 failure = {
                     "schema": RECEIPT_SCHEMA,
                     "request_digest": request_digest,
@@ -1093,14 +1094,37 @@ async def chat(request: ChatRequest, http_request: Request) -> JSONResponse:
                     "attempts": attempts,
                     "secret_material_recorded": False,
                     "state": "LOCAL_ROUTE_UNAVAILABLE",
+                    "automatic_retry_safe": False,
+                    "reconciliation": "REQUIRED_BEFORE_RETRY",
                 }
                 failure["digest"] = sha256(failure)
                 raise HTTPException(status_code=503, detail=failure) from None
-            attempts.append({"provider_id": provider.id, "state": (
-                "ROUTE_DEADLINE_EXCEEDED" if route_expired else "UPSTREAM_DEADLINE_EXCEEDED"
-            )})
-            if route_expired:
-                break
+            # asyncio cancellation closes this client's wait, not the remote
+            # operation. The provider may already have accepted, generated, or
+            # billed the request. Without a provider-bound idempotency key and
+            # status readback, dispatching the same POST to another provider
+            # would turn one logical request into duplicate work with no way to
+            # reconcile which answer or charge is authoritative.
+            attempts.append({
+                "provider_id": provider.id,
+                "state": (
+                    "ROUTE_DEADLINE_EXCEEDED" if route_expired
+                    else "UPSTREAM_DEADLINE_EXCEEDED"
+                ),
+                "outcome": "UNKNOWN",
+            })
+            break
+        except httpx.TimeoutException:
+            # httpx can raise its own connect/read/write/pool timeout before
+            # the outer wall timer expires. The gateway has no portable proof
+            # that a timed-out POST was never accepted, so use the same
+            # reconciliation boundary as an asyncio wall-time expiry.
+            attempts.append({
+                "provider_id": provider.id,
+                "state": "UPSTREAM_DEADLINE_EXCEEDED",
+                "outcome": "UNKNOWN",
+            })
+            break
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
             attempts.append({"provider_id": provider.id, "state": "UPSTREAM_HTTP_ERROR", "status_code": status})
@@ -1109,16 +1133,23 @@ async def chat(request: ChatRequest, http_request: Request) -> JSONResponse:
         except (httpx.HTTPError, RuntimeError, ValueError) as exc:
             attempts.append({"provider_id": provider.id, "state": "TRANSPORT_OR_CONTRACT_ERROR", "error_type": type(exc).__name__})
 
+    ambiguous_attempt = any(row.get("outcome") == "UNKNOWN" for row in attempts)
     failure = {
         "schema": RECEIPT_SCHEMA,
         "request_digest": request_digest,
         "plan_digest": request_plan["receipt"]["digest"],
         "attempts": attempts,
         "secret_material_recorded": False,
-        "state": "ALL_ELIGIBLE_PROVIDERS_FAILED",
+        "state": (
+            "ATTEMPT_OUTCOME_UNKNOWN" if ambiguous_attempt
+            else "ALL_ELIGIBLE_PROVIDERS_FAILED"
+        ),
     }
+    if ambiguous_attempt:
+        failure["automatic_retry_safe"] = False
+        failure["reconciliation"] = "REQUIRED_BEFORE_RETRY"
     failure["digest"] = sha256(failure)
-    raise HTTPException(status_code=502, detail=failure)
+    raise HTTPException(status_code=504 if ambiguous_attempt else 502, detail=failure)
 
 
 @app.get("/deployment.json")
