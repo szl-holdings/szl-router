@@ -17,6 +17,7 @@ Upstream keys are read from the environment by core.py and never logged.
 """
 from __future__ import annotations
 
+import ipaddress
 import os
 import time
 from typing import Any, Dict, List, Optional
@@ -60,9 +61,18 @@ def status() -> Dict[str, Any]:
 
 
 @app.get("/v1/spend")
-def spend_state() -> Dict[str, Any]:
+def spend_state(request: Request) -> Dict[str, Any]:
     """Read-only legacy advisory ledger and kill-file state. Paid cloud routing
     is blocked before transport; this is not an active spend cap. Loopback-only."""
+    _check_auth(request)
+    try:
+        peer = ipaddress.ip_address(request.client.host) if request.client else None
+    except ValueError:
+        peer = None
+    if isinstance(peer, ipaddress.IPv6Address) and peer.ipv4_mapped is not None:
+        peer = peer.ipv4_mapped
+    if peer is None or not peer.is_loopback:
+        raise HTTPException(status_code=403, detail="spend state is available to loopback peers only")
     return spend_guard.state()
 
 
