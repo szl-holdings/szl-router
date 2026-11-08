@@ -8,11 +8,13 @@ name: Auto-merge router flagship alignment
       - .github/workflows/auto-merge-flagship-alignment.yml
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   validate-and-enable:
+    permissions:
+      contents: write
+      pull-requests: write
     name: Validate contract and enable protected auto-merge
     if: github.event.pull_request.head.ref == 'fix/flagship-alignment-20260908'
     runs-on: ubuntu-latest
