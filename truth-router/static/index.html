@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<meta name="theme-color" content="#04070d"/><title>SZL Truth Router — honesty-weighted routing</title>
+<style>:root{--bg:#04070d;--ink:#e8f0fa;--mut:#8fa3bd;--cy:#5ce8de;--gd:#f0cf6e}
+*{box-sizing:border-box}html,body{margin:0;background:radial-gradient(ellipse 80% 50% at 50% -10%,#0a2230 0%,var(--bg) 60%);color:var(--ink);font:15px/1.6 system-ui,sans-serif}
+main{max-width:820px;margin:0 auto;padding:clamp(18px,5vw,52px)}h1{font-size:clamp(24px,5vw,42px);line-height:1.1;margin:.25em 0}
+.k{font:600 11px/1.7 ui-monospace,monospace;letter-spacing:.24em;color:var(--gd)}.mut{color:var(--mut)}
+table{width:100%;border-collapse:collapse;margin-top:14px;font-size:14px}td,th{padding:9px;border-bottom:1px solid #16233a;text-align:left}
+th{color:var(--mut);font-size:10px;letter-spacing:.12em;text-transform:uppercase}
+button{font:inherit;background:var(--cy);color:#08252b;border:0;border-radius:10px;padding:10px 18px;font-weight:700;cursor:pointer;margin-top:14px}
+#decision{margin-top:16px;font:12px/1.6 ui-monospace,monospace;white-space:pre-wrap;color:var(--cy)}
+footer{margin-top:36px;border-top:1px solid #16233a;padding-top:12px;font-size:12px;color:var(--mut)}</style></head>
+<body><main>
+<p class="k">SZL HOLDINGS · THE TRUTH ROUTER · szl.truth-router/1.0</p>
+<h1>The first router that routes by measured honesty.</h1>
+<p class="mut">Every other router optimizes price and speed. This one optimizes <b>P(truthful answer)</b> — from the cross-lab abstain census — with measured joules/token and price as tiebreakers. Every decision returns a SHA-256 receipt pointing at the census receipts that justify it. Fail-closed: no census, no routing.</p>
+<table id="reg"><tr><td class="mut">loading live registry from the chain…</td></tr></table>
+<button onclick="route()">Route a request →</button>
+<div id="decision"></div>
+<footer>honesty: huggingface.co/datasets/SZLHOLDINGS/frontier-54-runs (census legs) · energy: silicon-sweep receipts · prices: published estimates, labeled · <a href="/registry" style="color:var(--cy)">/registry</a> · <a href="/healthz" style="color:var(--cy)">/healthz</a></footer>
+<script>
+fetch("/registry").then(r=>r.json()).then(d=>{
+  document.getElementById("reg").innerHTML="<tr><th>model</th><th>honesty</th><th>J/token</th><th>$/1M</th><th>truth score</th></tr>"+
+    d.models.map(m=>`<tr><td><b>${m.model}</b></td><td>${m.abstain}/${m.probes}</td><td>${m.joules_per_token||"—"}</td><td>${m.price_per_1m}</td><td><b>${m.truth_score}</b></td></tr>`).join("");
+}).catch(()=>{document.getElementById("reg").innerHTML="<tr><td class='mut'>chain unreachable — failing closed</td></tr>"});
+function route(){
+  fetch("/route",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({task:"cite the exact formula atlas ID or abstain"})})
+  .then(r=>r.json()).then(d=>{
+    document.getElementById("decision").textContent =
+      "DECISION → "+d.chosen_model+"\\nhonesty "+d.why.honesty+" ("+d.why.abstain+") · J/token "+d.why.joules_per_token+" · $/1M "+d.why.price_per_1m_usd+"\\ntruth_score "+d.why.truth_score+"\\nreceipt sha256: "+d.decision_sha256.slice(0,32)+"…\\njustified by: "+(d.receipts||[]).join(", ");
+  }).catch(e=>{document.getElementById("decision").textContent="fail-closed: "+e;});
+}
+</script></main></body></html>
