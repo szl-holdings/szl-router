@@ -4,7 +4,10 @@
 # v0.1.0 receipt release pinned to its immutable source commit.
 #
 #   docker build -t szl-router .
-#   docker run -p 8000:8000 -e GROQ_API_KEY=... szl-router
+#   docker run -p 8000:8000 -e SZL_ROUTER_TOKEN=<from your secret store> -e GROQ_API_KEY=... szl-router
+#
+# SZL_ROUTER_TOKEN is required: without it chat/embeddings answer 503 (fail
+# closed). Set SZL_ROUTER_ALLOW_NO_AUTH=1 only for a deliberate open local run.
 #
 # No secrets are baked in — all upstream + signing keys come from the env at run
 # time. With no SZL_RECEIPT_KEY_PEM set, the server generates an EPHEMERAL session

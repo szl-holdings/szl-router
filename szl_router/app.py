@@ -50,7 +50,7 @@ async def _lifespan(_app: "FastAPI"):
             print("szl-router: WARNING running OPEN (no SZL_ROUTER_TOKEN, "
                   f"{ALLOW_NO_AUTH_ENV}=1)", file=sys.stderr, flush=True)
         else:
-            print("szl-router: no SZL_ROUTER_TOKEN set; chat/embeddings/spend "
+            print("szl-router: WARNING no SZL_ROUTER_TOKEN set; chat/embeddings/spend "
                   f"will answer 503 until it is (or {ALLOW_NO_AUTH_ENV}=1)", file=sys.stderr, flush=True)
     yield
 

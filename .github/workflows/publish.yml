@@ -2,7 +2,7 @@ name: publish-image
 
 # Build and publish the szl-router container to GitHub Container Registry (GHCR)
 # on every version tag (vX.Y.Z) and on manual dispatch. Anyone can then:
-#   docker run -p 8000:8000 -e GROQ_API_KEY=... ghcr.io/szl-holdings/szl-router:latest
+#   docker run -p 8000:8000 -e SZL_ROUTER_TOKEN=<from your secret store> -e GROQ_API_KEY=... ghcr.io/szl-holdings/szl-router:latest
 on:
   push:
     tags:
