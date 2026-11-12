@@ -313,7 +313,7 @@ signed-receipt contract end to end (signed receipt verifies, tampering fails,
 keyless is UNSIGNED-honest):
 
 ```bash
-pip install "szl-receipt-dsse>=0.3.1" pytest httpx
+pip install "szl-receipt-dsse>=0.3.3" pytest httpx
 python -m pytest -q
 ```
 
