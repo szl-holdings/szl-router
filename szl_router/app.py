@@ -28,6 +28,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from . import core, grid, receipts, spend_guard
 
@@ -145,7 +146,11 @@ async def chat_completions(request: Request) -> JSONResponse:
         raise HTTPException(status_code=400, detail="messages is required")
     model = body.get("model") or core.DEFAULT_MODEL
     try:
-        result = core.chat(
+        # core.chat is synchronous (stdlib http.client + time.sleep backoff).
+        # Run it in the worker threadpool so one slow upstream cannot block the
+        # event loop (and every other request, including /healthz).
+        result = await run_in_threadpool(
+            core.chat,
             model,
             messages,
             temperature=body.get("temperature"),
@@ -255,7 +260,8 @@ async def embeddings(request: Request) -> JSONResponse:
         raise HTTPException(status_code=400, detail="input is required")
     model = body.get("model") or "bge-large"
     try:
-        result = core.embed(
+        result = await run_in_threadpool(
+            core.embed,
             model,
             input_,
             extra={k: v for k, v in body.items()
