@@ -127,6 +127,14 @@
       && installedMatch && ["MATCH", "NOT_LOADED", "UNAVAILABLE"].includes(model.resident_state);
   }
 
+  // #providers has role="list"; every child (including empty and unavailable states) must be a listitem
+  // or assistive technology loses the list semantics (WCAG 1.3.1, axe aria-required-children).
+  function providerListItem(text) {
+    const item = element("div", "provider", text);
+    item.setAttribute("role", "listitem");
+    return item;
+  }
+
   function renderProviders(payload) {
     const providers = $("#providers");
     providers.replaceChildren();
@@ -138,7 +146,7 @@
     $("#registry-state").textContent = payload.state || "UNAVAILABLE";
     $("#egress-state").textContent = payload.egress_enabled ? "ENABLED" : "DISABLED";
     if (!rows.length) {
-      providers.append(element("div", "provider", "No validated providers. Registry configuration and explicit egress admission are required for inference."));
+      providers.append(providerListItem("No validated providers. Registry configuration and explicit egress admission are required for inference."));
     }
     for (const row of rows) {
       const card = element("article", "provider");
@@ -327,7 +335,7 @@
     if (currentRegistry) {
       renderProviders(currentRegistry);
     } else {
-      $("#providers").replaceChildren(element("div", "provider", "Registry evidence unavailable."));
+      $("#providers").replaceChildren(providerListItem("Registry evidence unavailable."));
       $("#model-aliases").replaceChildren();
       for (const id of ["registry-state", "provider-count", "egress-state"]) $("#" + id).textContent = "UNAVAILABLE";
     }

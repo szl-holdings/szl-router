@@ -16,7 +16,7 @@
 <body>
   <a class="skip" href="#main">Skip to content</a>
   <header>
-    <a class="brand" href="/" aria-label="SZL Sovereign Router home"><img class="native-mark" src="/static/szl/szl-icon-32.svg" alt="" width="40" height="40"><span class="brand-label"><strong>SZL Router</strong><small>Control interface</small></span></a>
+    <a class="brand" href="/"><img class="native-mark" src="/static/szl/szl-icon-32.svg" alt="" width="40" height="40"><span class="brand-label"><strong>SZL Router</strong><small>Control interface</small></span></a>
     <div id="runtime" class="runtime" role="status" aria-live="polite">CONTROL PLANE · CHECKING</div>
   </header>
   <nav class="workspace-nav" aria-label="Router workspaces"><a href="#readiness">Readiness</a><a href="#plan">Route plan</a><a href="#completion">Completion</a><a href="#registry">Providers</a><a href="#source">Source</a></nav>
@@ -55,11 +55,11 @@
       <article class="panel policy-panel">
         <div class="panel-head"><div><p class="eyebrow">POLICY INPUT</p><h2>Plan a route</h2></div><button id="refresh" type="button">Refresh registry</button></div>
         <form id="plan-form">
-          <label><span>Public model alias</span><input id="model" list="model-aliases" placeholder="Choose or enter an alias" required maxlength="96" pattern="[A-Za-z0-9][A-Za-z0-9._:\-]{0,95}" aria-describedby="model-alias-note"><datalist id="model-aliases"></datalist></label>
+          <label for="model"><span>Public model alias</span><input id="model" list="model-aliases" placeholder="Choose or enter an alias" required maxlength="96" pattern="[A-Za-z0-9][A-Za-z0-9._:\-]{0,95}" aria-describedby="model-alias-note"><datalist id="model-aliases"></datalist></label>
           <p id="model-alias-note" class="muted">Choose a listed alias or enter one to inspect policy. A listed alias does not establish a loaded model.</p>
           <p id="provider-binding" class="muted" role="status" aria-live="polite">No provider bound. Policy may choose any eligible provider.</p>
-          <label><span>Data classification</span><select id="classification"><option>public</option><option>internal</option><option>confidential</option><option>restricted</option></select></label>
-          <label><span>Maximum cost tier</span><input id="cost" type="number" min="0" max="10" value="10" required></label>
+          <label for="classification"><span>Data classification</span><select id="classification"><option>public</option><option>internal</option><option>confidential</option><option>restricted</option></select></label>
+          <label for="cost"><span>Maximum cost tier</span><input id="cost" type="number" min="0" max="10" value="10" required></label>
           <button class="primary" type="submit">Generate deterministic plan</button>
         </form>
       </article>
@@ -103,7 +103,7 @@
 
     <section class="panel registry-panel" id="registry">
       <div class="panel-head"><div><p class="eyebrow">ALLOWLISTED REGISTRY</p><h2>Provider readiness</h2></div><span class="pill">SECRETS NEVER SHOWN</span></div>
-      <div id="providers" class="providers" role="list" aria-live="polite"></div>
+      <div id="providers" class="providers" role="list" aria-live="polite"><div class="provider" role="listitem">Loading provider registry…</div></div>
     </section>
 
     <section class="panel proof-panel">
