@@ -372,3 +372,7 @@ terminating* control primitive — it makes **no** perpetual-motion or zero-cost
 ---
 
 **Explore the SZL estate:** [a11oy console](https://a-11-oy.com) · [Receipt format spec](https://github.com/szl-holdings/governed-receipt-spec) · [Lean proofs](https://github.com/szl-holdings/lutar-lean) · [Public proof site](https://github.com/szl-holdings/a11oy-net) · [Build acceptance](https://github.com/szl-holdings/szl-build-env) · [Telemetry](https://github.com/szl-holdings/vsp-otel) · [🤗 SZLHOLDINGS](https://huggingface.co/SZLHOLDINGS)
+
+## License
+
+Apache-2.0 — see [LICENSE](LICENSE).
