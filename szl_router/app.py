@@ -28,6 +28,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+from fastapi.concurrency import run_in_threadpool
 
 from . import core, grid, receipts, spend_guard
 
@@ -143,9 +144,21 @@ async def chat_completions(request: Request) -> JSONResponse:
     messages: Optional[List[Dict[str, Any]]] = body.get("messages")
     if not messages:
         raise HTTPException(status_code=400, detail="messages is required")
+    if not isinstance(messages, list) or not all(isinstance(m, dict) for m in messages):
+        raise HTTPException(status_code=400, detail="messages must be a list of objects")
+    if body.get("stream") is True:
+        # Streaming is not implemented; answering a stream request with a plain
+        # JSON body breaks OpenAI SSE clients silently. Fail loud instead.
+        raise HTTPException(status_code=400, detail="stream=true is not supported by szl-router")
     model = body.get("model") or core.DEFAULT_MODEL
+    if not isinstance(model, str):
+        raise HTTPException(status_code=400, detail="model must be a string")
     try:
-        result = core.chat(
+        # core.chat is synchronous (stdlib http.client + time.sleep backoff).
+        # Run it in the worker threadpool so one slow upstream cannot block the
+        # event loop (and every other request, including /healthz).
+        result = await run_in_threadpool(
+            core.chat,
             model,
             messages,
             temperature=body.get("temperature"),
@@ -255,7 +268,8 @@ async def embeddings(request: Request) -> JSONResponse:
         raise HTTPException(status_code=400, detail="input is required")
     model = body.get("model") or "bge-large"
     try:
-        result = core.embed(
+        result = await run_in_threadpool(
+            core.embed,
             model,
             input_,
             extra={k: v for k, v in body.items()
