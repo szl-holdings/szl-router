@@ -36,6 +36,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+from fastapi.concurrency import run_in_threadpool
 
 from . import core, grid, receipts, spend_guard
 
@@ -143,6 +144,42 @@ async def _json_object(request: Request) -> Dict[str, Any]:
     return body
 
 
+def _model_not_found(model: Any, kind: str) -> JSONResponse:
+    """OpenAI-shaped 404 for a model name this router cannot route."""
+    shown = model if isinstance(model, str) else repr(model)
+    return JSONResponse(
+        status_code=404,
+        content={"error": {
+            "message": f"The {kind} model '{shown}' does not exist on szl-router. "
+                       "See GET /v1/models, or use provider:upstream_model with a known provider.",
+            "type": "invalid_request_error",
+            "param": "model",
+            "code": "model_not_found",
+        }},
+    )
+
+
+def _is_known_chat_model(model: Any) -> bool:
+    """True only for a logical chat model, szl-auto, or provider:model with a
+    known provider. Unknown names used to fall back silently to the default
+    brain; they are now rejected so a typo never changes which model answers."""
+    if not isinstance(model, str):
+        return False
+    if model in core.MODEL_ROUTES or model == core.AUTO_MODEL:
+        return True
+    prov, sep, up = model.partition(":")
+    return bool(sep) and bool(up) and prov in core.PROVIDERS
+
+
+def _is_known_embed_model(model: Any) -> bool:
+    if not isinstance(model, str):
+        return False
+    if model in core.EMBED_ROUTES:
+        return True
+    prov, sep, up = model.partition(":")
+    return bool(sep) and bool(up) and prov in core.PROVIDERS
+
+
 @app.get("/healthz")
 def healthz() -> Dict[str, Any]:
     return {"ok": True, "service": "szl-router", "ts": int(time.time())}
@@ -212,9 +249,23 @@ async def chat_completions(request: Request) -> JSONResponse:
     messages: Optional[List[Dict[str, Any]]] = body.get("messages")
     if not messages:
         raise HTTPException(status_code=400, detail="messages is required")
+    if not isinstance(messages, list) or not all(isinstance(m, dict) for m in messages):
+        raise HTTPException(status_code=400, detail="messages must be a list of objects")
+    if body.get("stream") is True:
+        # Streaming is not implemented; answering a stream request with a plain
+        # JSON body breaks OpenAI SSE clients silently. Fail loud instead.
+        raise HTTPException(status_code=400, detail="stream=true is not supported by szl-router")
     model = body.get("model") or core.DEFAULT_MODEL
+    if not isinstance(model, str):
+        raise HTTPException(status_code=400, detail="model must be a string")
+    if not _is_known_chat_model(model):
+        return _model_not_found(model, "chat")
     try:
-        result = core.chat(
+        # core.chat is synchronous (stdlib http.client + time.sleep backoff).
+        # Run it in the worker threadpool so one slow upstream cannot block the
+        # event loop (and every other request, including /healthz).
+        result = await run_in_threadpool(
+            core.chat,
             model,
             messages,
             temperature=body.get("temperature"),
@@ -325,8 +376,12 @@ async def embeddings(request: Request) -> JSONResponse:
     if input_ is None:
         raise HTTPException(status_code=400, detail="input is required")
     model = body.get("model") or "bge-large"
+    # Non-string names keep their existing 400 from core.embed's validation.
+    if isinstance(model, str) and not _is_known_embed_model(model):
+        return _model_not_found(model, "embeddings")
     try:
-        result = core.embed(
+        result = await run_in_threadpool(
+            core.embed,
             model,
             input_,
             extra={k: v for k, v in body.items()
