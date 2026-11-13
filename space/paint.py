@@ -8,6 +8,7 @@ Arithmetic-would-allow is a ghost and cannot enable a control.
 from __future__ import annotations
 
 import json
+import math
 import urllib.error
 import urllib.request
 from typing import Any, Callable
@@ -69,6 +70,35 @@ def paint_label(paint: Paint, verdict: str | None = None) -> str:
     return "ALLOW"
 
 
+def _reject_duplicate_keys(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("duplicate JSON object key")
+        value[key] = item
+    return value
+
+
+def _reject_nonfinite_constant(_value):
+    raise ValueError("non-finite JSON number")
+
+
+def _parse_finite_float(value):
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("non-finite JSON number")
+    return number
+
+
+def _strict_json(raw):
+    return json.loads(
+        raw,
+        object_pairs_hook=_reject_duplicate_keys,
+        parse_constant=_reject_nonfinite_constant,
+        parse_float=_parse_finite_float,
+    )
+
+
 def load_published_cycle(
     *,
     url: str = ORGAN_CYCLE_URL,
@@ -87,7 +117,7 @@ def load_published_cycle(
             if status not in (None, 200):
                 return None
             raw = response.read()
-        body = json.loads(raw.decode("utf-8"))
+        body = _strict_json(raw.decode("utf-8"))
     except (
         OSError,
         ValueError,
