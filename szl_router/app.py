@@ -12,17 +12,25 @@ Endpoints:
     GET  /status                honest provider/route snapshot.
     GET  /healthz               liveness.
 
-Auth: if SZL_ROUTER_TOKEN is set, callers must send Authorization: Bearer <it>.
+Auth: callers must send Authorization: Bearer <SZL_ROUTER_TOKEN>. With no token
+configured the chat/embeddings/spend endpoints fail closed (503) unless the
+operator explicitly opts in to open mode with SZL_ROUTER_ALLOW_NO_AUTH=1.
+Responses report a provider's base_url only for well-known public provider
+hosts; operator-configured endpoints read "redacted" (set
+SZL_ROUTER_EXPOSE_BASE_URL=1 to restore the previous behaviour).
 Upstream keys are read from the environment by core.py and never logged.
 """
 from __future__ import annotations
 
+import hmac
 import ipaddress
 import json
 import math
 import os
+import sys
 import time
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlsplit
 
 from contextlib import asynccontextmanager
 
@@ -38,19 +46,76 @@ async def _lifespan(_app: "FastAPI"):
     # Resolve (or generate ephemeral) the receipt signing key once, logging the
     # honest posture + public key so a caller can verify this session's receipts.
     receipts.init_signing()
+    if not os.environ.get("SZL_ROUTER_TOKEN", "").strip():
+        if _env_flag(ALLOW_NO_AUTH_ENV):
+            print("szl-router: WARNING running OPEN (no SZL_ROUTER_TOKEN, "
+                  f"{ALLOW_NO_AUTH_ENV}=1)", file=sys.stderr, flush=True)
+        else:
+            print("szl-router: WARNING no SZL_ROUTER_TOKEN set; chat/embeddings/spend "
+                  f"will answer 503 until it is (or {ALLOW_NO_AUTH_ENV}=1)", file=sys.stderr, flush=True)
     yield
 
 
 app = FastAPI(title="SZL Router", version="1.0", lifespan=_lifespan)
 
 
+ALLOW_NO_AUTH_ENV = "SZL_ROUTER_ALLOW_NO_AUTH"
+EXPOSE_BASE_URL_ENV = "SZL_ROUTER_EXPOSE_BASE_URL"
+REDACTED = "redacted"
+
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip() == "1"
+
+
 def _check_auth(request: Request) -> None:
     want = os.environ.get("SZL_ROUTER_TOKEN", "").strip()
     if not want:
-        return
+        if _env_flag(ALLOW_NO_AUTH_ENV):
+            return
+        # Fail closed: an unset token is a deployment mistake, not an open door.
+        raise HTTPException(
+            status_code=503,
+            detail="szl-router auth is not configured: set SZL_ROUTER_TOKEN "
+                   f"(or {ALLOW_NO_AUTH_ENV}=1 to run open deliberately)",
+        )
     got = request.headers.get("authorization", "")
-    if got != f"Bearer {want}":
+    if not hmac.compare_digest(got.encode("utf-8"), f"Bearer {want}".encode("utf-8")):
         raise HTTPException(status_code=401, detail="invalid SZL_ROUTER_TOKEN")
+
+
+def _public_provider_hosts() -> frozenset:
+    hosts = set()
+    for p in core.PROVIDERS.values():
+        default = getattr(p, "base_url_default", "") or ""
+        parts = urlsplit(default)
+        if parts.scheme == "https" and parts.hostname:
+            hosts.add(parts.hostname.lower())
+    return frozenset(hosts)
+
+
+def _redact_base_url(url: Any) -> Any:
+    """Keep base_url only for well-known public provider hosts (https, built-in
+    default host). Operator-configured endpoints (own nodes, private or tailnet
+    addresses) are reported as "redacted" so a response never maps the fabric."""
+    if url is None or _env_flag(EXPOSE_BASE_URL_ENV):
+        return url
+    if not isinstance(url, str):
+        return REDACTED
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    if parts.scheme == "https" and host and host in _public_provider_hosts() \
+            and parts.username is None and parts.password is None:
+        return url
+    return REDACTED
+
+
+def _redact_provenance(result: Any) -> Any:
+    if isinstance(result, dict):
+        prov = result.get("x_szl_provenance")
+        if isinstance(prov, dict) and "base_url" in prov:
+            prov["base_url"] = _redact_base_url(prov["base_url"])
+    return result
 
 
 def _reject_json_constant(value: str) -> None:
@@ -122,7 +187,11 @@ def healthz() -> Dict[str, Any]:
 
 @app.get("/status")
 def status() -> Dict[str, Any]:
-    return core.status()
+    snap = core.status()
+    for row in snap.get("providers", []):
+        if isinstance(row, dict) and "base_url" in row:
+            row["base_url"] = _redact_base_url(row["base_url"])
+    return snap
 
 
 @app.get("/v1/spend")
@@ -246,7 +315,9 @@ async def chat_completions(request: Request) -> JSONResponse:
     )
     if envelope is not None:
         headers["x-szl-receipt"] = receipts.encode_header(envelope)
-    return JSONResponse(content=result, headers=headers)
+    # Redact after the receipt is built (base_url is not a receipt field, so
+    # signed receipts are byte-identical either way).
+    return JSONResponse(content=_redact_provenance(result), headers=headers)
 
 
 @app.post("/v1/receipt/verify")
@@ -326,7 +397,7 @@ async def embeddings(request: Request) -> JSONResponse:
                 "x_szl_provenance": {"attempts": [a.__dict__ for a in e.attempts]},
             },
         )
-    return JSONResponse(content=result)
+    return JSONResponse(content=_redact_provenance(result))
 
 
 def main() -> None:

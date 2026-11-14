@@ -211,7 +211,7 @@ curl localhost:8099/v1/chat/completions -H 'content-type: application/json' \
   -d '{"model":"szl-large","messages":[{"role":"user","content":"hi"}]}'
 ```
 
-Set `SZL_ROUTER_TOKEN` to require `Authorization: Bearer <token>` on callers.
+Set `SZL_ROUTER_TOKEN` to require `Authorization: Bearer <token>` on callers. With no token set, `/v1/chat/completions`, `/v1/embeddings` and `/v1/spend` answer `503` (fail closed); set `SZL_ROUTER_ALLOW_NO_AUTH=1` only for a deliberate open local run. Responses and `/status` show `base_url` only for built-in public provider hosts; operator-configured endpoints read `"redacted"` (`SZL_ROUTER_EXPOSE_BASE_URL=1` restores the old output).
 
 `GET /v1/spend` is a local operator endpoint exposing the legacy advisory ledger.
 It admits only a loopback peer (`127.0.0.0/8`, `::1`, or an IPv4-mapped loopback

@@ -68,4 +68,4 @@ embed_models:
 
 server:
   port_env: PORT                 # default 8099
-  auth_token_env: SZL_ROUTER_TOKEN   # optional; if set, callers must Bearer-match
+  auth_token_env: SZL_ROUTER_TOKEN   # required; unset -> 503 unless SZL_ROUTER_ALLOW_NO_AUTH=1
