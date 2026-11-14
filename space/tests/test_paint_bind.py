@@ -149,6 +149,22 @@ class PaintBindTests(unittest.TestCase):
             load_published_cycle(urlopen=lambda request, timeout=None: FakeResponse(None, raw=b"not-json"))
         )
 
+        for malformed in (
+            b'{"schema":"szl.frontier.ouroboros-cycle.v1","schema":"bad"}',
+            b'{"schema":"szl.frontier.ouroboros-cycle.v1","arithmeticScore":NaN}',
+            b'{"schema":"szl.frontier.ouroboros-cycle.v1","arithmeticScore":Infinity}',
+            b'{"schema":"szl.frontier.ouroboros-cycle.v1","arithmeticScore":-Infinity}',
+            b'{"schema":"szl.frontier.ouroboros-cycle.v1","arithmeticScore":1e999}',
+        ):
+            with self.subTest(malformed=malformed):
+                self.assertIsNone(
+                    load_published_cycle(
+                        urlopen=lambda request, timeout=None, payload=malformed: FakeResponse(
+                            None, raw=payload
+                        )
+                    )
+                )
+
         def boom(request, timeout=None):
             raise TimeoutError("organ unreachable")
 
