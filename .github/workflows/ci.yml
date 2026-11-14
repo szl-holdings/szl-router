@@ -6,6 +6,8 @@
 # Jobs:
 #   test      — Python 3.12, install the package's test/sign extras, syntax gate
 #               (compileall), then run the offline/deterministic test suite.
+#   floors    — the same suite with every declared dependency floor installed
+#               exactly (Python 3.10, the requires-python floor, and 3.12).
 #   doctrine  — calls the org-canonical reusable SZL Doctrine Check, same as
 #               every other szl-holdings repo's doctrine.yml.
 #
@@ -101,6 +103,43 @@ jobs:
 
       - name: Syntax gate (compileall)
         run: python -m compileall szl_router
+
+      - name: Run tests
+        run: python -m pytest -q
+
+  floors:
+    # Installs the lowest versions pyproject.toml declares, each ">=" floor pinned with
+    # "==" (scripts/check_dependency_floors.py reads them from the installed package
+    # metadata), checks that pip installed exactly those versions, then runs the suite.
+    # A floor that stops working fails here instead of on a user's install.
+    name: Test at declared floors (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install the declared floors
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install --no-deps .
+          python scripts/check_dependency_floors.py constraints --extras sign,test --unfloored pytest > "$RUNNER_TEMP/floors.txt"
+          cat "$RUNNER_TEMP/floors.txt"
+          python -m pip install --constraint "$RUNNER_TEMP/floors.txt" ".[test,sign]"
+          python -m pip check
+
+      - name: Check that the installed versions are the floors
+        run: python scripts/check_dependency_floors.py verify --extras sign,test --unfloored pytest
 
       - name: Run tests
         run: python -m pytest -q
