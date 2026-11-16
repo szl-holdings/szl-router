@@ -96,7 +96,9 @@ Beyond provenance, usage and the request digest, every new receipt also carries:
 
 - **`cost`** - a per-call USD block with its evidence basis. The named paid
   Moonshot candidate is blocked before transport; the legacy price-table
-  estimate and ledger do not qualify a strict concurrent spend cap.
+  estimate and ledger do not qualify a strict concurrent spend cap. The
+  owner-qualified OpenAI route (2026-11-16) is served only after a strict
+  pre-call USD reservation, and ledgers its served estimate.
   Unqualified cloud pricing/quota remains unknown (`amount_usd:null`), never
   fabricated as `$0`. Sovereign metal records `$0.00` vendor charge only,
   while electricity and other costs are unmetered here.
@@ -143,14 +145,16 @@ built our own, leaner version that fits our doctrine:
 
 | model       | intent              | declared order (blocked routes skipped)                            |
 |-------------|---------------------|-------------------------------------------------------------------|
-| `szl-large` | general large brain | box_gpu → nvidia_gpu → groq → nvidia_nim → moonshot(Kimi)          |
-| `szl-fast`  | low-latency small   | box_gpu → groq → nvidia_nim                                        |
-| `szl-coder` | coding              | box_gpu → nvidia_gpu → nvidia_nim → groq                           |
+| `szl-large` | general large brain | box_gpu → nvidia_gpu → groq → nvidia_nim → moonshot(Kimi) → openai(gpt-5.4)          |
+| `szl-fast`  | low-latency small   | box_gpu → groq → nvidia_nim → openai(gpt-5-mini)                                        |
+| `szl-coder` | coding              | box_gpu → nvidia_gpu → nvidia_nim → groq → openai(gpt-5.4)                           |
 | `szl-auto`  | smart routing       | scores the prompt, then dispatches to one of the three above      |
 
 You can also request `provider:upstream_model` directly. Unqualified cloud-grid
 and paid Moonshot overrides are rejected before transport, including when a
-credential is configured. The table preserves declaration order, not active
+credential is configured. The owner-qualified OpenAI paid route is the one
+exception: it serves, strictly last-fallback, only after a strict pre-call USD
+reservation (spend cap + max_tokens ceiling) passes. The table preserves declaration order, not active
 fallback availability.
 
 ## Smart routing (`szl-auto`)
@@ -192,11 +196,15 @@ curl localhost:8099/v1/chat/completions -H 'content-type: application/json' \
 | zhipu         | unqualified-grid | no | `ZHIPU_API_KEY`                          |
 | siliconflow   | unqualified-grid | no | `SILICONFLOW_API_KEY`                    |
 | moonshot/Kimi | paid-grid  | no        | `KIMI_API_KEY`                           |
+| openai        | qualified-paid | no    | `OPENAI_API_KEY`                         |
 
 A key and URL make a provider locally configured, not qualified, free, or live.
 Unqualified cloud-grid candidates are skipped. The named paid Moonshot candidate
 is blocked before transport until exact model pricing and strict pre-call spend
-reservation are qualified. See
+reservation are qualified. The owner-qualified OpenAI route (2026-11-16)
+serves only under exactly that strict pre-call reservation: kill switch,
+mandatory max_tokens ceiling, and spend-cap check — and ledgers the served
+estimate in the hash-linked ledger after transport. See
 [provider qualification](docs/PROVIDER_QUALIFICATION.md) for current gates.
 
 ## Run
@@ -229,8 +237,9 @@ Two layers of resilience, both honest (a real failure is always surfaced in the
 
 - **Route failover** - each logical model walks its ordered route list and
   returns the first eligible upstream that answers. Missing keys/URLs,
-  unqualified cloud-grid routes, and the blocked paid Moonshot candidate are
-  skipped and recorded in the attempt trail.
+  unqualified cloud-grid routes, the blocked paid Moonshot candidate, and a
+  refused qualified-paid reservation are skipped and recorded in the attempt
+  trail.
 - **Same-provider transient retry** — before falling through to the next route, a
   provider that blips transiently (HTTP `429`/`500`/`502`/`503`/`504`, or a
   dropped connection) is retried with **exponential backoff + full jitter**, so

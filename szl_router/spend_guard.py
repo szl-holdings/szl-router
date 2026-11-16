@@ -1,6 +1,7 @@
 """Legacy advisory paid-tier estimator and ledger - SZL Sovereign Ops.
 
-Paid routing in core.chat() is blocked before transport. This module retains
+Unqualified paid routing in core.chat() is blocked before transport; the
+owner-qualified OpenAI route must pass reserve_call() first. This module retains
 offline historical estimates and ledger inspection, but its allow()/record()
 helpers do not authorize a route. They do not reserve spend across processes,
 prove actual provider charges, or provide a strict USD cap. Owned hardware has
@@ -50,7 +51,14 @@ _MODEL_RATES: List[Tuple[str, float, float]] = [
     ("moonshot-v1-8k",     0.00020, 0.00060),
     ("kimi",               0.00060, 0.00250),
     ("moonshot",           0.00060, 0.00250),
-    # -- OpenAI (only if later armed) --
+    # -- OpenAI (owner-qualified 2026-11-16; reviewed list prices, USD per 1K) --
+    # Substring order matters: gpt-5.5 before gpt-5.4 before gpt-5-mini.
+    # gpt-5.4-mini conservatively matches gpt-5.4 (priced AT gpt-5.4, an
+    # upper bound; fail-closed beats under-billing).
+    ("gpt-5.5",            0.00500, 0.03000),  # $5.00 in / $30.00 out per 1M
+    ("gpt-5.4",            0.00250, 0.01500),  # $2.50 in / $15.00 out per 1M
+    ("gpt-5-mini",         0.00025, 0.00200),  # $0.25 in / $2.00 out per 1M
+    # -- OpenAI legacy (offline historical estimates) --
     ("gpt-4o-mini",        0.00015, 0.00060),
     ("gpt-4o",             0.00250, 0.01000),
     ("gpt-4.1-mini",       0.00040, 0.00160),
@@ -197,6 +205,50 @@ def allow(estimated_usd: float = 0.0) -> Tuple[bool, str]:
     if estimated_usd and (spent + float(estimated_usd)) > cap:
         return False, "would exceed cap ($%.4f + $%.4f > $%.2f)" % (spent, estimated_usd, cap)
     return True, "ok"
+
+
+def reserve_call(model, *, prompt_tokens=None, prompt_chars=None,
+                 max_tokens=None):
+    """STRICT pre-call USD reservation for an owner-qualified paid route.
+
+    This is the reservation the qualification document required. It fails
+    closed on every path that cannot prove the call is bounded:
+      * kill switch engaged                    -> refuse;
+      * no positive max_tokens ceiling         -> refuse (unbounded paid call);
+      * spent + upper-bound estimate > cap     -> refuse.
+    The upper bound prices the WHOLE prompt (tokens if given, else chars/4+1)
+    plus the caller's max_tokens ceiling at the model's reviewed table rates.
+    It is a per-call gate, not a concurrent debit: the served call is ledged
+    by record() after transport succeeds.
+    Returns (ok, reason, est_usd).
+    """
+    if kill_engaged():
+        return False, "kill-switch engaged (%s)" % kill_file(), 0.0
+    try:
+        mt = int(max_tokens)
+    except (TypeError, ValueError):
+        mt = -1
+    if mt <= 0:
+        return False, "no max_tokens ceiling; unbounded paid call refused", 0.0
+    ri, ro, _basis = rate_for(model)
+    try:
+        pt = int(prompt_tokens)
+    except (TypeError, ValueError):
+        pt = None
+    if pt is None or pt < 0:
+        # prompt_chars is a CHARACTER COUNT (an int), never a string.
+        try:
+            pc = int(prompt_chars)
+        except (TypeError, ValueError):
+            pc = 0
+        pt = (pc // 4 + 1) if pc > 0 else 1
+    est = round((pt / 1000.0) * ri + (mt / 1000.0) * ro, 6)
+    cap = cap_usd()
+    spent = spent_usd()
+    if spent + est > cap:
+        return False, ("cap: spent $%.4f + est $%.6f > cap $%.2f"
+                       % (spent, est, cap)), est
+    return True, "ok", est
 
 
 def record(amount_usd: float, source: str = "", meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:

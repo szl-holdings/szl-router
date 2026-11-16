@@ -6,7 +6,9 @@
 `szl-router` is SZL's own unified, **OpenAI-compatible** LLM router: one endpoint in
 front of declared routes, with owned GPU first and honest provenance on every
 response. Unqualified cloud-grid routes and the named paid Moonshot candidate
-are currently blocked before transport.
+are currently blocked before transport; the owner-qualified OpenAI route
+(2026-11-16) serves strictly last-fallback, only under a strict pre-call USD
+reservation.
 
 ## Design principles
 
@@ -39,13 +41,15 @@ szl-router/
 
 | model       | intent              | declared order (qualification gates apply)                |
 |-------------|---------------------|-----------------------------------------------------------|
-| `szl-large` | general large brain | box_gpu → nvidia_gpu → groq → nvidia_nim → moonshot(Kimi)  |
-| `szl-fast`  | low-latency small   | box_gpu → groq → nvidia_nim                                |
-| `szl-coder` | coding              | box_gpu → nvidia_gpu → nvidia_nim → groq                   |
+| `szl-large` | general large brain | box_gpu → nvidia_gpu → groq → nvidia_nim → moonshot(Kimi) → openai(gpt-5.4)  |
+| `szl-fast`  | low-latency small   | box_gpu → groq → nvidia_nim → openai(gpt-5-mini)                                |
+| `szl-coder` | coding              | box_gpu → nvidia_gpu → nvidia_nim → groq → openai(gpt-5.4)                   |
 
 This table preserves route declaration order, not current fallback availability.
 A configured key does not bypass qualification. Moonshot requires exact model
 pricing and strict pre-call spend reservation before dispatch can be enabled.
+The owner-qualified OpenAI route (2026-11-16) IS dispatch-enabled — behind
+exactly that strict reservation (kill switch, max_tokens ceiling, spend cap).
 
 Direct `provider:upstream_model` syntax (e.g. `groq:llama-3.3-70b-versatile`) is
 supported, but unqualified cloud-grid and paid Moonshot overrides fail before
