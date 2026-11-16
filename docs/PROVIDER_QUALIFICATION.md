@@ -16,9 +16,11 @@ and explicit egress enablement. An illustrative candidate record must have
 admission. The legacy `szl_router` unqualified cloud-grid routes are blocked
 while model-specific qualification is unknown. Its paid Moonshot route is also
 blocked before transport, even with a key, until exact model pricing and a
-strict pre-call spend reservation are qualified. Neither router has an
-implemented concurrent pre-reservation mechanism for a strict external spend
-cap.
+strict pre-call spend reservation are qualified. Since 2026-11-16 the
+owner-qualified OpenAI route is the one dispatch-enabled paid route:
+spend_guard.reserve_call() implements the strict pre-call reservation
+(kill switch, mandatory max_tokens ceiling, spend-cap check) this document
+required; all other paid candidates remain blocked.
 
 ## Current terms and offer checkpoints
 

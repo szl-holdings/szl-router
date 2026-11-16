@@ -209,6 +209,16 @@ PROVIDERS: Dict[str, Provider] = {
         energy_source="grid",
         note="Gemini API candidate; pricing, quota, terms, and data use unverified.",
     ),
+    # --- qualified paid grid (owner-qualified 2026-11-16) --------------------
+    "openai": Provider(
+        name="openai",
+        base_url_env="OPENAI_BASE_URL",
+        base_url_default="https://api.openai.com/v1",
+        key_env="OPENAI_API_KEY",
+        sovereign=False,
+        energy_source="grid",
+        note="Owner-qualified paid route; served only under a strict pre-call USD reservation (kill switch, max_tokens ceiling, spend cap).",
+    ),
     # --- paid grid candidate (blocked until qualified) -----------------------
     "moonshot": Provider(
         name="moonshot",
@@ -250,6 +260,10 @@ MODEL_ROUTES: Dict[str, List[Route]] = {
         ("groq", "llama-3.3-70b-versatile"),
         ("nvidia_nim", "meta/llama-3.3-70b-instruct"),
         ("moonshot", "kimi-k2.5"),
+        # Owner-qualified paid fallback (2026-11-16). Deliberately LAST in the
+        # chain: sovereign first, then grid, and paid only as the last resort,
+        # and then only after a strict pre-call USD reservation passes.
+        ("openai", "gpt-5.4"),
     ],
     # low-latency small brain. OFFLOAD doctrine: prefer the always-on HOME node
     # (omen_gpu) FIRST for small/fast jobs so the TRAVELING Blackwell laptop
@@ -265,6 +279,8 @@ MODEL_ROUTES: Dict[str, List[Route]] = {
         ("groq", "llama-3.1-8b-instant"),
         ("nvidia_nim", "meta/llama-3.1-8b-instruct"),
         ("openrouter", "meta-llama/llama-3.3-70b-instruct:free"),
+        # Owner-qualified paid fallback (2026-11-16), strictly last resort.
+        ("openai", "gpt-5-mini"),
     ],
     # coding brain
     "szl-coder": [
@@ -276,6 +292,8 @@ MODEL_ROUTES: Dict[str, List[Route]] = {
         ("openrouter", "qwen/qwen3-next-80b-a3b-instruct:free"),
         ("nvidia_nim", "deepseek-ai/deepseek-coder-6.7b-instruct"),
         ("groq", "llama-3.3-70b-versatile"),
+        # Owner-qualified paid fallback (2026-11-16), strictly last resort.
+        ("openai", "gpt-5.4"),
     ],
 }
 
@@ -318,7 +336,7 @@ class Provenance:
     base_url: Optional[str] = None
     sovereign: bool = False
     energy_source: Optional[str] = None
-    tier: Optional[str] = None             # sovereign | unqualified-grid | paid-grid
+    tier: Optional[str] = None             # sovereign | unqualified-grid | paid-grid | qualified-paid
     attempts: List[Attempt] = field(default_factory=list)
     # Set ONLY for the opt-in "szl-auto" logical model: the honest, deterministic
     # routing decision (complexity heuristic + chosen real logical model). Absent
@@ -364,6 +382,10 @@ class Provenance:
 def _tier_of(p: Provider) -> str:
     if p.sovereign:
         return "sovereign"
+    if p.name == "openai":
+        # Owner-qualified 2026-11-16 ("use the API with money"): exact pricing
+        # reviewed, strict pre-call USD reservation implemented. NOT sovereign.
+        return "qualified-paid"
     if p.name == "moonshot":
         return "paid-grid"
     # Provider identity (or a :free model suffix) cannot prove model-specific
@@ -756,12 +778,14 @@ def _cost_detail(provider: Provider, result: Dict[str, Any], upstream_model: str
 
     * paid-grid  -> offline historical ESTIMATE only; paid routing is blocked
                     until exact pricing and strict pre-call reservation qualify it;
+    * qualified-paid -> table-priced ESTIMATE of the ACTUAL served usage; the
+                    call was admitted only after a strict pre-call reservation;
     * sovereign  -> $0.00 vendor charge on our own metal (electricity is NOT
                     metered here - we say so instead of inventing a number).
     * unqualified-grid -> unknown vendor charge; never represented as free.
     """
     tier = _tier_of(provider)
-    if tier == "paid-grid":
+    if tier in ("paid-grid", "qualified-paid"):
         detail = spend_guard.estimate_detail(result, upstream_model)
         detail["tier"] = tier
         return detail
@@ -1196,6 +1220,19 @@ def chat(
                                     error="pricing/reservation unqualified; paid route disabled"))
             continue
 
+        if tier == "qualified-paid":
+            # STRICT PRE-CALL USD RESERVATION (owner-qualified 2026-11-16).
+            # Fails closed: an engaged kill switch, a missing max_tokens
+            # ceiling (unbounded paid call), or a reservation that would
+            # breach the spend cap refuses the call BEFORE any transport.
+            _prompt_chars = sum(len(str(m.get("content") or "")) for m in messages)
+            _ok, _why, _est_usd = spend_guard.reserve_call(
+                upstream_model, prompt_chars=_prompt_chars, max_tokens=max_tokens)
+            if not _ok:
+                attempts.append(Attempt(provider_name, upstream_model, ok=False,
+                                        error="pricing/reservation refused; " + _why))
+                continue
+
         # FAILURE COOLDOWN: skip a recently-failed upstream ONLY while a warm
         # candidate (available, not cooling) remains later in the chain. The
         # skip lands in the attempt trail so the receipt shows why this
@@ -1280,6 +1317,16 @@ def chat(
         # Honest cost block for the served sovereign route.
         # Signed into the receipt via app.py. This is not a pre-call USD reservation.
         prov.cost = _cost_detail(provider, result, upstream_model)
+        if tier == "qualified-paid":
+            # Ledger the served call's honest estimate after the fact. A
+            # ledger append failure must never break an already-served answer.
+            try:
+                spend_guard.record(prov.cost.get("amount_usd") or 0.0,
+                                   source="qualified-paid:" + provider_name,
+                                   meta={"model": upstream_model,
+                                         "served_by": prov.served_by})
+            except Exception:  # noqa: BLE001 - accounting must not break serving
+                pass
         result["x_szl_provenance"] = prov.to_dict()
         _emit_route_receipt(model=model, decision="served",
                             provenance=prov, attempts=attempts)
@@ -1830,12 +1877,12 @@ def fabric_status(include_harvest: bool = True, allow_network: bool = True) -> D
     window is open AND a sovereign node is up, surfaces a distinct, honest
     HARVESTING display state (real wasted grid power soaked on our own metal —
     not greenwash). The harvest overlay NEVER changes the sovereign label."""
-    sovereign, free_grid, paid_grid, unqualified_grid = [], [], [], []
+    sovereign, free_grid, paid_grid, unqualified_grid, qualified_paid = [], [], [], [], []
     for name, p in PROVIDERS.items():
         tier = _tier_of(p)
         rec = {
             "provider": name,
-            "armed": p.available() and tier in ("sovereign", "free-grid"),
+            "armed": p.available() and tier in ("sovereign", "free-grid", "qualified-paid"),
             "sovereign": p.sovereign,
             "energy_source": p.energy_source,
             "note": p.note,
@@ -1843,6 +1890,7 @@ def fabric_status(include_harvest: bool = True, allow_network: bool = True) -> D
         (sovereign if tier == "sovereign"
          else paid_grid if tier == "paid-grid"
          else free_grid if tier == "free-grid"
+         else qualified_paid if tier == "qualified-paid"
          else unqualified_grid).append(rec)
 
     sov_armed = [r for r in sovereign if r["armed"]]
@@ -1907,11 +1955,18 @@ def fabric_status(include_harvest: bool = True, allow_network: bool = True) -> D
                 "providers": paid_grid,
                 "what": "paid cloud candidate (Kimi); blocked until exact pricing and strict pre-call reservation qualify it; sovereign:false",
             },
+            "tier_3b_qualified_paid": {
+                "status": ("qualified" if [r for r in qualified_paid if r["armed"]]
+                           else "keyed-but-blocked" if qualified_paid else "absent"),
+                "providers": qualified_paid,
+                "what": "owner-qualified paid route (openai); served ONLY under strict pre-call USD reservation (kill switch, max_tokens ceiling, spend cap); strictly last-fallback; sovereign:false",
+            },
         },
         "honest_energy_sources": HONEST_ENERGY_SOURCES,
         "roadmap_energy_sources": ROADMAP_ENERGY_SOURCES,
         "doctrine": "sovereign:true ONLY on own metal; energy_source claims must be real; "
-                    "unqualified and paid cloud candidates are disabled; harvest is real grid data "
+                    "unqualified and paid cloud candidates are disabled; the owner-qualified "
+                    "OpenAI route serves only under strict pre-call reservation; harvest is real grid data "
                     "(never sovereign); joules SAMPLE until an on-box meter; no half-state.",
     }
     if harvest is not None:
