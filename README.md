@@ -385,3 +385,26 @@ terminating* control primitive — it makes **no** perpetual-motion or zero-cost
 ## License
 
 Apache-2.0 — see [LICENSE](LICENSE).
+
+
+## Offline paged-KV GPU memory planning (not a runtime guarantee)
+
+[Frontier Inference Math — reviewed leaders, papers, formulas and operational
+gates](docs/FRONTIER_INFERENCE_MATH_20261117.md) documents the official
+vLLM/PagedAttention, SGLang/RadixAttention, NVIDIA Dynamo, Ray Serve,
+FlashAttention, GenAI-Perf and Palantir sources used to guide a small,
+**independently implemented** SZL capacity control.
+
+The `szl-router-kv-plan` console script provides a **single-device** exact
+integer worst-case standard-KV page estimate. It requires model weights,
+non-KV workspace, safety reserve, actual KV dimensions, page size,
+maximum context and requested concurrency. An estimated fit is NOT measured
+VRAM, an inference benchmark, an admission to launch jobs, a guarantee
+against OOM, a method to fuse GPU memories, or proof of a model's trained
+weights. Unknown and unsupported geometries fail closed. No provider
+calls, credentials, weights downloads or GPU drivers are required.
+
+The existing sovereign-first router, request attempt/deadline guard,
+spend boundary, per-node mesh and protected publishers remain untouched.
+A separate measured GPU/runtime calibration and owner-reviewed launch
+integration would be needed before production use.

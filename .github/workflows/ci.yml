@@ -104,6 +104,43 @@ jobs:
       - name: Syntax gate (compileall)
         run: python -m compileall szl_router
 
+      - name: Smoke installed KV memory planner offline
+        working-directory: ${{ runner.temp }}
+        run: |
+          python - <<'PY'
+          import json
+          import subprocess
+          from importlib.metadata import entry_points
+          point = next((x for x in entry_points(group="console_scripts")
+                        if x.name == "szl-router-kv-plan"), None)
+          assert point is not None and point.value == "szl_router.kv_admission:main"
+          base = [
+              "szl-router-kv-plan",
+              "--gpu-label", "A6000-illustration",
+              "--vram-gib", "48", "--weights-gib", "26",
+              "--workspace-gib", "4", "--reserve-gib", "4",
+              "--layers", "32", "--kv-heads", "8", "--head-dim", "128",
+              "--kv-dtype", "bf16", "--page-tokens", "16",
+              "--prompt-tokens", "4096", "--max-output-tokens", "1024",
+              "--concurrent-requests", "16",
+          ]
+          passed = subprocess.run(base, capture_output=True, text=True,
+                                  check=False, timeout=15)
+          assert passed.returncode == 0, passed.stderr
+          receipt = json.loads(passed.stdout)
+          assert receipt["decision"] == "ESTIMATE_FITS_NOT_RUNTIME_QUALIFIED"
+          assert receipt["total_estimated_bytes"] == 44 * 1024**3
+          assert receipt["production_admission_established"] is False
+          assert receipt["cross_gpu_vram_fused"] is False
+          denied = subprocess.run(base[:-1] + ["24"],
+                                  capture_output=True, text=True,
+                                  check=False, timeout=15)
+          assert denied.returncode == 2, denied.stderr
+          refusal = json.loads(denied.stdout)
+          assert refusal["decision"] == "HOLD"
+          assert refusal["total_estimated_bytes"] == 49 * 1024**3
+          PY
+
       - name: Run tests
         run: python -m pytest -q
 
