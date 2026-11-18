@@ -49,6 +49,7 @@ test = [
 szl-router = "szl_router.app:main"
 szl-router-verify = "szl_router.verify:main"
 szl-router-control-verify = "router_control.verification:main"
+szl-router-kv-plan = "szl_router.kv_admission:main"
 
 [project.urls]
 Homepage = "https://github.com/szl-holdings/szl-router"
