@@ -28,6 +28,14 @@ identity limits and the network namespace requirement for containers.
 Its SHA256 receipts are unsigned content commitments. The legacy DSSE gateway
 described below is `szl_router.app`; the two receipt formats are distinct.
 
+The [SaladCloud × Massed A6000 coexistence frontier](docs/SALAD_MASSED_FRONTIER_20261118.md)
+studies vLLM, SGLang, NVIDIA Dynamo, llm-d and Salad Container Engine, and
+ships a **source-only, no-network capacity advisory** with explicit KV-block
+mathematics and fail-closed tests. It does not change either router app, launch
+GPU jobs, route an A11oy request, expose a model port, or grant paid-compute
+authority. Cloudflare Access and A11oy's separately governed router
+configuration remain independent production admission gates.
+
 [Run the local inference demo](demo/README.md) for one-command loopback inference,
 verified session receipts, and a hash-bound report using an installed Ollama model.
 
