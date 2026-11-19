@@ -929,8 +929,15 @@ async def local_models() -> dict[str, Any]:
             tags = await ollama_inventory("tags")
             running = await ollama_inventory("ps")
             body = local_models_body(settings, "REACHABLE", tags, running)
-        except (ModelIdentityError, httpx.HTTPError, asyncio.TimeoutError):
-            body = local_models_body(settings, "UNAVAILABLE")
+        except ModelIdentityError as exc:
+            # Keep only source-owned, fixed inventory codes. Never expose
+            # daemon text, exception messages, URLs or unrecognized states.
+            state = exc.state if exc.state in {
+                "DAEMON_INVENTORY_INVALID", "DAEMON_INVENTORY_UNAVAILABLE"
+            } else "DAEMON_INVENTORY_UNAVAILABLE"
+            body = local_models_body(settings, state)
+        except (httpx.HTTPError, asyncio.TimeoutError):
+            body = local_models_body(settings, "DAEMON_INVENTORY_UNAVAILABLE")
         observed_at = datetime.now(timezone.utc).isoformat()
         completed = time.monotonic()
         _local_probe_cache = (config_key, completed, observed_at, body)
