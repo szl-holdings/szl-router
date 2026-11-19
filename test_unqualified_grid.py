@@ -138,7 +138,11 @@ class UnqualifiedGridTests(unittest.TestCase):
                     with self.assertRaises(core.RouterError) as raised:
                         core.chat(model, MESSAGES)
                     paid_attempts = [a for a in raised.exception.attempts if a.provider == "moonshot"]
-                    self.assertEqual(len(paid_attempts), 1)
+                    # szl-large lists TWO moonshot paid candidates since the
+                    # 2026-11-19 frontier-board row (kimi-k3.1-pro joined
+                    # kimi-k2.5); a direct provider:model override still
+                    # reports exactly one. Fail-closed intent is unchanged.
+                    self.assertEqual(len(paid_attempts), 2 if model == "szl-large" else 1)
                     self.assertIn("pricing/reservation unqualified", paid_attempts[0].error)
         self.assertEqual(self.calls, [])
         self.assertFalse(core._warm_candidate_later([("moonshot", "kimi-k2.5")], 0))
