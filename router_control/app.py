@@ -39,7 +39,7 @@ from router_control.verification import (
     sha256, verify_completion,
 )
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 SOURCE_SCHEMA = "szl.router-source/v1"
 PLAN_SCHEMA = "szl.router-plan/v1"
 RECEIPT_SCHEMA = "szl.router-receipt/v1"
