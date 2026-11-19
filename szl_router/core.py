@@ -53,7 +53,8 @@ except ImportError:  # test harness imports `core` top-level (sys.path=szl_route
 # ---------------------------------------------------------------------------
 # Provider registry. base_url is the OpenAI-compatible root (ends before /chat).
 # sovereign is TRUE only for hardware we own/control. energy_source is honest:
-# "grid" for third-party clouds; "self-hosted" for our own metal (still grid
+# "grid" for t
+hird-party clouds; "self-hosted" for our own metal (still grid
 # power today — flip to "solar"/"renewable" only when that is literally true).
 # ---------------------------------------------------------------------------
 def _normalize_base(url: str) -> str:
@@ -105,7 +106,8 @@ class Provider:
 
 PROVIDERS: Dict[str, Provider] = {
     # Explicit opt-in only: local_ollama:<installed-model>. No key, remote URL,
-    # model download, or cloud fallback; existing logical routes are unchanged.
+    # model download, or cloud fallback; existing logical route
+s are unchanged.
     "local_ollama": Provider(
         name="local_ollama", base_url_env="",
         base_url_default="http://127.0.0.1:11434/v1", key_env="",
@@ -153,7 +155,8 @@ PROVIDERS: Dict[str, Provider] = {
         key_env="GROQ_API_KEY",
         sovereign=False,
         energy_source="grid",
-        note="Cloud inference candidate; model pricing and quota unverified.",
+        note="Cloud inference candid
+ate; model pricing and quota unverified.",
     ),
     "nvidia_nim": Provider(
         name="nvidia_nim",
@@ -207,7 +210,8 @@ PROVIDERS: Dict[str, Provider] = {
         key_env="GEMINI_API_KEY",
         sovereign=False,
         energy_source="grid",
-        note="Gemini API candidate; pricing, quota, terms, and data use unverified.",
+        not
+e="Gemini API candidate; pricing, quota, terms, and data use unverified.",
     ),
     # --- qualified paid grid (owner-qualified 2026-11-16) --------------------
     "openai": Provider(
@@ -249,13 +253,22 @@ MODEL_ROUTES: Dict[str, List[Route]] = {
         ("box_gpu", "llama3.1:8b"),
         ("nvidia_gpu", "llama3.1:8b"),
         ("omen_gpu", "llama3.1:8b"),
-        # Grid candidates remain listed for later model-specific qualification.
+        # Grid can
+didates remain listed for later model-specific qualification.
         # They are skipped until pricing and quota are verified.
         ("groq", "deepseek-r1-distill-llama-70b"),
         ("nvidia_nim", "deepseek-ai/deepseek-r1"),
         ("cerebras", "gpt-oss-120b"),
         ("openrouter", "qwen/qwen3-next-80b-a3b-instruct:free"),
         ("google", "gemini-2.5-flash"),
+        # 2026-11-19 frontier-board candidates (BenchLeader open-weights
+        # board: Kimi K3.1 Pro; Z.AI GLM-5.3). Same tier as the rows above:
+        # unqualified grid. Skipped until per-model pricing, quota, and a
+        # strict pre-call spend reservation are owner-qualified. Upstream
+        # model IDs re-verified at qualification time. Listed presence never
+        # enables a route; no sovereign or armed route changed.
+        ("zhipu", "glm-5.3"),
+        ("moonshot", "kimi-k3.1-pro"),
         # Further grid candidates, then the blocked paid candidate.
         ("groq", "llama-3.3-70b-versatile"),
         ("nvidia_nim", "meta/llama-3.3-70b-instruct"),
@@ -279,6 +292,10 @@ MODEL_ROUTES: Dict[str, List[Route]] = {
         ("groq", "llama-3.1-8b-instant"),
         ("nvidia_nim", "meta/llama-3.1-8b-instruct"),
         ("openrouter", "meta-llama/llama-3.3-70b-instruct:free"),
+        # 2026-11-19 frontier-board candidate (cheap tier: GLM 5.3 Flash,
+        # $0.238/M blended per BenchLeader 2026-11-19). Unqualified grid,
+        # skipped until owner qualification. No armed route or ordering change.
+        ("zhipu", "glm-5.3-flash"),
         # Owner-qualified paid fallback (2026-11-16), strictly last resort.
         ("openai", "gpt-5-mini"),
     ],
@@ -288,7 +305,8 @@ MODEL_ROUTES: Dict[str, List[Route]] = {
         ("nvidia_gpu", "qwen2.5-coder:7b"),
         ("omen_gpu", "qwen2.5-coder:7b"),
         # Grid candidates retained for later model-specific qualification.
-        ("groq", "deepseek-r1-distill-llama-70b"),
+        ("gro
+q", "deepseek-r1-distill-llama-70b"),
         ("openrouter", "qwen/qwen3-next-80b-a3b-instruct:free"),
         ("nvidia_nim", "deepseek-ai/deepseek-coder-6.7b-instruct"),
         ("groq", "llama-3.3-70b-versatile"),
@@ -339,7 +357,8 @@ class Provenance:
     tier: Optional[str] = None             # sovereign | unqualified-grid | paid-grid | qualified-paid
     attempts: List[Attempt] = field(default_factory=list)
     # Set ONLY for the opt-in "szl-auto" logical model: the honest, deterministic
-    # routing decision (complexity heuristic + chosen real logical model). Absent
+    # routing decision (complexity heuristic + cho
+sen real logical model). Absent
     # for every other model so their provenance shape stays byte-identical.
     routing: Optional[Dict[str, Any]] = None
     # Honest per-call USD cost block for the SERVED route (see _cost_detail):
@@ -385,7 +404,8 @@ def _tier_of(p: Provider) -> str:
     if p.name == "openai":
         # Owner-qualified 2026-11-16 ("use the API with money"): exact pricing
         # reviewed, strict pre-call USD reservation implemented. NOT sovereign.
-        return "qualified-paid"
+        re
+turn "qualified-paid"
     if p.name == "moonshot":
         return "paid-grid"
     # Provider identity (or a :free model suffix) cannot prove model-specific
@@ -427,7 +447,8 @@ class _ConnectionPool:
                  max_hosts: int = _POOL_MAX_HOSTS):
         self._max_per_host = max_per_host
         self._max_hosts = max_hosts
-        self._idle: Dict[Tuple[str, str, int], List[http.client.HTTPConnection]] = {}
+        self._idle: Dict[Tuple[str, str, int], List[http.client.HTTPConnection]
+] = {}
         self._lock = threading.Lock()
 
     @staticmethod
@@ -474,7 +495,8 @@ class _ConnectionPool:
                 return
             bucket.append(conn)
 
-    def request_json(self, url: str, data: bytes, headers: Dict[str, str],
+    def request_json(self, url: str, data: bytes, headers: Dict
+[str, str],
                      timeout: float) -> Dict[str, Any]:
         """POST `data` to `url` and return the parsed JSON body, reusing a pooled
         keep-alive connection when one is available.
@@ -513,7 +535,8 @@ class _ConnectionPool:
                     raise
                 # Unbudgeted callers keep the previous behavior: a stale pooled
                 # connection can fail at send/recv and is retried once on a fresh
-                # connection. That resend is not a separate attempt counter.
+                # connection. That resend is not a separate attempt coun
+ter.
                 conn = self._new_conn(scheme, host, port, timeout)
                 conn.request("POST", path, body=data, headers=headers)
                 resp = conn.getresponse()
@@ -564,7 +587,8 @@ _UPSTREAM_POOL = _ConnectionPool()
 # (500/502/503/504), or a dropped connection — where an immediate same-provider
 # retry would just hammer it. So before falling through to the next route we
 # retry the SAME provider a bounded number of times with exponential backoff and
-# FULL jitter (sleep = random(0, base * 2**attempt), capped). Full jitter is the
+# FULL jitter
+ (sleep = random(0, base * 2**attempt), capped). Full jitter is the
 # AWS-recommended shape: it spreads concurrent clients so they don't retry in
 # lockstep and stampede a recovering upstream.
 #
@@ -601,7 +625,8 @@ def _latency_ms(now: float, started: float) -> int:
     try:
         return max(0, int((now - started) * 1000))
     except (TypeError, ValueError, OverflowError):
-        return 0
+        return 
+0
 
 
 def _http_error_text(exc: urllib.error.HTTPError) -> str:
@@ -647,7 +672,8 @@ def _post_with_retry(poster, provider: Provider, payload: Dict[str, Any],
                 last_exc = e
                 if not _is_retryable_http(getattr(e, "code", None)):
                     raise  # permanent (e.g. 400/401/404) — fail through now
-            except (http.client.HTTPException, OSError) as e:
+            excep
+t (http.client.HTTPException, OSError) as e:
                 last_exc = e  # connection-level blip — retryable
             if attempt + 1 >= _RETRY_MAX_ATTEMPTS:
                 break
@@ -692,7 +718,8 @@ def _post_with_retry(poster, provider: Provider, payload: Dict[str, Any],
                 last_budget_exc = e
                 budget.note_outcome(attempt_no, "unknown")
                 if on_attempt is not None:
-                    on_attempt(_transport_attempt(
+  
+                  on_attempt(_transport_attempt(
                         provider, payload, ok=False, status=None,
                         error=f"{type(e).__name__}: {e}"[:200],
                         latency_ms=_latency_ms(budget.clock(), started),
@@ -731,7 +758,8 @@ def _post_with_retry(poster, provider: Provider, payload: Dict[str, Any],
 # SZL_COOLDOWN_SECONDS=0 disables the mechanism (default 30s).
 # ---------------------------------------------------------------------------
 _COOLDOWN_LOCK = threading.Lock()
-_COOLDOWN_UNTIL: Dict[str, float] = {}
+_COOLDOWN_UNTIL: Dict[str
+, float] = {}
 
 
 def _cooldown_seconds() -> float:
@@ -761,1214 +789,6 @@ def _clear_cooldown(provider_name: str) -> None:
         _COOLDOWN_UNTIL.pop(provider_name, None)
 
 
-def _warm_candidate_later(routes: List[Route], next_index: int) -> bool:
-    """True if any route at/after next_index is available and NOT cooling —
-    i.e. skipping the current cooled provider still leaves a real candidate."""
-    for provider_name, _up in routes[next_index:]:
-        p = PROVIDERS.get(provider_name)
-        if (p is not None and p.available()
-                and _tier_of(p) not in ("unqualified-grid", "paid-grid")
-                and _cooldown_remaining(provider_name) <= 0):
-            return True
-    return False
+def _warm_candidate_later(routes: List[Route],
 
-
-def _cost_detail(provider: Provider, result: Dict[str, Any], upstream_model: str) -> Dict[str, Any]:
-    """Honest per-call USD cost block for the served route, signed into the receipt.
-
-    * paid-grid  -> offline historical ESTIMATE only; paid routing is blocked
-                    until exact pricing and strict pre-call reservation qualify it;
-    * qualified-paid -> table-priced ESTIMATE of the ACTUAL served usage; the
-                    call was admitted only after a strict pre-call reservation;
-    * sovereign  -> $0.00 vendor charge on our own metal (electricity is NOT
-                    metered here - we say so instead of inventing a number).
-    * unqualified-grid -> unknown vendor charge; never represented as free.
-    """
-    tier = _tier_of(provider)
-    if tier in ("paid-grid", "qualified-paid"):
-        detail = spend_guard.estimate_detail(result, upstream_model)
-        detail["tier"] = tier
-        return detail
-    if tier == "sovereign":
-        return {"amount_usd": 0.0, "estimated": False,
-                "basis": "sovereign-owned-metal; no vendor charge; electricity not metered here",
-                "model": upstream_model, "tier": tier}
-    return {"amount_usd": None, "estimated": False,
-            "basis": "model pricing and quota unverified; vendor charge unknown",
-            "model": upstream_model, "tier": tier}
-
-
-# ---------------------------------------------------------------------------
-# Core call
-# ---------------------------------------------------------------------------
-def _upstream_headers(provider: Provider) -> Dict[str, str]:
-    headers = {
-        "Content-Type": "application/json",
-        # Some upstreams (e.g. Groq behind Cloudflare) reject the default urllib
-        # User-Agent with HTTP 1010. Identify ourselves like a normal client.
-        "User-Agent": "szl-router/1.0",
-        "Accept": "application/json",
-    }
-    key = provider.api_key()
-    if key:
-        headers["Authorization"] = "Bearer " + key
-    return headers
-
-
-def _post_chat(provider: Provider, payload: Dict[str, Any], timeout: float) -> Dict[str, Any]:
-    url = provider.base_url() + "/chat/completions"
-    data = json.dumps(payload).encode("utf-8")
-    return _UPSTREAM_POOL.request_json(url, data, _upstream_headers(provider), timeout)
-
-
-def _chat_response_error(result: Any) -> Optional[str]:
-    """Check the answer shape before declaring a route served.
-
-    Empty text, filtered replies and tool-only replies are valid completions.
-    Error bodies and malformed choices are failures even when HTTP was 200.
-    Diagnostics describe the schema only; upstream content is never echoed.
-    """
-    if not isinstance(result, dict):
-        return "invalid chat response: expected an object"
-    if result.get("error") is not None:
-        return "invalid chat response: upstream returned an error"
-    choices = result.get("choices")
-    if not isinstance(choices, list) or not choices:
-        return "invalid chat response: choices must be a non-empty array"
-    for choice in choices:
-        message = choice.get("message") if isinstance(choice, dict) else None
-        if not isinstance(message, dict) or message.get("role") != "assistant":
-            return "invalid chat response: every choice must contain an assistant message"
-        if message.get("content") is not None and not isinstance(message["content"], str):
-            return "invalid chat response: message content must be a string or null"
-        if not any(key in message for key in
-                   ("content", "tool_calls", "function_call", "refusal", "audio")):
-            return "invalid chat response: assistant message has no output field"
-        tool_calls = message.get("tool_calls")
-        if tool_calls is not None and (
-            not isinstance(tool_calls, list)
-            or any(not isinstance(call, dict) or not call for call in tool_calls)
-        ):
-            return "invalid chat response: tool_calls must contain call objects"
-        if message.get("refusal") is not None and not isinstance(message["refusal"], str):
-            return "invalid chat response: refusal must be a string or null"
-        for key in ("function_call", "audio"):
-            if message.get(key) is not None and not isinstance(message[key], dict):
-                return "invalid chat response: function_call and audio must be objects"
-    return None
-
-
-def _embedding_response_error(result: Any, payload: Dict[str, Any]) -> Optional[str]:
-    """Reject unusable or incomplete vectors before they enter the cache.
-
-    A token array is one input; text arrays and arrays of token arrays are
-    batches. Batch order may vary, but every input needs exactly one index.
-    Both float vectors and the requested base64 float32 encoding are supported.
-    """
-    if not isinstance(result, dict):
-        return "invalid embeddings response: expected an object"
-    if result.get("error") is not None:
-        return "invalid embeddings response: upstream returned an error"
-    data = result.get("data")
-    if not isinstance(data, list) or not data:
-        return "invalid embeddings response: data must be a non-empty array"
-    input_ = payload.get("input")
-    expected_count = (len(input_) if isinstance(input_, list) and input_
-                      and isinstance(input_[0], (str, list)) else 1)
-    if len(data) != expected_count:
-        return "invalid embeddings response: vector count does not match input count"
-    indices = set()
-    vector_size = None
-    for row in data:
-        if not isinstance(row, dict):
-            return "invalid embeddings response: every vector must be an object"
-        index = row.get("index")
-        if type(index) is not int or index < 0 or index >= expected_count or index in indices:
-            return "invalid embeddings response: indices must cover each input exactly once"
-        indices.add(index)
-        vector = row.get("embedding")
-        if payload.get("encoding_format") == "base64":
-            if not isinstance(vector, str) or not vector:
-                return "invalid embeddings response: expected a base64 vector"
-            try:
-                raw = base64.b64decode(vector, validate=True)
-            except (ValueError, binascii.Error):
-                return "invalid embeddings response: invalid base64 vector"
-            if not raw or len(raw) % 4:
-                return "invalid embeddings response: invalid float32 vector length"
-            size = len(raw) // 4
-            finite = all(math.isfinite(value[0]) for value in struct.iter_unpack("<f", raw))
-        else:
-            if not isinstance(vector, list) or not vector:
-                return "invalid embeddings response: expected a non-empty numeric vector"
-            size = len(vector)
-            try:
-                finite = all(type(value) in (int, float) and math.isfinite(value) for value in vector)
-            except OverflowError:
-                finite = False
-        if not finite:
-            return "invalid embeddings response: vector values must be finite numbers"
-        if vector_size is not None and size != vector_size:
-            return "invalid embeddings response: vector dimensions differ within the batch"
-        dimensions = payload.get("dimensions")
-        if type(dimensions) is int and dimensions > 0 and size != dimensions:
-            return "invalid embeddings response: vector dimensions do not match the request"
-        vector_size = size
-    return None
-
-
-def resolve_routes(model: str) -> List[Route]:
-    """Map a requested model to its ordered fallback routes.
-
-    Accepts our logical names (szl-large/...) OR a raw 'provider:model' override
-    OR a bare upstream model (sent to every provider that lists it implicitly is
-    NOT done — we require provider:model for raw to stay honest)."""
-    if model in MODEL_ROUTES:
-        return MODEL_ROUTES[model]
-    if ":" in model:
-        prov, _, up = model.partition(":")
-        if prov in PROVIDERS:
-            return [(prov, up)]
-    # unknown logical model -> default brain
-    return MODEL_ROUTES[DEFAULT_MODEL]
-
-
-# Documented fallback only — real deployments set SZL_RECEIPT_SINK.
-_RECEIPT_SINK_FALLBACK = "https://szlholdings-a11oy.hf.space/api/lake/v1"
-
-
-def _emit_route_receipt(
-    *,
-    model: str,
-    decision: str,
-    provenance: Optional["Provenance"],
-    attempts: List["Attempt"],
-) -> None:
-    """Fire-and-forget governance receipt for one routing decision.
-
-    POSTs to <SZL_RECEIPT_SINK>/receipts on a daemon thread with a short
-    timeout; every error is swallowed. A sink hiccup never blocks or breaks
-    routing. No-op when SZL_RECEIPT_SINK is unset — the fallback URL is only a
-    documented default and is never contacted unless the env var is set.
-    """
-    sink = os.environ.get("SZL_RECEIPT_SINK")
-    if not sink:
-        return
-    prov_dict = provenance.to_dict() if provenance is not None else {}
-    served_by = prov_dict.get("served_by")
-    canonical = json.dumps(
-        {"model": model, "decision": decision, "served_by": served_by},
-        sort_keys=True, separators=(",", ":"),
-    ).encode()
-    rid = hashlib.sha256(canonical + str(time.time_ns()).encode()).hexdigest()
-    payload = {
-        "id": rid,
-        "ts": time.time(),
-        "organ": "szl-router",
-        "decision": decision,  # served | all-routes-failed
-        "governance": {
-            # The router computes no Λ score — honest null, never fabricated.
-            "lambda": None,
-            "gates": {
-                "model": model,
-                "served_by": served_by,
-                "tier": prov_dict.get("tier"),
-                "sovereign": prov_dict.get("sovereign"),
-                "energy_source": prov_dict.get("energy_source"),
-                "attempts": len(attempts),
-            },
-        },
-        # No joules meter in the router — honest UNAVAILABLE, never fabricated.
-        "energy": {"label": "UNAVAILABLE", "joules": None},
-    }
-
-    def _send() -> None:
-        try:
-            data = json.dumps(payload).encode("utf-8")
-            req = urllib.request.Request(
-                sink.rstrip("/") + "/receipts",
-                data=data,
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            urllib.request.urlopen(req, timeout=2.0).close()
-        except Exception:
-            pass  # fire-and-forget: never raise, never block routing
-
-    try:
-        threading.Thread(target=_send, daemon=True).start()
-    except Exception:
-        pass
-
-
-# ---------------------------------------------------------------------------
-# szl-auto: opt-in complexity-aware, sovereign-first smart routing.
-#
-# "szl-auto" is NOT a route of its own — chat() intercepts it, scores the prompt
-# with a deterministic, no-LLM heuristic, and dispatches to the cheapest CAPABLE
-# real logical model SOVEREIGN-FIRST: simple -> szl-fast, complex -> szl-large,
-# code -> szl-coder. The decision (score, signals, chosen model) is recorded
-# HONESTLY in x_szl_provenance.routing and inside the signed receipt. It is a
-# routing ESTIMATE, never a quality guarantee, and it costs no upstream call.
-# ---------------------------------------------------------------------------
-AUTO_MODEL = "szl-auto"
-AUTO_SCORER_VERSION = "heuristic-v1"
-
-_CODE_MARKERS = (
-    "```", "def ", "return ", "import ", "function", "class ", "();", "});",
-    "const ", "let ", " var ", "select ", "#include", "public static",
-    "console.log", "print(", "</", "/>", "traceback", "stack trace",
-    "npm ", "pip install", "regex",
-)
-_REASONING_MARKERS = (
-    "why", "explain", "compare", "analyze", "analyse", "step by step",
-    "prove", "derive", "trade-off", "tradeoff", "design", "architect",
-    "evaluate", "reason", "implications", "pros and cons", "in detail",
-    "comprehensive", "strategy", "optimize", "refactor", "debug",
-)
-
-
-def _env_float(name: str, default: float) -> float:
-    raw = os.environ.get(name)
-    if not raw:
-        return default
-    try:
-        return float(raw)
-    except ValueError:
-        return default
-
-
-def _coerce_text(content: Any) -> str:
-    """Flatten an OpenAI message 'content' (str, list-of-parts, or other) to
-    plain text for lexical scoring. Never raises; unknown shapes -> str()."""
-    if content is None:
-        return ""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for p in content:
-            if isinstance(p, dict):
-                parts.append(str(p.get("text") or ""))
-            else:
-                parts.append(str(p))
-        return " ".join(parts)
-    return str(content)
-
-
-def score_complexity(messages: List[Dict[str, Any]]) -> Tuple[float, List[str], str]:
-    """Deterministic, no-LLM heuristic ESTIMATE of prompt complexity.
-
-    Returns (score in [0,1], human-readable signals, chosen logical model). Pure
-    and side-effect free, so the same prompt always routes the same way and a
-    receipt can be reproduced. This is a routing choice, never a quality claim,
-    and makes NO upstream call.
-    """
-    signals: List[str] = []
-    # Fail-safe: an "szl-auto" request whose `messages` is malformed (a JSON
-    # object instead of an array, a bare string, null, or any other non-list
-    # shape) must still resolve to a route — never crash the smart-router. A
-    # non-list `messages` previously reached `msgs[-1]` and raised (e.g. a dict
-    # payload -> KeyError), turning a bad request into an unhandled 500. Normalize
-    # any non-list to an empty list so the scorer is TOTAL: a malformed payload
-    # degrades to the cheap sovereign-first default (szl-fast) and the real
-    # upstream call still surfaces the bad body honestly in the attempt trail.
-    msgs = messages if isinstance(messages, list) else []
-    user_msgs = [m for m in msgs if isinstance(m, dict) and m.get("role") == "user"]
-    last = user_msgs[-1] if user_msgs else (msgs[-1] if msgs else {})
-    text = _coerce_text(last.get("content") if isinstance(last, dict) else last)
-    all_text = " ".join(_coerce_text(m.get("content")) for m in msgs
-                        if isinstance(m, dict))
-    lower = text.lower()
-    all_lower = all_text.lower()
-    n_chars = len(text)
-    n_msgs = len(msgs)
-
-    # Code detection (routes to szl-coder regardless of length).
-    code_hits = [mk for mk in _CODE_MARKERS if mk in all_lower]
-    is_code = ("```" in all_text) or (len(code_hits) >= 2)
-
-    # Complexity score, baseline 0.30.
-    score = 0.30
-    if n_chars > 1200:
-        score += 0.35
-        signals.append("very-long-prompt")
-    elif n_chars > 400:
-        score += 0.20
-        signals.append("long-prompt")
-    elif n_chars < 120:
-        score -= 0.12
-        signals.append("short-prompt")
-    if n_msgs >= 6:
-        score += 0.15
-        signals.append("deep-conversation")
-    reasoning = [w for w in _REASONING_MARKERS if w in lower]
-    if reasoning:
-        score += min(0.30, 0.10 * len(reasoning))
-        signals.append("reasoning:" + ",".join(reasoning[:3]))
-    if text.count("?") >= 3:
-        score += 0.10
-        signals.append("multi-question")
-    score = max(0.0, min(1.0, round(score, 3)))
-
-    large_threshold = _env_float("SZL_AUTO_LARGE_THRESHOLD", 0.50)
-    if is_code:
-        chosen = "szl-coder"
-        signals.insert(0, "code:" + ",".join(code_hits[:3]) if code_hits else "code-fence")
-    elif score >= large_threshold:
-        chosen = "szl-large"
-    else:
-        chosen = "szl-fast"
-    return score, signals, chosen
-
-
-def _auto_routing_block(score: float, signals: List[str], chosen: str) -> Dict[str, Any]:
-    return {
-        "router": AUTO_MODEL,
-        "method": f"{AUTO_SCORER_VERSION}: deterministic lexical scorer, no LLM call",
-        "complexity_score": score,
-        "signals": signals,
-        "chosen_logical": chosen,
-        "note": ("heuristic ESTIMATE of prompt complexity to pick a "
-                 "sovereign-first route — a routing choice, not a quality "
-                 "guarantee"),
-    }
-
-
-def _budget_fields(prov: Provenance, budget: RequestBudget) -> None:
-    prov.request_id = budget.request_id
-    prov.policy_revision = budget.policy_revision
-    prov.terminal_reason = budget.terminal
-    prov.attempt_ceiling = budget.max_attempts
-    prov.attempts_reserved = budget.reserved
-
-
-def _closed_reason(attempts: List[Attempt], dispatched: int) -> str:
-    """Terminal reason after the route loop ends without a served response.
-
-    A dispatch that already failed is provider_unavailable. No dispatch, and
-    every recorded row is a pricing/qualification skip, is policy_blocked.
-    """
-    if dispatched:
-        return "provider_unavailable"
-    errors = [(attempt.error or "") for attempt in attempts]
-    if errors and all(error.startswith("pricing/") for error in errors):
-        return "policy_blocked"
-    return "provider_unavailable"
-
-
-def chat(
-    model: str,
-    messages: List[Dict[str, Any]],
-    *,
-    temperature: Optional[float] = None,
-    max_tokens: Optional[int] = None,
-    timeout: float = 60.0,
-    extra: Optional[Dict[str, Any]] = None,
-    request_budget: Optional[RequestBudget] = None,
-) -> Dict[str, Any]:
-    """Run a chat completion through the sovereign-first fallback chain.
-
-    Returns the upstream OpenAI-shaped response with an added
-    `x_szl_provenance` block. Raises RouterError if every route fails.
-
-    `request_budget`, when supplied, is the one attempt counter and absolute
-    deadline for every retry and fallback in this call. Omitting it keeps the
-    historical per-provider retry cap. The budget does not reserve USD and
-    does not qualify a paid or unqualified-grid route.
-
-    The opt-in "szl-auto" model is intercepted here: its prompt is scored by a
-    deterministic no-LLM heuristic and dispatched to the cheapest capable real
-    logical model (sovereign-first). `model` stays "szl-auto" on the receipt so
-    the caller sees WHAT they asked for; the chosen real model and served
-    provider are recorded honestly in provenance.routing + served_by."""
-    if extra is not None and type(extra) is not dict:
-        raise ValueError("chat extra must be an object")
-    if extra and {"model", "messages"}.intersection(extra):
-        raise ValueError("chat extra cannot override model or messages")
-    if request_budget is not None and not isinstance(request_budget, RequestBudget):
-        raise TypeError("request_budget must be a RequestBudget")
-    if request_budget is not None:
-        request_budget.validate_caller_timeout(timeout)
-    routing_block: Optional[Dict[str, Any]] = None
-    route_model = model
-    if model == AUTO_MODEL:
-        _score, _signals, _chosen = score_complexity(messages)
-        routing_block = _auto_routing_block(_score, _signals, _chosen)
-        route_model = _chosen
-    routes = resolve_routes(route_model)
-    prov = Provenance(routing=routing_block)
-    attempts: List[Attempt] = []
-
-    for _route_i, (provider_name, upstream_model) in enumerate(routes):
-        if request_budget is not None and request_budget.terminal is not None:
-            break
-        provider = PROVIDERS.get(provider_name)
-        if provider is None or not provider.available():
-            attempts.append(Attempt(provider_name, upstream_model, ok=False,
-                                    error="provider unavailable (no key/url)"))
-            continue
-
-        tier = _tier_of(provider)
-        if tier == "unqualified-grid":
-            attempts.append(Attempt(provider_name, upstream_model, ok=False,
-                                    error="pricing/quota unqualified; grid route disabled"))
-            continue
-
-        if tier == "paid-grid":
-            attempts.append(Attempt(provider_name, upstream_model, ok=False,
-                                    error="pricing/reservation unqualified; paid route disabled"))
-            continue
-
-        if tier == "qualified-paid":
-            # STRICT PRE-CALL USD RESERVATION (owner-qualified 2026-11-16).
-            # Fails closed: an engaged kill switch, a missing max_tokens
-            # ceiling (unbounded paid call), or a reservation that would
-            # breach the spend cap refuses the call BEFORE any transport.
-            _prompt_chars = sum(len(str(m.get("content") or "")) for m in messages)
-            _ok, _why, _est_usd = spend_guard.reserve_call(
-                upstream_model, prompt_chars=_prompt_chars, max_tokens=max_tokens)
-            if not _ok:
-                attempts.append(Attempt(provider_name, upstream_model, ok=False,
-                                        error="pricing/reservation refused; " + _why))
-                continue
-
-        # FAILURE COOLDOWN: skip a recently-failed upstream ONLY while a warm
-        # candidate (available, not cooling) remains later in the chain. The
-        # skip lands in the attempt trail so the receipt shows why this
-        # provider was not consulted. Last-resort routes are always tried.
-        _cd_left = _cooldown_remaining(provider_name)
-        if _cd_left > 0 and _warm_candidate_later(routes, _route_i + 1):
-            attempts.append(Attempt(provider_name, upstream_model, ok=False,
-                                    error="cooldown-skip (%.0fs left after recent "
-                                          "failure; warm fallback available)" % _cd_left))
-            continue
-
-        payload: Dict[str, Any] = {"model": upstream_model, "messages": messages}
-        if temperature is not None:
-            payload["temperature"] = temperature
-        if max_tokens is not None:
-            payload["max_tokens"] = max_tokens
-        if extra:
-            payload.update(extra)
-
-        t0 = time.time()
-        try:
-            result = _post_with_retry(
-                _post_chat, provider, payload, timeout,
-                budget=request_budget,
-                on_attempt=attempts.append if request_budget is not None else None,
-            )
-        except BudgetStop:
-            break
-        except urllib.error.HTTPError as e:
-            dt = int((time.time() - t0) * 1000)
-            if request_budget is None:
-                try:
-                    err_body = e.read().decode("utf-8")[:200]
-                except Exception:
-                    err_body = str(e)
-                attempts.append(Attempt(provider_name, upstream_model, ok=False,
-                                        status=e.code, error=err_body, latency_ms=dt))
-            _set_cooldown(provider_name)
-            if request_budget is not None and request_budget.terminal is not None:
-                break
-            continue
-        except Exception as e:  # noqa: BLE001 - honest catch-all, recorded
-            dt = int((time.time() - t0) * 1000)
-            if request_budget is None:
-                attempts.append(Attempt(provider_name, upstream_model, ok=False,
-                                        error=f"{type(e).__name__}: {e}"[:200], latency_ms=dt))
-            _set_cooldown(provider_name)
-            if request_budget is not None and request_budget.terminal is not None:
-                break
-            continue
-
-        dt = int((time.time() - t0) * 1000)
-        detail = _chat_response_error(result)
-        if detail is not None:
-            if request_budget is None:
-                attempts.append(Attempt(provider_name, upstream_model, ok=False,
-                                        status=200, error=detail, latency_ms=dt))
-            else:
-                failed = attempts[-1]
-                failed.ok = False
-                failed.status = 200
-                failed.error = detail
-                failed.latency_ms = dt
-            _set_cooldown(provider_name)
-            continue
-        if request_budget is None:
-            attempts.append(Attempt(provider_name, upstream_model, ok=True,
-                                    status=200, latency_ms=dt))
-        else:
-            attempts[-1].latency_ms = dt
-            request_budget.mark_success()
-            _budget_fields(prov, request_budget)
-        _clear_cooldown(provider_name)
-        prov.served_by = f"{provider_name}:{upstream_model}"
-        prov.provider = provider_name
-        prov.upstream_model = upstream_model
-        prov.base_url = provider.base_url()
-        prov.sovereign = provider.sovereign
-        prov.energy_source = provider.energy_source
-        prov.tier = tier
-        prov.attempts = attempts
-        # Honest cost block for the served sovereign route.
-        # Signed into the receipt via app.py. This is not a pre-call USD reservation.
-        prov.cost = _cost_detail(provider, result, upstream_model)
-        if tier == "qualified-paid":
-            # Ledger the served call's honest estimate after the fact. A
-            # ledger append failure must never break an already-served answer.
-            try:
-                spend_guard.record(prov.cost.get("amount_usd") or 0.0,
-                                   source="qualified-paid:" + provider_name,
-                                   meta={"model": upstream_model,
-                                         "served_by": prov.served_by})
-            except Exception:  # noqa: BLE001 - accounting must not break serving
-                pass
-        result["x_szl_provenance"] = prov.to_dict()
-        _emit_route_receipt(model=model, decision="served",
-                            provenance=prov, attempts=attempts)
-        return result
-
-    reason = None
-    if request_budget is not None:
-        if request_budget.terminal is None:
-            request_budget.close(_closed_reason(attempts, request_budget.reserved))
-        reason = request_budget.terminal
-    _emit_route_receipt(model=model, decision="all-routes-failed",
-                        provenance=None, attempts=attempts)
-    raise RouterError(f"all routes failed for model '{model}'", attempts, reason)
-
-
-def _post_embeddings(provider: Provider, payload: Dict[str, Any], timeout: float) -> Dict[str, Any]:
-    url = provider.base_url() + "/embeddings"
-    data = json.dumps(payload).encode("utf-8")
-    return _UPSTREAM_POOL.request_json(url, data, _upstream_headers(provider), timeout)
-
-
-def resolve_embed_routes(model: str) -> List[Route]:
-    """Map a requested embeddings model to its ordered routes (HOME-node first).
-
-    Accepts our logical embed name (bge-large) OR a raw 'provider:model'. Unknown
-    logical names fall back to the bge-large route so callers stay honest."""
-    if model in EMBED_ROUTES:
-        return EMBED_ROUTES[model]
-    if ":" in model:
-        prov, _, up = model.partition(":")
-        if prov in PROVIDERS:
-            return [(prov, up)]
-    return EMBED_ROUTES["bge-large"]
-
-
-# ---------------------------------------------------------------------------
-# Exact-hash embeddings cache.
-#
-# Cache reuse is scoped to the resolved route and request, not just the logical
-# model alias. A hit replays a previously observed vector; it does not prove
-# that an upstream's weights have stayed unchanged behind a mutable model name.
-# Operators can rotate SZL_EMBED_CACHE_NAMESPACE after such changes, or bypass
-# caching. Entries are process-local, time-bounded and size-bounded.
-#
-# Chat is deliberately NOT cached: it is correctness-sensitive (temperature,
-# tools, non-determinism), so caching it could silently change behavior.
-#
-# On a hit, provenance.served_by is suffixed with the honest ":cache" marker and
-# the response carries x_szl_cache so callers can SEE the answer came from cache.
-# The cached vectors and the upstream tier/sovereign labels are unchanged.
-# ---------------------------------------------------------------------------
-_EMBED_CACHE_TTL = float(os.environ.get("SZL_EMBED_CACHE_TTL", "300") or 300)  # seconds
-_EMBED_CACHE_MAX = int(os.environ.get("SZL_EMBED_CACHE_MAX", "1024") or 1024)  # entries
-_EMBED_CACHE: "Dict[str, Tuple[float, Dict[str, Any]]]" = {}
-_EMBED_CACHE_LOCK = threading.Lock()
-_EMBED_CACHE_SCOPE_KEY = os.urandom(32)
-
-
-@dataclass(frozen=True)
-class _ResolvedEmbeddingProvider(Provider):
-    """Freeze the endpoint and credential used by both identity and transport."""
-
-    _resolved_url: str = field(default="", repr=False)
-    _resolved_key: Optional[str] = field(default=None, repr=False)
-
-    def base_url(self) -> str:
-        return self._resolved_url
-
-    def api_key(self) -> Optional[str]:
-        return self._resolved_key
-
-    @classmethod
-    def capture(cls, provider: Provider) -> "_ResolvedEmbeddingProvider":
-        return cls(
-            name=provider.name, base_url_env=provider.base_url_env,
-            base_url_default=provider.base_url_default, key_env=provider.key_env,
-            sovereign=provider.sovereign, energy_source=provider.energy_source,
-            enable_env=provider.enable_env,
-            note=provider.note, _resolved_url=provider.base_url(),
-            _resolved_key=provider.api_key(),
-        )
-
-
-def _embedding_json(value: Any) -> str:
-    """Canonical strict JSON: never coerce objects or object keys into strings."""
-    def validate(item: Any) -> None:
-        kind = type(item)
-        if item is None or kind in (str, bool, int):
-            return
-        if kind is float and math.isfinite(item):
-            return
-        if kind is list:
-            for child in item:
-                validate(child)
-            return
-        if kind is dict and all(type(key) is str for key in item):
-            for child in item.values():
-                validate(child)
-            return
-        raise ValueError("embeddings request must contain only finite JSON values and string object keys")
-
-    validate(value)
-    return json.dumps(value, sort_keys=True, allow_nan=False, separators=(",", ":"))
-
-
-def _embed_cache_key(model: str, payload: Dict[str, Any], provider: Provider,
-                     namespace: str, caller_scope: str, route_name: str) -> str:
-    # HMAC is process-local and never returned or logged. It invalidates reuse
-    # on upstream/shared-bearer credential rotation without placing a secret or
-    # a reusable credential fingerprint in cache keys. Shared bearer auth is
-    # NOT a tenant identity; callers in that service share this cache.
-    auth_scope = hmac.new(
-        _EMBED_CACHE_SCOPE_KEY,
-        _embedding_json([provider.api_key(), caller_scope]).encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
-    identity = {
-        "schema": "szl-embedding-cache/v2", "logical_model": model,
-        "payload": payload, "namespace": namespace, "auth_scope": auth_scope,
-        "route": {"slot": route_name, "provider": provider.name, "base_url": provider.base_url(),
-                  "key_env": provider.key_env, "sovereign": provider.sovereign,
-                  "energy_source": provider.energy_source},
-    }
-    blob = _embedding_json(identity)
-    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
-
-
-def _embed_cache_get(key: str) -> Optional[Dict[str, Any]]:
-    now = time.time()
-    with _EMBED_CACHE_LOCK:
-        hit = _EMBED_CACHE.get(key)
-        if hit is None:
-            return None
-        ts, value = hit
-        if (now - ts) >= _EMBED_CACHE_TTL:
-            _EMBED_CACHE.pop(key, None)
-            return None
-        return value
-
-
-def _embed_cache_put(key: str, value: Dict[str, Any]) -> None:
-    now = time.time()
-    with _EMBED_CACHE_LOCK:
-        if len(_EMBED_CACHE) >= _EMBED_CACHE_MAX and key not in _EMBED_CACHE:
-            # Simple bound: drop the oldest entry. Cheap and adequate for an
-            # in-process exact-hash cache; not an LRU on purpose (no per-get cost).
-            oldest = min(_EMBED_CACHE, key=lambda k: _EMBED_CACHE[k][0])
-            _EMBED_CACHE.pop(oldest, None)
-        # The first (uncached) caller must not hold a reference to cache storage.
-        _EMBED_CACHE[key] = (now, json.loads(json.dumps(value)))
-
-
-def embed_cache_clear() -> None:
-    """Drop all cached embeddings (test/ops helper)."""
-    with _EMBED_CACHE_LOCK:
-        _EMBED_CACHE.clear()
-
-
-def _as_cache_hit(cached: Dict[str, Any], attempts: List[Attempt]) -> Dict[str, Any]:
-    """Return a cached embeddings response, honestly marked as cache-served.
-
-    Deep-copies so callers can't mutate the stored entry. The vectors (`data`)
-    are byte-identical to what the upstream returned. Provenance is preserved
-    exactly (same provider/tier/sovereign/energy_source — we don't relabel where
-    the vector was actually computed) except served_by gains an honest ":cache"
-    suffix, and an `x_szl_cache` block makes the cache hit explicit."""
-    out = json.loads(json.dumps(cached))  # cheap deep copy of JSON-shaped data
-    prov = out.get("x_szl_provenance")
-    origin = prov.get("served_by") if isinstance(prov, dict) else None
-    if isinstance(prov, dict):
-        if origin and not str(origin).endswith(":cache"):
-            prov["served_by"] = f"{origin}:cache"
-    out["x_szl_cache"] = {
-        "served_by": "cache",
-        "hit": True,
-        "origin_served_by": origin,
-        "lookup_attempts": [a.__dict__ for a in attempts],
-        "note": "exact-hash embeddings cache hit; vectors byte-identical to the "
-                "upstream result; no recompute, no fabrication.",
-    }
-    return out
-
-
-def embed(
-    model: str,
-    input_: Any,
-    *,
-    timeout: float = 60.0,
-    extra: Optional[Dict[str, Any]] = None,
-    use_cache: bool = True,
-    request_budget: Optional[RequestBudget] = None,
-) -> Dict[str, Any]:
-    """Run an embeddings call through the HOME-node-first sovereign chain.
-
-    Mirrors chat(): OpenAI-shaped /v1/embeddings response with an added
-    `x_szl_provenance` block (identical honesty contract — served_by, sovereign
-    true ONLY for owned metal, tier, full attempts trail). Each sovereign node is
-    a SEPARATE worker; this is sequential failover, never fused VRAM. Raises
-    RouterError if every route fails (no fabricated vector).
-
-    An exact-hash cache (TTL + size cap) serves byte-identical vectors for a
-    repeated request to the same resolved route and marks the answer honestly as
-    served_by ...:cache. Set use_cache=False to force a fresh upstream call.
-    Hidden upstream weight changes require a cache namespace rotation or bypass;
-    neither a model alias nor the configured namespace proves a weights revision.
-    Non-JSON inputs and extra overrides of model/input raise ValueError.
-
-    `request_budget`, when supplied, is the same attempt counter and absolute
-    deadline as chat(). A cache hit is not a dispatch and does not reserve an
-    attempt. Without a budget, each provider keeps its own retry cap."""
-    if request_budget is not None and not isinstance(request_budget, RequestBudget):
-        raise TypeError("request_budget must be a RequestBudget")
-    if request_budget is not None:
-        request_budget.validate_caller_timeout(timeout)
-    if type(model) is not str or not model:
-        raise ValueError("embeddings model must be a non-empty string")
-    if extra is not None and type(extra) is not dict:
-        raise ValueError("embeddings extra must be an object")
-    if extra and {"model", "input"}.intersection(extra):
-        raise ValueError("embeddings extra cannot override model or input")
-    # Validate and detach before lookup, including on use_cache=False. Hashing
-    # unsupported objects via default=str allowed them to alias valid strings.
-    request = json.loads(_embedding_json({"input": input_, "extra": extra or {}}))
-    namespace = os.environ.get("SZL_EMBED_CACHE_NAMESPACE", "")
-    caller_scope = os.environ.get("SZL_ROUTER_TOKEN", "").strip()
-    routes = []
-    for provider_name, upstream_model in list(resolve_embed_routes(model)):
-        configured = PROVIDERS.get(provider_name)
-        provider = _ResolvedEmbeddingProvider.capture(configured) if configured else None
-        routes.append((provider_name, upstream_model, provider))
-
-    prov = Provenance()
-    attempts: List[Attempt] = []
-
-    for provider_name, upstream_model, provider in routes:
-        if request_budget is not None and request_budget.terminal is not None:
-            break
-        if provider is None or not provider.available():
-            attempts.append(Attempt(provider_name, upstream_model, ok=False,
-                                    error="provider unavailable (no key/url)"))
-            continue
-
-        # Direct provider:model embedding overrides can select chargeable cloud
-        # models, but this path has no cloud spend guard or qualified quota data.
-        # Reject them before either cache lookup or transport.
-        if _tier_of(provider) != "sovereign":
-            attempts.append(Attempt(provider_name, upstream_model, ok=False,
-                                    error="cloud embeddings pricing/quota unqualified; route disabled"))
-            continue
-
-        payload: Dict[str, Any] = {"model": upstream_model, "input": request["input"]}
-        payload.update(request["extra"])
-        cache_key = (_embed_cache_key(model, payload, provider, namespace, caller_scope, provider_name)
-                     if use_cache else None)
-        if cache_key is not None:
-            cached = _embed_cache_get(cache_key)
-            if cached is not None:
-                return _as_cache_hit(cached, attempts)
-
-        t0 = time.time()
-        try:
-            result = _post_with_retry(
-                _post_embeddings, provider, payload, timeout,
-                budget=request_budget,
-                on_attempt=attempts.append if request_budget is not None else None,
-            )
-        except BudgetStop:
-            break
-        except urllib.error.HTTPError as e:
-            dt = int((time.time() - t0) * 1000)
-            if request_budget is None:
-                try:
-                    err_body = e.read().decode("utf-8")[:200]
-                except Exception:
-                    err_body = str(e)
-                attempts.append(Attempt(provider_name, upstream_model, ok=False,
-                                        status=e.code, error=err_body, latency_ms=dt))
-            if request_budget is not None and request_budget.terminal is not None:
-                break
-            continue
-        except Exception as e:  # noqa: BLE001 - honest catch-all, recorded
-            dt = int((time.time() - t0) * 1000)
-            if request_budget is None:
-                attempts.append(Attempt(provider_name, upstream_model, ok=False,
-                                        error=f"{type(e).__name__}: {e}"[:200],
-                                        latency_ms=dt))
-            if request_budget is not None and request_budget.terminal is not None:
-                break
-            continue
-
-        dt = int((time.time() - t0) * 1000)
-        detail = _embedding_response_error(result, payload)
-        if detail is not None:
-            if request_budget is None:
-                attempts.append(Attempt(provider_name, upstream_model, ok=False,
-                                        status=200, error=detail, latency_ms=dt))
-            else:
-                failed = attempts[-1]
-                failed.ok = False
-                failed.status = 200
-                failed.error = detail
-                failed.latency_ms = dt
-            continue
-        if request_budget is None:
-            attempts.append(Attempt(provider_name, upstream_model, ok=True,
-                                    status=200, latency_ms=dt))
-        else:
-            attempts[-1].latency_ms = dt
-            request_budget.mark_success()
-            _budget_fields(prov, request_budget)
-        prov.served_by = f"{provider_name}:{upstream_model}"
-        prov.provider = provider_name
-        prov.upstream_model = upstream_model
-        prov.base_url = provider.base_url()
-        prov.sovereign = provider.sovereign
-        prov.energy_source = provider.energy_source
-        prov.tier = _tier_of(provider)
-        prov.attempts = attempts
-        result["x_szl_provenance"] = prov.to_dict()
-        if cache_key is not None:
-            _embed_cache_put(cache_key, result)
-        return result
-
-    reason = None
-    if request_budget is not None:
-        if request_budget.terminal is None:
-            request_budget.close(_closed_reason(attempts, request_budget.reserved))
-        reason = request_budget.terminal
-    raise RouterError(
-        f"all embed routes failed for model '{model}'", attempts, reason)
-
-
-def status() -> Dict[str, Any]:
-    """Honest snapshot: which providers are armed right now."""
-    out = []
-    for name, p in PROVIDERS.items():
-        out.append({
-            "provider": name,
-            "available": p.available(),
-            "sovereign": p.sovereign,
-            "tier": _tier_of(p),
-            "energy_source": p.energy_source,
-            "base_url": p.base_url() or None,
-            "needs_key": bool(p.key_env),
-            "note": p.note,
-        })
-    return {
-        "providers": out,
-        "logical_models": {k: v for k, v in MODEL_ROUTES.items()},
-        "embed_models": {k: v for k, v in EMBED_ROUTES.items()},
-        "default_model": DEFAULT_MODEL,
-    }
-
-
-# energy_source values we are allowed to claim, honestly. "self-hosted" and
-# "grid" are the only TRUE ones today (our own metal still runs on grid power;
-# third-party clouds are grid). The rest are the Sovereign-Resilience / Stranded-
-# Energy roadmap targets — only ever set when verifiably true (no greenwashing).
-HONEST_ENERGY_SOURCES = ["self-hosted", "grid"]
-ROADMAP_ENERGY_SOURCES = ["solar", "curtailed-wind", "hydro", "flare-mitigated", "biogas"]
-
-
-# ---------------------------------------------------------------------------
-# Wasted-energy harvest signal (R-HARVEST-FABRIC).
-#
-# Real, no-key, public grid feeds that tell us when the grid is WASTING power —
-# i.e. when running our own GPU is effectively free because the grid is paying
-# to offload load (negative wholesale price) or renewables exceed demand
-# (curtailment). We never invent numbers: each feed is fetched independently and
-# tolerantly; a feed that is down is reported "unreachable", not faked. This is
-# REAL GRID DATA under the HONEST "grid" source — it NEVER flips the sovereign
-# label and joules stay SAMPLE until an on-box hardware meter (NVML) feeds them.
-# ---------------------------------------------------------------------------
-_HARVEST_FEEDS = {
-    "wholesale_price": "https://api.awattar.de/v1/marketdata",          # DE wholesale, EUR/MWh
-    "renewable_share": "https://api.energy-charts.info/ren_share?country=de",
-    "carbon_intensity": "https://api.carbonintensity.org.uk/intensity",  # UK gCO2/kWh + index
-}
-_HARVEST_TTL = 300.0  # seconds; don't hammer the public feeds
-_HARVEST_CACHE: Dict[str, Any] = {"ts": 0.0, "data": None}
-
-
-def _get_json(url: str, timeout: float) -> Any:
-    req = urllib.request.Request(url, method="GET")
-    req.add_header("User-Agent", "szl-router/1.0 (+harvest)")
-    req.add_header("Accept", "application/json")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8"))
-
-
-def _fetch_awattar(timeout: float) -> Dict[str, Any]:
-    try:
-        d = _get_json(_HARVEST_FEEDS["wholesale_price"], timeout)
-        rows = d.get("data") or []
-        now_ms = time.time() * 1000
-        price_now: Optional[float] = None
-        nxt: List[float] = []
-        for r in rows:
-            st, en, mp = r.get("start_timestamp"), r.get("end_timestamp"), r.get("marketprice")
-            if st is None or en is None or mp is None:
-                continue
-            if st <= now_ms < en:
-                price_now = mp
-            elif st > now_ms:
-                nxt.append(mp)
-        return {
-            "status": "live", "market": "DE", "unit": "EUR/MWh",
-            "price_now": price_now,
-            "next_min": (min(nxt) if nxt else None),
-            "next_max": (max(nxt) if nxt else None),
-            "next_negative_windows": sum(1 for p in nxt if p < 0),
-            "source": "api.awattar.de",
-        }
-    except Exception as e:  # noqa: BLE001 - honest unreachable, never faked
-        return {"status": "unreachable", "error": f"{type(e).__name__}: {e}"[:120],
-                "source": "api.awattar.de"}
-
-
-def _fetch_ren_share_de(timeout: float) -> Dict[str, Any]:
-    try:
-        d = _get_json(_HARVEST_FEEDS["renewable_share"], timeout)
-        series = d[0] if isinstance(d, list) and d else {}
-        data = series.get("data") or []
-        vals = [v for v in data if isinstance(v, (int, float))]
-        return {"status": "live", "country": "DE",
-                "renewable_share_pct": (vals[-1] if vals else None),
-                "source": "api.energy-charts.info"}
-    except Exception as e:  # noqa: BLE001
-        return {"status": "unreachable", "error": f"{type(e).__name__}: {e}"[:120],
-                "source": "api.energy-charts.info"}
-
-
-def _fetch_uk_carbon(timeout: float) -> Dict[str, Any]:
-    try:
-        d = _get_json(_HARVEST_FEEDS["carbon_intensity"], timeout)
-        intensity = ((d.get("data") or [{}])[0] or {}).get("intensity") or {}
-        return {"status": "live", "region": "UK",
-                "gco2_per_kwh": intensity.get("actual") if intensity.get("actual") is not None
-                else intensity.get("forecast"),
-                "index": intensity.get("index"),
-                "source": "api.carbonintensity.org.uk"}
-    except Exception as e:  # noqa: BLE001
-        return {"status": "unreachable", "error": f"{type(e).__name__}: {e}"[:120],
-                "source": "api.carbonintensity.org.uk"}
-
-
-# Posture thresholds. Kept as a pure function so the classification is
-# deterministic and unit-testable WITHOUT any network.
-_CHEAP_EUR_MWH = 30.0
-_EXPENSIVE_EUR_MWH = 100.0
-_CURTAILMENT_REN_PCT = 100.0  # renewables meeting/exceeding load
-
-
-def _classify_harvest(
-    price_now: Optional[float],
-    next_min: Optional[float],
-    ren_share_pct: Optional[float],
-) -> Tuple[str, bool, bool]:
-    """-> (grid_price_posture, wasted_energy_available, next_window_negative).
-
-    Pure. posture in
-    {negative-price, curtailed-renewable, cheap, normal, expensive, unknown}."""
-    window_ahead = next_min is not None and next_min < 0
-    if price_now is not None and price_now < 0:
-        return "negative-price", True, window_ahead       # grid PAYING to offload
-    if ren_share_pct is not None and ren_share_pct >= _CURTAILMENT_REN_PCT:
-        return "curtailed-renewable", True, window_ahead  # clean power > demand
-    if price_now is not None and price_now < _CHEAP_EUR_MWH:
-        return "cheap", False, window_ahead
-    if price_now is not None and price_now > _EXPENSIVE_EUR_MWH:
-        return "expensive", False, window_ahead
-    if price_now is not None or ren_share_pct is not None:
-        return "normal", False, window_ahead
-    return "unknown", False, window_ahead
-
-
-def harvest_status(allow_network: bool = True, timeout: float = 8.0,
-                   force: bool = False) -> Dict[str, Any]:
-    """Live wasted-energy harvest posture from real public grid feeds.
-
-    Cached for _HARVEST_TTL so /fabric stays cheap. With allow_network=False it
-    serves the last cache (or an honest 'not-probed' if none). NEVER fabricates:
-    a down feed is reported 'unreachable' and simply doesn't drive the posture."""
-    now = time.time()
-    cached = _HARVEST_CACHE.get("data")
-    if cached is not None and not force and (now - float(_HARVEST_CACHE["ts"])) < _HARVEST_TTL:
-        out = dict(cached); out["cached"] = True; return out
-    if not allow_network:
-        if cached is not None:
-            out = dict(cached); out["cached"] = True; return out
-        return {
-            "status": "not-probed", "grid_price_posture": "unknown",
-            "wasted_energy_available": False, "next_window_negative": False,
-            "energy_source": "free-public-grid-feeds", "joules_label": "sample",
-            "sovereign": False, "note": "offline: no network probe performed",
-        }
-
-    awattar = _fetch_awattar(timeout)
-    ren = _fetch_ren_share_de(timeout)
-    carbon = _fetch_uk_carbon(timeout)
-    price_now = awattar.get("price_now") if awattar.get("status") == "live" else None
-    next_min = awattar.get("next_min") if awattar.get("status") == "live" else None
-    ren_pct = ren.get("renewable_share_pct") if ren.get("status") == "live" else None
-    posture, wasted, window_ahead = _classify_harvest(price_now, next_min, ren_pct)
-    any_live = any(s.get("status") == "live" for s in (awattar, ren, carbon))
-
-    data = {
-        "status": "live" if any_live else "unreachable",
-        "grid_price_posture": posture,
-        "wasted_energy_available": wasted,
-        "next_window_negative": window_ahead,
-        "energy_source": "free-public-grid-feeds",
-        "joules_label": "sample",   # no on-router meter — MEASURED only on-box via NVML
-        "sovereign": False,         # grid data NEVER flips the sovereign label
-        "signals": {"wholesale_price": awattar, "renewable_share": ren,
-                    "carbon_intensity": carbon},
-        "doctrine": ("we soak ALREADY-WASTED grid energy; no free-energy; joules SAMPLE "
-                     "until an on-box meter; this grid signal NEVER sets sovereign:true."),
-        "cached": False,
-    }
-    _HARVEST_CACHE["ts"] = now
-    _HARVEST_CACHE["data"] = data
-    return dict(data)
-
-
-def should_soak_wasted_energy(allow_network: bool = True) -> bool:
-    """PROACTIVE/batch admission gate: True only when the grid is effectively
-    paying us to absorb load (negative wholesale price) or renewables exceed
-    demand (curtailment). Reactive/user turns NEVER consult this — they always
-    serve. Mirrors the platform energy_gate_adapter contract."""
-    try:
-        return bool(harvest_status(allow_network=allow_network).get("wasted_energy_available"))
-    except Exception:  # noqa: BLE001 - fail closed: no soak if we can't read the grid
-        return False
-
-
-def fabric_status(include_harvest: bool = True, allow_network: bool = True) -> Dict[str, Any]:
-    """Energy/sovereignty posture of the whole fabric — honest, live.
-
-    Maps the provider registry onto the Sovereign-Resilience tier ladder
-    (sovereign own-metal, unqualified cloud candidates, paid grid) and
-    reports a single posture: green = a sovereign node is up AND has a fallback;
-    yellow = degraded (only one route, or no sovereign node up); red = no
-    admitted route. Never claims sovereign/clean-energy that isn't literally true.
-
-    When include_harvest, overlays the live wasted-energy grid-price posture
-    (R-HARVEST-FABRIC) under the HONEST grid source. If a real wasted-energy
-    window is open AND a sovereign node is up, surfaces a distinct, honest
-    HARVESTING display state (real wasted grid power soaked on our own metal —
-    not greenwash). The harvest overlay NEVER changes the sovereign label."""
-    sovereign, free_grid, paid_grid, unqualified_grid, qualified_paid = [], [], [], [], []
-    for name, p in PROVIDERS.items():
-        tier = _tier_of(p)
-        rec = {
-            "provider": name,
-            "armed": p.available() and tier in ("sovereign", "free-grid", "qualified-paid"),
-            "sovereign": p.sovereign,
-            "energy_source": p.energy_source,
-            "note": p.note,
-        }
-        (sovereign if tier == "sovereign"
-         else paid_grid if tier == "paid-grid"
-         else free_grid if tier == "free-grid"
-         else qualified_paid if tier == "qualified-paid"
-         else unqualified_grid).append(rec)
-
-    sov_armed = [r for r in sovereign if r["armed"]]
-    # A configured paid key is not a route while strict pre-call reservation is absent.
-    grid_armed = [r for r in free_grid if r["armed"]]
-    total_armed = len(sov_armed) + len(grid_armed)
-    if sov_armed and total_armed >= 2:
-        posture = "green"      # sovereign up + at least one fallback
-    elif total_armed >= 1:
-        posture = "yellow"     # degraded: no sovereign, or no redundancy
-    else:
-        posture = "red"        # nothing armed
-
-    harvest = harvest_status(allow_network=allow_network) if include_harvest else None
-    wasted = bool(harvest and harvest.get("wasted_energy_available"))
-    harvesting = wasted and bool(sov_armed)   # real wasted power + our own metal up
-    energy_window = (harvest.get("grid_price_posture") if harvest else "not-probed")
-    if harvesting:
-        display_state = "HARVESTING"
-        harvest_hint = ("real wasted-energy window open AND sovereign GPU up: bias "
-                        "proactive/batch routing to own metal now (grid is paying to offload).")
-    elif wasted:
-        display_state = posture
-        harvest_hint = ("wasted-energy window open but no sovereign node up: bring the GPU "
-                        "online to soak it; do NOT label grid as sovereign.")
-    else:
-        display_state = posture
-        harvest_hint = "no wasted-energy window; normal sovereign-first routing."
-
-    out: Dict[str, Any] = {
-        "posture": posture,            # resilience color (route availability)
-        "display_state": display_state,  # HARVESTING overlay when truly harvesting
-        "harvesting": harvesting,
-        "energy_window": energy_window,  # negative-price | curtailed-renewable | cheap | normal | expensive | unknown | not-probed
-        "wasted_energy_available": wasted,
-        "prefer_sovereign_for_batch": harvesting,
-        "harvest_hint": harvest_hint,
-        "sovereign_up": bool(sov_armed),
-        "routes_armed": total_armed,
-        "ladder": {
-            "tier_0_allodial_solar": {
-                "status": "roadmap",
-                "what": "own weights + own solar + own metal = unkillable, sovereign:true",
-                "energy_source": "solar (not yet — claim only when literally true)",
-            },
-            "tier_1_sovereign_gpu": {
-                "status": "live" if sov_armed else "armed-but-down" if sovereign else "absent",
-                "providers": sovereign,
-                "what": "our own GPU node(s) over Tailscale; sovereign:true, grid power today",
-            },
-            "tier_2_free_grid_faucets": {
-                "status": "armed" if [r for r in free_grid if r["armed"]] else "unqualified",
-                "providers": free_grid,
-                "what": "No cloud model is currently qualified as free by this source revision.",
-            },
-            "unqualified_grid_candidates": {
-                "status": "blocked",
-                "providers": unqualified_grid,
-                "what": "Keys and URLs do not prove model pricing, quota, or terms; routes are disabled.",
-            },
-            "tier_3_paid_grid": {
-                "providers": paid_grid,
-                "what": "paid cloud candidate (Kimi); blocked until exact pricing and strict pre-call reservation qualify it; sovereign:false",
-            },
-            "tier_3b_qualified_paid": {
-                "status": ("qualified" if [r for r in qualified_paid if r["armed"]]
-                           else "keyed-but-blocked" if qualified_paid else "absent"),
-                "providers": qualified_paid,
-                "what": "owner-qualified paid route (openai); served ONLY under strict pre-call USD reservation (kill switch, max_tokens ceiling, spend cap); strictly last-fallback; sovereign:false",
-            },
-        },
-        "honest_energy_sources": HONEST_ENERGY_SOURCES,
-        "roadmap_energy_sources": ROADMAP_ENERGY_SOURCES,
-        "doctrine": "sovereign:true ONLY on own metal; energy_source claims must be real; "
-                    "unqualified and paid cloud candidates are disabled; the owner-qualified "
-                    "OpenAI route serves only under strict pre-call reservation; harvest is real grid data "
-                    "(never sovereign); joules SAMPLE until an on-box meter; no half-state.",
-    }
-    if harvest is not None:
-        out["harvest"] = harvest
-    return out
+... [Content truncated]
