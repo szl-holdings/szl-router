@@ -11,7 +11,7 @@
 
 **Do NOT open a public GitHub issue for security vulnerabilities.**
 
-Please report security vulnerabilities via email to **security@szlholdings.ai** with:
+Please report security vulnerabilities via email to **security@szlholdings.com** with:
 
 1. Description of the vulnerability
 2. Steps to reproduce
@@ -56,8 +56,8 @@ Per NDAA Section 889, 41 U.S.C. § 4713.
 
 ## Contact
 
-- **Security disclosures:** security@szlholdings.ai
-- **General:** hello@szlholdings.ai
-- **Website:** https://szlholdings.ai
+- **Security disclosures:** security@szlholdings.com
+- **General:** hello@szlholdings.com
+- **Website:** https://a-11-oy.com
 
 *This policy follows [OpenSSF Vulnerability Disclosure Guide](https://github.com/ossf/oss-vulnerability-guide).*
