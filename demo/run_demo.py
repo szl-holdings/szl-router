@@ -10,6 +10,7 @@ import hashlib
 import json
 import math
 import os
+import secrets
 from pathlib import Path
 import subprocess
 import sys
@@ -71,8 +72,11 @@ def check_response(response, model, messages, public_key, backend_root=DEFAULT_B
     expected = "local_ollama:" + model
     if provenance.get("served_by") != expected or body.get("model") != model:
         raise ValueError("response model/provider mismatch")
-    if provenance.get("base_url") != loopback_root(backend_root) + "/v1":
-        raise ValueError("response escaped loopback route")
+    # The public ASGI response deliberately redacts private/loopback origins.
+    # Never weaken its disclosure boundary to make an internal demo green.
+    loopback_root(backend_root)
+    if provenance.get("base_url") != "redacted":
+        raise ValueError("public response exposed private backend")
     content = body["choices"][0]["message"].get("content")
     if not isinstance(content, str) or not content.strip():
         raise ValueError("empty model output")
@@ -92,6 +96,29 @@ def check_response(response, model, messages, public_key, backend_root=DEFAULT_B
     return body, envelope
 
 
+def safe_failure_code(error):
+    """Return a fixed, non-secret operator code; never persist error text."""
+    if type(error) is ValueError:
+        reason = str(error)
+        exact = {
+            "response model/provider mismatch": "MODEL_PROVIDER_MISMATCH",
+            "public response exposed private backend": "PRIVATE_BACKEND_EXPOSURE",
+            "configured local provider loopback mismatch": "CONFIGURED_LOOPBACK_MISMATCH",
+            "empty model output": "EMPTY_COMPLETION",
+            "receipt request binding mismatch": "RECEIPT_REQUEST_MISMATCH",
+            "receipt provider binding mismatch": "RECEIPT_PROVIDER_MISMATCH",
+            "tampered receipt accepted": "RECEIPT_TAMPER_ACCEPTED",
+            "selected model digest not resident on local daemon": "RESIDENT_MODEL_MISSING",
+            "model changed during demo": "MODEL_CHANGED",
+        }
+        if reason in exact:
+            return exact[reason]
+        if reason.startswith("receipt verification failed:"):
+            return "RECEIPT_SIGNATURE_VERIFICATION_FAILED"
+        return "UNKNOWN_VALUE_ERROR"
+    return type(error).__name__.upper()
+
+
 def run(model, count, output, deadline, max_tokens=48, isolated_cpu=False):
     output.mkdir(parents=True, exist_ok=False)
     report = {"schema": "szl.router-local-demo/v1", "status": "FAIL",
@@ -107,8 +134,14 @@ def run(model, count, output, deadline, max_tokens=48, isolated_cpu=False):
         # This isolated process must never inherit remote receipt sinks, signing
         # secrets, grid fetches, or caller auth. Private session key stays in RAM.
         for name in ("SZL_RECEIPT_SINK", "SZL_RECEIPT_KEY_PEM", "SZL_RECEIPT_KEY_FILE",
-                     "SZL_RECEIPT_GRID_CONTEXT", "SZL_ROUTER_TOKEN"):
+                     "SZL_RECEIPT_GRID_CONTEXT", "SZL_ROUTER_TOKEN", "SZL_ROUTER_ALLOW_NO_AUTH"):
             os.environ.pop(name, None)
+        # The real ASGI app is default-deny. Protect even an in-process
+        # TestClient with an ephemeral bearer, rather than overriding auth.
+        # Never persist this caller secret in requests or receipts.
+        caller_token = secrets.token_urlsafe(48)
+        os.environ["SZL_ROUTER_TOKEN"] = caller_token
+        report["caller_auth"] = "EPHEMERAL_INPROCESS_BEARER"
         os.environ["SZL_RECEIPT_EPHEMERAL"] = "1"
         os.environ["SZL_LOCAL_OLLAMA_ENABLE"] = "1"
         from fastapi.testclient import TestClient
@@ -128,6 +161,8 @@ def run(model, count, output, deadline, max_tokens=48, isolated_cpu=False):
         core.PROVIDERS = {"local_ollama": replace(core.PROVIDERS["local_ollama"],
             base_url_default=backend_root + "/v1")}
         core._RETRY_MAX_ATTEMPTS = 1
+        if core.PROVIDERS["local_ollama"].base_url() != loopback_root(backend_root) + "/v1":
+            raise ValueError("configured local provider loopback mismatch")
         stage = "BACKEND_METADATA"
         report["model"] = model_identity(model, backend_root)
         report["backend"] = local_json("/api/version", backend_root)
@@ -170,7 +205,8 @@ def run(model, count, output, deadline, max_tokens=48, isolated_cpu=False):
                     response = client.post("/v1/chat/completions", json={
                         "model": "local_ollama:" + model, "messages": messages,
                         "temperature": 0, "max_tokens": max_tokens, "seed": 17,
-                        "reasoning_effort": "none"})
+                        "reasoning_effort": "none"},
+                        headers={"Authorization": "Bearer " + caller_token})
                 finally:
                     core.chat = original_chat
                 stage = "RESPONSE_AND_RESIDENCY"
@@ -205,7 +241,10 @@ def run(model, count, output, deadline, max_tokens=48, isolated_cpu=False):
         # Retain partial evidence; do not print upstream bodies or environment.
         report["error"] = type(error).__name__
         report["failure_stage"] = stage
+        report["failure_code"] = safe_failure_code(error)
     finally:
+        # Never leave the demo-only caller token in an embedding Python process.
+        os.environ.pop("SZL_ROUTER_TOKEN", None)
         try:
             lifetime.close()
             if "worker" in report:
