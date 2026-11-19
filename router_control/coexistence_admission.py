@@ -298,7 +298,9 @@ def assess(snapshot: Mapping[str, Any], *, now: datetime) -> dict[str, Any]:
     require(request["classification"] in CLASSIFICATIONS, "DATA_CLASSIFICATION_DENIED")
     require(
         isinstance(request["model_alias"], str)
-        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,95}", request["model_alias"])
+        # Align with router_control.app.IDENTIFIER: Ollama tag aliases such
+        # as khipu:latest are valid public names, never inference authority.
+        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,95}", request["model_alias"])
         is not None,
         "MODEL_ALIAS_INVALID",
     )
