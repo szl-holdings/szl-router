@@ -256,6 +256,14 @@ MODEL_ROUTES: Dict[str, List[Route]] = {
         ("cerebras", "gpt-oss-120b"),
         ("openrouter", "qwen/qwen3-next-80b-a3b-instruct:free"),
         ("google", "gemini-2.5-flash"),
+        # 2026-11-19 frontier-board candidates (BenchLeader open-weights
+        # board: Kimi K3.1 Pro; Z.AI GLM-5.3). Same tier as the rows above:
+        # unqualified grid. Skipped until per-model pricing, quota, and a
+        # strict pre-call spend reservation are owner-qualified. Upstream
+        # model IDs re-verified at qualification time. Listed presence never
+        # enables a route; no sovereign or armed route changed.
+        ("zhipu", "glm-5.3"),
+        ("moonshot", "kimi-k3.1-pro"),
         # Further grid candidates, then the blocked paid candidate.
         ("groq", "llama-3.3-70b-versatile"),
         ("nvidia_nim", "meta/llama-3.3-70b-instruct"),
@@ -279,6 +287,10 @@ MODEL_ROUTES: Dict[str, List[Route]] = {
         ("groq", "llama-3.1-8b-instant"),
         ("nvidia_nim", "meta/llama-3.1-8b-instruct"),
         ("openrouter", "meta-llama/llama-3.3-70b-instruct:free"),
+        # 2026-11-19 frontier-board candidate (cheap tier: GLM 5.3 Flash,
+        # $0.238/M blended per BenchLeader 2026-11-19). Unqualified grid,
+        # skipped until owner qualification. No armed route or ordering change.
+        ("zhipu", "glm-5.3-flash"),
         # Owner-qualified paid fallback (2026-11-16), strictly last resort.
         ("openai", "gpt-5-mini"),
     ],
