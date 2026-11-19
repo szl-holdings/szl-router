@@ -18,7 +18,7 @@ def response(model="fixture:latest", binding_model=None, signed=True,
     messages = [{"role": "user", "content": "fixture"}]
     route = "local_ollama:" + model
     body = {"model": model, "choices": [{"message": {"content": "fixture answer"}}],
-            "x_szl_provenance": {"served_by": route, "base_url": backend_root + "/v1"}}
+            "x_szl_provenance": {"served_by": route, "base_url": "redacted"}}
     priv, pub = szl_receipt.generate_keypair()
     payload = receipts.build_body(provenance=body["x_szl_provenance"], model=route,
         usage=None, req_digest=receipts.request_digest(binding_model or route, messages))
@@ -60,6 +60,23 @@ def test_response_failures_are_not_green(case):
         demo.check_response(changed, "fixture:latest", messages, pub)
 
 
+def test_demo_uses_ephemeral_bearer_never_open_gateway():
+    source = (Path(__file__).parent / 'demo/run_demo.py').read_text(encoding='utf-8')
+    assert 'secrets.token_urlsafe(48)' in source
+    assert '"SZL_ROUTER_ALLOW_NO_AUTH"' in source
+    assert 'os.environ["SZL_ROUTER_TOKEN"] = caller_token' in source
+    assert 'headers={"Authorization": "Bearer " + caller_token}' in source
+    assert 'os.environ.pop("SZL_ROUTER_TOKEN", None)' in source
+    assert 'EPHEMERAL_INPROCESS_BEARER' in source
+    assert 'os.environ["SZL_ROUTER_ALLOW_NO_AUTH"] = "1"' not in source
+
+
+def test_failure_code_reports_only_fixed_messages():
+    assert demo.safe_failure_code(ValueError("empty model output")) == "EMPTY_COMPLETION"
+    assert demo.safe_failure_code(ValueError("receipt verification failed: PRIVATE_CONTENT")) == "RECEIPT_SIGNATURE_VERIFICATION_FAILED"
+    assert demo.safe_failure_code(ValueError("Bearer SECRET_PRIVATE_KEY")) == "UNKNOWN_VALUE_ERROR"
+
+
 def test_metadata_redirect_is_refused():
     with pytest.raises(ValueError):
         demo.NoRedirect().redirect_request(None, None, 302, "", {}, "https://example.invalid")
@@ -88,11 +105,12 @@ def test_worker_root_cannot_escape_fixed_loopback(root):
         demo.loopback_root(root)
 
 
-def test_worker_response_must_match_owned_port():
+def test_redacted_response_never_exposes_local_endpoint():
     resp, messages, pub = response(backend_root="http://127.0.0.1:12345")
     demo.check_response(resp, "fixture:latest", messages, pub, "http://127.0.0.1:12345")
     with pytest.raises(ValueError, match="loopback"):
-        demo.check_response(resp, "fixture:latest", messages, pub, "http://127.0.0.1:12346")
+        demo.check_response(resp, "fixture:latest", messages, pub, "http://localhost:12345")
+
 
 
 def test_cpu_replay_requires_residency_and_cleanup_evidence(tmp_path):
