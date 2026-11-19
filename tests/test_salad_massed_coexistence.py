@@ -182,7 +182,7 @@ class CoexistenceTests(unittest.TestCase):
     def test_tagged_model_names_preserve_bounded_alias_validation(self):
         for value in (
             "", ":latest", "khipu:latest/../../tokens", "https://provider",
-            "khipu:latest?x=1", "khipu:latest\\nTOKEN", " khipu:latest",
+            "khipu:latest?x=1", "khipu:latest" + chr(10) + "TOKEN", " khipu:latest",
             "khipu:latest ", "khipu:" + "x" * 100, None, 17, True,
         ):
             with self.subTest(value=value):
