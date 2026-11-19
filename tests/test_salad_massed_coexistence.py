@@ -150,6 +150,47 @@ class CoexistenceTests(unittest.TestCase):
         self.assertFalse(result["paid_compute_authorized"])
         self.assertFalse(result["cloudflare_settlement_qualified"])
 
+    def test_khipu_ollama_tag_reaches_existing_gateway_hold(self):
+        # Red on main: the advisory rejects the already valid router public
+        # alias khipu:latest before it can classify existing security gates.
+        a = sample()
+        a["request"]["model_alias"] = "khipu:latest"
+        result = mod.assess(a, now=NOW)
+        self.assertEqual(result["model_alias"], "khipu:latest")
+        self.assertEqual(
+            result["state"], "HOLD_AUTHENTICATED_GATEWAY_AND_SOURCE_BINDING"
+        )
+        self.assertEqual(result["advisory_candidate_host"], "gate1")
+        self.assertFalse(result["execution_authorized"])
+        self.assertFalse(result["route_changes_authorized"])
+        self.assertFalse(result["salad_scale_out_authorized"])
+
+    def test_tagged_alias_does_not_skip_hardware_or_owner_checks(self):
+        a = sample()
+        a["request"]["model_alias"] = "khipu:latest"
+        for name in a["gateway"]:
+            a["gateway"][name] = True
+        for host in a["massed_hosts"]:
+            host["model_loaded_identity_verified"] = False
+        result = mod.assess(a, now=NOW)
+        self.assertEqual(result["state"], "HOLD_MASSED_RESOURCE_OR_IDENTITY")
+        self.assertIsNone(result["advisory_candidate_host"])
+        self.assertFalse(result["execution_authorized"])
+        self.assertFalse(result["paid_compute_authorized"])
+        self.assertFalse(result["model_quality_qualified"])
+
+    def test_tagged_model_names_preserve_bounded_alias_validation(self):
+        for value in (
+            "", ":latest", "khipu:latest/../../tokens", "https://provider",
+            "khipu:latest?x=1", "khipu:latest" + chr(10) + "TOKEN", " khipu:latest",
+            "khipu:latest ", "khipu:" + "x" * 100, None, 17, True,
+        ):
+            with self.subTest(value=value):
+                a = sample()
+                a["request"]["model_alias"] = value
+                with self.assertRaisesRegex(mod.Hold, "MODEL_ALIAS_INVALID"):
+                    mod.assess(a, now=NOW)
+
     def test_training_or_evaluation_cannot_touch_massed_or_add_salad_jobs(self):
         for kind in ("training", "evaluation"):
             with self.subTest(kind=kind):
