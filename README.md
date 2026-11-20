@@ -366,8 +366,61 @@ never interchangeable claims. The verifier is read-only and does not restart, wa
 pause, publish, or otherwise mutate the Space. This is distinct from the **router gateway image**
 (`publish.yml` → GHCR), which stays private and serves a different surface on `:8000`.
 
-`scripts/verify_hf_release_evidence.py` is a separate **offline consumer** for a proposed
-signed envelope over the unchanged accepted evidence JSON. It requires an explicitly trusted
+`scripts/prep_hf_signing_request.py` prepares an offline, no-secrets
+`szl.hf-parity-signing-request/v1` manifest for owner review. It accepts the exact accepted
+producer bytes, including the workflow's pretty-printed JSON; compact input is not required.
+The manifest separately records the SHA-256 and byte length of those original bytes and the
+SHA-256, byte length, and base64 of the canonical evidence body used as the decoded DSSE
+payload. Duplicate keys, non-finite numbers, non-accepted evidence, provenance or revision
+mismatch, incoherent artifact fields/counts, and stale or future observations are rejected.
+
+```bash
+python scripts/prep_hf_signing_request.py \
+  --evidence hf-space-parity-evidence.json \
+  --output hf-space-parity-signing-request.json \
+  --expected-source-revision "$EXPECTED_PROTECTED_SOURCE_SHA" \
+  --expected-hf-revision "$EXPECTED_HF_HEAD_SHA" \
+  --expected-space-id SZLHOLDINGS/llm-router-live \
+  --max-observation-age-seconds 300 \
+  --current-timestamp "$EXPLICIT_TIMEZONE_AWARE_CURRENT_TIMESTAMP"
+```
+
+The expected revisions and current timestamp are **operator-supplied expectations**, not heads
+observed by this tool. Preparation performs no Git or provider query, deployment, or signing,
+and has no private-key input. Its output always has `authority: OWNER_REVIEW_REQUIRED`,
+`signature: null`, and `signing_verified: false`; the output file must not already exist.
+
+The owner-approved signer must review the original evidence and expectations, decode and check
+`canonical_evidence_body_base64`, and sign **that canonical evidence body, not the request
+wrapper**. Signing remains a separate owner-controlled operation using the existing receipt
+library (the preparation component never executes these steps):
+
+```python
+import base64
+import hashlib
+import json
+from pathlib import Path
+
+import szl_receipt
+
+request = json.loads(Path("hf-space-parity-signing-request.json").read_text(encoding="utf-8"))
+body = base64.b64decode(request["canonical_evidence_body_base64"], validate=True)
+assert hashlib.sha256(body).hexdigest() == request["canonical_evidence_body_sha256"]
+envelope = szl_receipt.sign_receipt(
+    szl_receipt.Receipt(request["receipt_kind"], json.loads(body)),
+    owner_private_key_pem,  # Held only by the owner-approved signer; never by preparation.
+    organ="owner-approved-offline-review",
+)
+assert base64.b64decode(envelope["payload"], validate=True) == body
+assert envelope["digest"] == request["canonical_evidence_body_sha256"]
+Path("hf-space-parity-evidence.signed.json").write_text(
+    json.dumps(envelope, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+)
+```
+
+`scripts/verify_hf_release_evidence.py` is the separate **offline consumer** for the resulting
+signed envelope over the canonical serialization of the unchanged accepted evidence object.
+It requires an explicitly trusted
 public key, the exact expected protected source and HF head SHAs, the Space ID, and a maximum
 observation age. It uses `szl-receipt-dsse` for real DSSE verification, rejects duplicate JSON
 keys and non-canonical or digest-mismatched payloads, and checks the complete accepted evidence
