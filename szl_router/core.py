@@ -1703,14 +1703,20 @@ def embed(
 
 
 def status() -> Dict[str, Any]:
-    """Honest snapshot: which providers are armed right now and which specific
-    upstream models are qualified paid (qualification is model-level, never
-    provider-level for non-openai providers)."""
+    """Configuration/arm snapshot, not live model readiness.
+
+    'available' means required URL, credentials and opt-in are configured;
+    no upstream inference is performed here. Model qualification is model-level,
+    never provider-level for non-openai providers.
+    """
     out = []
     for name, p in PROVIDERS.items():
         out.append({
             "provider": name,
             "available": p.available(),
+            # 'available' is an arm/config check, NOT a successful inference probe.
+            "availability_basis": "configuration_only",
+            "inference_readiness": "NOT_PROBED",
             "sovereign": p.sovereign,
             "tier": _tier_of(p),
             "qualified_models": sorted(
