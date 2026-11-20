@@ -22,7 +22,7 @@ Attempt = Tuple[str, str, bool, float, float]
 _CARD_KEYS = frozenset({
     "provider", "model", "samples", "successes", "failures",
     "success_rate", "success_rate_wilson95_lower", "latency_mean_s",
-    "latency_p50_s", "latency_p95_s", "actionable", "note",
+    "latency_p50_s", "latency_p95_s", "evidence_sufficient", "note",
 })
 
 
@@ -54,29 +54,48 @@ def scorecard(attempts: Sequence[Attempt], *, window_s: Optional[float] = None,
               min_samples: int = 30) -> Dict[str, Any]:
     """Per-(provider, model) statistics over recorded attempts.
 
-    window_s: if given, only attempts with the LATEST ts in the data within
-        that many seconds are counted (stale evidence is stale standing).
-    min_samples: a card is "actionable" (worth reading) only at or above this
-        sample count; below it the card is disclosed as insufficient evidence.
-        This flag is INFORMATION ABOUT THE CARD, never a qualification.
+    window_s: recency window measured PER CARD against that card's own
+        latest attempt (stale evidence is stale standing, and one card's
+        fresh traffic must never keep another card's stale rows alive):
+        None = no window; 0 = exactly the latest timestamp per card;
+        > 0 = attempts within that many seconds of the card's latest.
+        Negative values raise ValueError.
+    min_samples: a card is "evidence_sufficient" (worth reading) only at or
+        above this sample count; below it the card is disclosed as
+        insufficient evidence. This flag is INFORMATION ABOUT THE CARD,
+        never a qualification.
 
     Output keys are pinned by test: this structure must never grow a
     "qualified" or "armed" field. Adding one is a doctrine violation.
     """
-    rows: List[Attempt] = list(attempts)
-    if window_s is not None and window_s > 0 and rows:
-        latest = max(r[4] for r in rows)
-        rows = [r for r in rows if latest - r[4] <= window_s]
+    if window_s is not None and window_s < 0:
+        raise ValueError("window_s must be None, 0, or positive")
 
     grouped: Dict[Tuple[str, str], List[Attempt]] = {}
-    for r in rows:
+    for r in attempts:
         grouped.setdefault((r[0], r[1]), []).append(r)
+
+    if window_s is not None:
+        kept: Dict[Tuple[str, str], List[Attempt]] = {}
+        for key, group in grouped.items():
+            latest = max(r[4] for r in group)
+            if window_s == 0:
+                window_rows = [r for r in group if r[4] == latest]
+            else:
+                window_rows = [r for r in group if latest - r[4] <= window_s]
+            # Defensive only: a per-card window always retains at least the
+            # card's own latest attempt, so no card can be erased by another
+            # card's freshness (the old global-window bug).
+            if window_rows:
+                kept[key] = window_rows
+        grouped = kept
 
     cards = {}
     for (provider, model), group in sorted(grouped.items()):
         samples = len(group)
         successes = sum(1 for r in group if r[2])
-        latencies = sorted(float(r[3]) for r in group if r[3] is not None)
+        latencies = sorted(float(r[3]) for r in group
+                           if r[3] is not None and math.isfinite(float(r[3])))
         card = {
             "provider": provider,
             "model": model,
@@ -88,12 +107,17 @@ def scorecard(attempts: Sequence[Attempt], *, window_s: Optional[float] = None,
             "latency_mean_s": (sum(latencies) / len(latencies)) if latencies else 0.0,
             "latency_p50_s": _quantile(latencies, 0.50),
             "latency_p95_s": _quantile(latencies, 0.95),
-            "actionable": samples >= min_samples,
+            "evidence_sufficient": samples >= min_samples,
             "note": "estimates from recorded attempts only; not qualification",
         }
         if set(card) != _CARD_KEYS:  # pragma: no cover - structural guard
             raise RuntimeError("scorecard card keys drifted")
-        cards["%s:%s" % (provider, model)] = card
+        key = "%s:%s" % (provider, model)
+        if key in cards:
+            # Fail-closed: composed-key collisions between different
+            # (provider, model) groups must never silently overwrite a card.
+            raise ValueError("scorecard key collision between groups: %r" % key)
+        cards[key] = card
 
     return {
         "schema": "szl.router.scorecard/v1",

@@ -10,9 +10,11 @@ and every edge must prove exactly what its receipt asserts: capability,
 co-use, and handoff are NOT endorsement.
 
 Sybil doctrine: the prior is a FIXED budget over vetted nodes (the study's
-"no fresh teleport mass for new identities" rule). Nodes outside the prior
-receive standing ONLY through receipt-backed inflow. Dangling mass returns to
-the prior, never to the uniform distribution.
+"no fresh teleport mass for new identities" rule). This is enforced in code,
+not just prose: rank() REFUSES to mint a prior, so no caller can accidentally
+hand uniform standing to unvetted nodes. Nodes outside the prior receive
+standing ONLY through receipt-backed inflow. Dangling mass returns to the
+prior, never to the uniform distribution.
 
 Standing values are relative to the supplied node set, prior, and window.
 Never publish them as probabilities of reliability or as credentials; expose
@@ -26,7 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import math
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Sequence, Tuple
 
 
 def edge_digest(nodes: Sequence[str], edges: Sequence[Tuple[str, str, float]]) -> str:
@@ -34,6 +36,8 @@ def edge_digest(nodes: Sequence[str], edges: Sequence[Tuple[str, str, float]]) -
 
     Pinned to a canonical byte representation so a published standing table
     can name exactly which graph (and which alleged receipts) produced it.
+    Covers ONLY the graph: the same graph under a different prior or config
+    deliberately shares this digest and differs in config_digest.
     """
     h = hashlib.sha256()
     for n in sorted(nodes):
@@ -44,10 +48,29 @@ def edge_digest(nodes: Sequence[str], edges: Sequence[Tuple[str, str, float]]) -
     return h.hexdigest()[:16]
 
 
+def _config_digest(edge_dig: str, prior_map: Dict[str, float],
+                   damping: float, tol: float) -> str:
+    """Stable digest of the FULL standing configuration.
+
+    A published standing table is attributable to its exact inputs: the same
+    edge graph under a different prior, damping, or tolerance is a DIFFERENT
+    table and must digest differently.
+    """
+    h = hashlib.sha256()
+    h.update(edge_dig.encode("ascii") + b"\x1f")
+    h.update(repr(float(damping)).encode("ascii") + b"\x1f")
+    h.update(repr(float(tol)).encode("ascii") + b"\x1f")
+    for x in sorted(prior_map):
+        h.update(x.encode("utf-8") + b"\x1f"
+                 + repr(float(prior_map[x])).encode("ascii") + b"\x1e")
+    return h.hexdigest()[:16]
+
+
 def rank(
     nodes: Sequence[str],
     edges: Sequence[Tuple[str, str, float]],
-    prior: Optional[Dict[str, float]] = None,
+    *,
+    prior: Dict[str, float],
     damping: float = 0.85,
     tol: float = 1e-12,
     max_rounds: int = 10000,
@@ -58,18 +81,22 @@ def rank(
     edges: (source, destination, weight>0) tuples the CALLER has already
         receipt-validated. This function cannot and does not validate the
         underlying claims; it is arithmetic on trusted input.
-    prior: fixed probability budget over vetted nodes, summing to 1.
-        Defaults to the uniform prior OVER THE SUPPLIED NODE SET (a documented
-        diagnostic default; trust contexts MUST pass an explicit vetted prior
-        per the sybil rule above).
+    prior: REQUIRED fixed probability budget over vetted nodes, summing to
+        1. There is deliberately NO default: a uniform prior over whatever
+        nodes the caller supplies would mint free standing for unvetted
+        identities (the sybil rule is enforced here, in code). Diagnostics
+        that genuinely want a uniform prior must pass one explicitly.
     damping: 0 < damping < 1. The standing leak that prevents closed cycles
         from becoming self-certifying. NOT a calibrated trust discount.
 
-    Returns a disclosure dict: "standing" (id -> mass share), "converged"
-    (False means the output MUST NOT be consumed), "rounds", "delta_l1"
-    (last successive-iterate L1 gap), "l1_error_bound" (damping/(1-damping) *
-    delta_l1; a guaranteed bound on remaining L1 error, NOT a claim of machine
-    precision), "damping", "tol", "prior" (echoed), "edge_digest", "note".
+    Returns a disclosure dict: "standing" (id -> mass share, and {} whenever
+    convergence failed, so a non-converged result is structurally unusable),
+    "converged" (False means the output MUST NOT be consumed), "rounds",
+    "delta_l1" (last successive-iterate L1 gap), "l1_error_bound"
+    (damping/(1-damping) * delta_l1; a guaranteed bound on remaining L1
+    error, NOT a claim of machine precision), "damping", "tol", "prior"
+    (echoed), "edge_digest" (graph-only), "config_digest" (graph + prior +
+    damping + tol), "note".
     """
     node_tuple = tuple(nodes)
     n = len(node_tuple)
@@ -80,10 +107,7 @@ def rank(
     if tol <= 0.0 or max_rounds < 1:
         raise ValueError("bad tol or max_rounds")
 
-    if prior is None:
-        p = {x: 1.0 / n for x in node_tuple}
-    else:
-        p = {x: float(prior.get(x, 0.0)) for x in node_tuple}
+    p = {x: float(prior.get(x, 0.0)) for x in node_tuple}
     for x in node_tuple:
         if not math.isfinite(p[x]) or p[x] < 0.0:
             raise ValueError("bad prior mass for node: %s" % x)
@@ -121,8 +145,11 @@ def rank(
             converged = True
             break
 
+    edge_dig = edge_digest(node_tuple, edges)
     return {
-        "standing": {x: r[x] for x in node_tuple},
+        # Fail-closed: a non-converged table is withheld entirely, not
+        # merely flagged; consumers cannot misuse numbers that are not there.
+        "standing": {x: r[x] for x in node_tuple} if converged else {},
         "converged": converged,
         "rounds": rounds,
         "delta_l1": delta,
@@ -130,9 +157,10 @@ def rank(
         "damping": damping,
         "tol": tol,
         "prior": dict(p),
-        "edge_digest": edge_digest(node_tuple, edges),
+        "edge_digest": edge_dig,
+        "config_digest": _config_digest(edge_dig, p, damping, tol),
         "note": "relative standing only; not qualification, not reliability, "
-                "not entitlement; consume only if converged is True",
+                "not entitlement; standing is {} unless converged is True",
     }
 
 
@@ -144,19 +172,26 @@ def reorder(chain: Sequence[str], standing: Dict[str, float],
     its qualification elsewhere. All guards fail closed (the original order
     is returned unchanged): any chain id missing from standing; any standing
     id absent from the chain (a partial graph is refused); negative clamps;
-    and more than max_moves displaced positions (churn clamp). Ties keep the
-    current order (stable sort).
+    any non-finite standing value; and more than max_moves displaced
+    positions (churn clamp). Ties keep the current order (stable sort).
     """
     result = list(chain)
     if max_moves < 0:
         return result
-    if len(set(standing)) != len(standing):
+    # int==bool corner: bool standing values coerce harmlessly; anything a
+    # float() cannot digest, or NaN/inf, fails closed to the original order.
+    try:
+        vals = {k: float(v) for k, v in standing.items()}
+    except (TypeError, ValueError):
         return result
-    if any(x not in standing for x in result):
+    if not all(math.isfinite(v) for v in vals.values()):
         return result
-    if any(k not in set(result) for k in standing):
+    chain_set = set(result)
+    if any(x not in vals for x in result):
         return result
-    ordered = sorted(result, key=lambda x: (-float(standing[x]), result.index(x)))
+    if any(k not in chain_set for k in vals):
+        return result
+    ordered = sorted(result, key=lambda x: -vals[x])
     moves = sum(1 for a, b in zip(ordered, result) if a != b)
     if moves > max_moves:
         return result
