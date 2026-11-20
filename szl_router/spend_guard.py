@@ -44,6 +44,19 @@ _LOCK = threading.Lock()
 # Every ledger row labels the amount as estimated and records its rate basis.
 _MODEL_RATES: List[Tuple[str, float, float]] = [
     # (substring, usd_per_1k_input, usd_per_1k_output)
+    # -- Moonshot / Kimi (owner-qualified 2026-11-19; reviewed list prices) --
+    # Kimi Platform pricing (synced 2026-11-18): kimi-k3.1-pro $2/M
+    # cache-miss input, $0.20/M cache-hit input, $10/M output, 1M context.
+    # The reservation prices input at the FULL cache-miss rate: a
+    # forward-looking upper bound (fail-closed beats under-billing).
+    ("kimi-k3.1-pro",       0.00200, 0.01000),  # $2.00 in / $10.00 out per 1M
+    # -- Zhipu GLM (owner-qualified 2026-11-19; reviewed list prices) --
+    # Official Z.AI pricing page (synced 2026-11-19). Flash matched FIRST:
+    # plain glm-5.3 must not swallow the cheaper flash rates. Reservation
+    # prices input at the uncached rate (upper bound; cached input $0.26/M
+    # for glm-5.3 and $0.03/M for flash is cheaper, never assumed).
+    ("glm-5.3-flash",       0.00015, 0.00050),  # $0.15 in / $0.50 out per 1M
+    ("glm-5.3",             0.00140, 0.00440),  # $1.40 in / $4.40 out per 1M
     # -- Moonshot / Kimi (offline historical paid-grid estimate) --
     ("kimi-k2",            0.00060, 0.00250),  # kimi-k2-*-preview (cache-miss input)
     ("moonshot-v1-128k",   0.00060, 0.00250),
