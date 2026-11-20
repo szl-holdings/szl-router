@@ -1,1 +1,497 @@
-[object Object],[object Object]
+> **SZL Holdings** · Doctrine v11 · Λ = Conjecture 1 (advisory, never "green"/theorem) · canonical [a-11-oy.com](https://a-11-oy.com)
+
+# SZL Router
+
+<!-- szl:header v1 -->
+<!-- Native identity: szl-brand@4309f6fce89179331b0b3ed8c99494e76c5be256; Orbit v2 icon. -->
+<p>
+  <a href="https://github.com/szl-holdings">
+    <img src="https://raw.githubusercontent.com/szl-holdings/szl-brand/4309f6fce89179331b0b3ed8c99494e76c5be256/kit/logos/orbit-v2/suite/szl-icon-32.svg" alt="SZL Holdings — Orbit v2" width="32" height="32" />
+  </a>
+</p>
+
+**Control before action. Evidence after.**
+
+[Product](https://a-11-oy.com) · [Proof](https://a11oy.net) · [GitHub organization](https://github.com/szl-holdings)
+<!-- /szl:header -->
+
+**Sovereign, OpenAI-compatible LLM gateway with a receipt on every answer — signed when a key is armed, else UNSIGNED-honest.**
+
+The governed control gateway in `router_control.app` has its own
+[operation and ecosystem integration contract](docs/ROUTER_CONTROL.md), including
+mandatory caller authentication, explicit provider allowlisting and separate
+inference configuration readiness. Build it with `Dockerfile.router-control`.
+It also supports an opt-in Ollama route fixed to the router process's loopback
+address, with per-alias digest pins and browser requests bound to the selected
+local provider. The [control contract](docs/ROUTER_CONTROL.md) covers its model
+identity limits and the network namespace requirement for containers.
+Its SHA256 receipts are unsigned content commitments. The legacy DSSE gateway
+described below is `szl_router.app`; the two receipt formats are distinct.
+
+The [SaladCloud × Massed A6000 coexistence frontier](docs/SALAD_MASSED_FRONTIER_20261118.md)
+studies vLLM, SGLang, NVIDIA Dynamo, llm-d and Salad Container Engine, and
+ships a **source-only, no-network capacity advisory** with explicit KV-block
+mathematics and fail-closed tests. It does not change either router app, launch
+GPU jobs, route an A11oy request, expose a model port, or grant paid-compute
+authority. Cloudflare Access and A11oy's separately governed router
+configuration remain independent production admission gates.
+
+[Run the local inference demo](demo/README.md) for one-command loopback inference,
+verified session receipts, and a hash-bound report using an installed Ollama model.
+
+One endpoint in front of many brains — our own GPU first, then declared external
+candidates whose dispatch is gated — and every answer comes with a **verifiable receipt**
+(signed when a key is armed, else UNSIGNED-honest) of which model served it, on
+whose hardware, and at what energy/tier.
+
+## 🚀 Quickstart (`docker run`)
+
+```bash
+docker build -t szl-router .
+# Starts the API for inspection; a cloud key alone does not qualify a route:
+docker run -p 8000:8000 szl-router
+```
+
+Point an OpenAI client at `http://localhost:8000/v1`. Without a qualified
+sovereign upstream, the completion below fails closed with an attempt trail:
+
+```bash
+curl -i localhost:8000/v1/chat/completions -H 'content-type: application/json' \
+  -d '{"model":"szl-large","messages":[{"role":"user","content":"hi"}]}'
+```
+
+A successful completion body carries the honest `x_szl_provenance` block, and
+the HTTP response carries an **`x-szl-receipt`** header: a base64-JSON
+DSSE/ECDSA-P256 envelope you can verify independently.
+
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://localhost:8000/v1", api_key="unused")
+client.chat.completions.create(model="szl-large",
+    messages=[{"role": "user", "content": "hi"}])
+```
+
+### Verify a receipt (independently)
+
+On first boot with no key configured, the server generates an **ephemeral session
+signing key** and logs its public key (honest: a per-session identity, not a
+persistent one). Fetch it and verify any receipt — offline, with no trust in us:
+
+```bash
+# this session's public key
+curl -s localhost:8000/v1/receipt/pubkey | python -c 'import sys,json;print(json.load(sys.stdin)["public_key_pem"])' > session.pub
+
+# grab the receipt header from a response, then verify via the CLI...
+RECEIPT=$(curl -si localhost:8000/v1/chat/completions -H 'content-type: application/json' \
+  -d '{"model":"szl-large","messages":[{"role":"user","content":"hi"}]}' \
+  | tr -d '\r' | awk -F': ' 'tolower($1)=="x-szl-receipt"{print $2}')
+echo "$RECEIPT" | python -m szl_router.verify --envelope - --pubkey session.pub
+
+# ...or via the verify endpoint
+curl -s localhost:8000/v1/receipt/verify -H 'content-type: application/json' \
+  -d "{\"envelope\":\"$RECEIPT\",\"public_key_pem\":\"$(awk '{printf "%s\\n",$0}' session.pub)\"}"
+```
+
+For a **persistent** signing identity, set `SZL_RECEIPT_KEY_PEM` (a PEM string) or
+`SZL_RECEIPT_KEY_FILE` (a PEM path) from the environment. **Keyless is honest:**
+with `SZL_RECEIPT_EPHEMERAL=0` and no key, receipts are emitted UNSIGNED-honest
+(`signed:false`) — a signature is never fabricated. Signing requires the optional
+`sign` extra (the git-only `szl-receipt` library); the Docker image installs it.
+
+### Receipt fields: `cost` + `observer` + `grid_context` (additive)
+
+Beyond provenance, usage and the request digest, every new receipt also carries:
+
+- **`cost`** - a per-call USD block with its evidence basis. The named paid
+  Moonshot candidate is blocked before transport; the legacy price-table
+  estimate and ledger do not qualify a strict concurrent spend cap. The
+  owner-qualified OpenAI route (2026-11-16) is served only after a strict
+  pre-call USD reservation, and ledgers its served estimate.
+  Unqualified cloud pricing/quota remains unknown (`amount_usd:null`), never
+  fabricated as `$0`. Sovereign metal records `$0.00` vendor charge only,
+  while electricity and other costs are unmetered here.
+- **`observer`** — the observer frame the receipt was issued under: endpoint,
+  auth mode (`bearer`/`open`), and the requested model. A receipt's verdict is
+  honest *relative to this frame* — what this caller asked and how they were
+  authenticated — never a claim about any other vantage point.
+- **`grid_context`** *(opt-in)* — the observed, **REPORTED** grid signal at route
+  time (carbon intensity, gCO2/kWh) from the **keyless UK Carbon Intensity API**
+  (`https://api.carbonintensity.org.uk/intensity`), carried **verbatim** with its
+  `source`, `observed_at` and `fetched_at`. It follows the same honest pattern as
+  `szl-energy-attest` (grid-*average*, never claimed "marginal"; no price, so
+  `price` is `UNAVAILABLE`). It **documents** the grid window a run happened in —
+  it never measures a joule (the receipt's `energy` stays `"UNAVAILABLE"`) and
+  never creates energy. Enable with `SZL_RECEIPT_GRID_CONTEXT=1`; the keyless
+  fetch runs in a background thread behind a short-TTL cache (`SZL_RECEIPT_GRID_TTL`,
+  default 300s) and **never** blocks the request path. A missing/unreachable feed
+  yields an honest all-null `UNAVAILABLE` block — never a fabricated number.
+
+Both fields are **additive**: they are simply omitted when absent, so receipts
+produced by older builds stay byte-identical.
+
+---
+
+Our own unified, OpenAI-compatible LLM router. One endpoint in front of many
+brains - our own GPU first, then configured external routes - with
+**honest provenance on every answer**.
+
+We studied the leaders (LiteLLM proxy, OpenRouter, lm-sys RouteLLM) and then
+built our own, leaner version that fits our doctrine:
+
+- **Sovereign-first.** Routes try our own metal (`box_gpu`, `nvidia_gpu`) before
+  any third-party cloud, before any paid tier.
+- **Honest labels.** Every response carries `x_szl_provenance` with `served_by`,
+  `sovereign` (true *only* for hardware we own), `energy_source`, `tier`, and the
+  full `attempts` trail. Third-party routes are never labelled sovereign.
+- **No secrets in the repo.** All upstream keys come from the environment. Nothing
+  secret is ever written to disk or logged.
+- **No half-state.** A logical model either resolves to a working upstream or the
+  call fails loud (HTTP 502) with the complete attempt trail. Unavailable
+  providers (missing key/url) are skipped — never faked.
+
+## Logical models
+
+| model       | intent              | declared order (blocked routes skipped)                            |
+|-------------|---------------------|-------------------------------------------------------------------|
+| `szl-large` | general large brain | box_gpu → nvidia_gpu → groq → nvidia_nim → moonshot(Kimi) → openai(gpt-5.4)          |
+| `szl-fast`  | low-latency small   | box_gpu → groq → nvidia_nim → openai(gpt-5-mini)                                        |
+| `szl-coder` | coding              | box_gpu → nvidia_gpu → nvidia_nim → groq → openai(gpt-5.4)                           |
+| `szl-auto`  | smart routing       | scores the prompt, then dispatches to one of the three above      |
+
+You can also request `provider:upstream_model` directly. Unqualified cloud-grid
+and paid Moonshot overrides are rejected before transport, including when a
+credential is configured. The owner-qualified OpenAI paid route is the one
+exception: it serves, strictly last-fallback, only after a strict pre-call USD
+reservation (spend cap + max_tokens ceiling) passes. The table preserves declaration order, not active
+fallback availability.
+
+## Smart routing (`szl-auto`)
+
+We studied how the leaders route by quality (lm-sys **RouteLLM**, OpenRouter's
+*auto* model) and built our own, doctrine-true version. Ask for the opt-in
+`szl-auto` model and the router scores the prompt with a **deterministic,
+no-LLM heuristic** (`heuristic-v1`) — prompt length, code markers, conversation
+depth, reasoning cues — then dispatches to the cheapest **capable** real logical
+model, **sovereign-first**: a greeting goes to `szl-fast`, a hard multi-step
+question to `szl-large`, anything with code to `szl-coder`.
+
+What makes it *ours*: the routing decision is recorded honestly in
+`x_szl_provenance.routing` **and signed into the inference receipt** — a
+governed, independently-verifiable record of *why* a given brain answered.
+
+It is honest by construction: the score is a **routing estimate, never a quality
+guarantee**, it makes **no extra upstream call**, and it is **pure** — the same
+prompt always routes the same way, so the receipt is reproducible. Existing
+models are untouched: their provenance and receipts are byte-identical to before
+(the `routing` block is present only for `szl-auto`). Tune the escalation point
+with `SZL_AUTO_LARGE_THRESHOLD` (default `0.50`).
+
+```bash
+curl localhost:8099/v1/chat/completions -H 'content-type: application/json' \
+  -d '{"model":"szl-auto","messages":[{"role":"user","content":"hi"}]}' -i
+# -> body.x_szl_provenance.routing shows chosen_logical=szl-fast;
+#    the x-szl-receipt header carries the SIGNED routing decision.
+```
+
+## Providers
+
+| provider      | tier       | sovereign | key env                                  |
+|---------------|------------|-----------|------------------------------------------|
+| box_gpu       | sovereign  | yes       | `A11OY_MODEL_BASE_URL` + `A11OY_GPU_TOKEN` |
+| nvidia_gpu    | sovereign  | yes       | `NVIDIA_GPU_BASE_URL` + `NVIDIA_GPU_TOKEN` |
+| groq          | unqualified-grid | no | `GROQ_API_KEY`                           |
+| nvidia_nim    | unqualified-grid | no | `NVIDIA_NIM_API_KEY`                     |
+| zhipu         | unqualified-grid | no | `ZHIPU_API_KEY`                          |
+| siliconflow   | unqualified-grid | no | `SILICONFLOW_API_KEY`                    |
+| moonshot/Kimi | paid-grid  | no        | `KIMI_API_KEY`                           |
+| openai        | qualified-paid | no    | `OPENAI_API_KEY`                         |
+
+A key and URL make a provider locally configured, not qualified, free, or live.
+Unqualified cloud-grid candidates are skipped. The named paid Moonshot candidate
+is blocked before transport until exact model pricing and strict pre-call spend
+reservation are qualified. The owner-qualified OpenAI route (2026-11-16)
+serves only under exactly that strict pre-call reservation: kill switch,
+mandatory max_tokens ceiling, and spend-cap check — and ledgers the served
+estimate in the hash-linked ledger after transport. See
+[provider qualification](docs/PROVIDER_QUALIFICATION.md) for current gates.
+
+## Run
+
+```bash
+pip install -r requirements.txt
+uvicorn szl_router.app:app --host 0.0.0.0 --port 8099
+```
+
+```bash
+curl localhost:8099/v1/chat/completions -H 'content-type: application/json' \
+  -d '{"model":"szl-large","messages":[{"role":"user","content":"hi"}]}'
+```
+
+Set `SZL_ROUTER_TOKEN` to require `Authorization: Bearer <token>` on callers. With no token set, `/v1/chat/completions`, `/v1/embeddings` and `/v1/spend` answer `503` (fail closed); set `SZL_ROUTER_ALLOW_NO_AUTH=1` only for a deliberate open local run. Responses and `/status` show `base_url` only for built-in public provider hosts; operator-configured endpoints read `"redacted"` (`SZL_ROUTER_EXPOSE_BASE_URL=1` restores the old output).
+
+`GET /v1/spend` is a local operator endpoint exposing the legacy advisory ledger.
+It admits only a loopback peer (`127.0.0.0/8`, `::1`, or an IPv4-mapped loopback
+address). When `SZL_ROUTER_TOKEN` is configured, that existing bearer token is
+also required; a valid token does not grant remote access to this endpoint.
+Missing or invalid peer addresses are denied before ledger state is read.
+The check uses the ASGI server's client address and does not itself trust
+`Forwarded` or `X-Forwarded-For` headers. Keep this route excluded from public
+reverse-proxy routing: a local proxy can otherwise appear to be a loopback peer.
+
+## Reliability
+
+Two layers of resilience, both honest (a real failure is always surfaced in the
+`attempts` trail — never papered over):
+
+- **Route failover** - each logical model walks its ordered route list and
+  returns the first eligible upstream that answers. Missing keys/URLs,
+  unqualified cloud-grid routes, the blocked paid Moonshot candidate, and a
+  refused qualified-paid reservation are skipped and recorded in the attempt
+  trail.
+- **Same-provider transient retry** — before falling through to the next route, a
+  provider that blips transiently (HTTP `429`/`500`/`502`/`503`/`504`, or a
+  dropped connection) is retried with **exponential backoff + full jitter**, so
+  concurrent callers don't retry in lockstep and stampede a recovering upstream.
+  Permanent errors (`400`/`401`/`404`) are **not** retried — they fail through to
+  the next route immediately. Tunable via env:
+
+  | env | default | meaning |
+  |-----|---------|---------|
+  | `SZL_RETRY_MAX_ATTEMPTS` | `3` | total tries per provider |
+  | `SZL_RETRY_BASE_DELAY`   | `0.25` | base backoff (seconds) |
+  | `SZL_RETRY_MAX_DELAY`    | `4.0` | per-sleep cap (seconds) |
+
+- **Failure cooldown** — after a provider fails a route (retry budget spent or a
+  permanent error), it cools down for `SZL_COOLDOWN_SECONDS` (default `30`, `0`
+  disables) so the very next callers don't pay the same failure latency again.
+  Honest by construction: a cooled provider is skipped **only while a warm
+  eligible fallback remains** — if none remains, the cooled eligible provider
+  is tried; every skip is recorded in the `attempts` trail as
+  `cooldown-skip (...)` so the receipt shows exactly why a provider was not
+  consulted; and a single success clears the cooldown immediately.
+
+### Embedding cache identity
+
+The legacy `szl_router.app` embeddings endpoint uses a process-local cache with
+a default 300-second TTL and 1,024-entry cap (`SZL_EMBED_CACHE_TTL` and
+`SZL_EMBED_CACHE_MAX`). Cache identity includes the resolved provider slot,
+normalized endpoint, actual upstream request model, complete JSON request,
+provenance labels, and `SZL_EMBED_CACHE_NAMESPACE`. Endpoint and credential
+configuration are captured once per request so the transport uses the same
+values as the cache identity. Upstream or shared router bearer-token rotation
+invalidates reuse through a private per-process HMAC scope; credentials are
+never placed in cache keys or responses.
+
+Lookup follows the configured route order and skips unavailable providers.
+A cached fallback cannot hide recovery of the preferred route. Consequently,
+a failing preferred route is attempted before a fallback cache hit, which can
+add latency. `x_szl_cache.lookup_attempts` records those current attempts;
+`x_szl_provenance.attempts` retains the historical computation's provenance.
+Fresh and cached responses are detached from cache storage to prevent callers
+from changing later results. Inputs must be finite JSON values with string
+object keys; Python objects are never stringified into cache identities, and
+the Python `extra` argument cannot override `model` or `input`.
+
+A hit replays an observed response, including its provider-reported `model`.
+It does **not** verify an immutable weights revision behind a mutable upstream
+alias. Rotate the non-secret `SZL_EMBED_CACHE_NAMESPACE` when changing weights
+without changing endpoint/model, clear the cache with `embed_cache_clear()`,
+or call Python `embed(..., use_cache=False)` to bypass caching. The namespace
+is an operator assertion, not model attestation. This gateway has one optional
+shared bearer token, so the cache is shared within that service scope; it does
+not provide authenticated per-tenant isolation.
+
+## Arm the NVIDIA GPU
+
+When the owned GPU is reachable on an OpenAI-compatible URL (vLLM / NIM /
+Ollama), set:
+
+```bash
+export NVIDIA_GPU_BASE_URL="https://<gpu-host>:<port>/v1"
+export NVIDIA_GPU_TOKEN="<token>"
+```
+
+This legacy provider is classified as sovereign and must be used only for owned
+hardware. Rented or third-party hardware needs an explicitly non-sovereign
+provider record; a reachable URL alone does not establish ownership.
+
+## Test
+
+```bash
+python3 test_router.py
+```
+
+Hits whatever providers are armed via env and prints the honest provenance of
+each answer. Exits non-zero if nothing is wired.
+
+The offline, deterministic suite (no network, no real keys) runs under pytest —
+including `test_signed_receipt.py`, which mocks the upstream and proves the
+signed-receipt contract end to end (signed receipt verifies, tampering fails,
+keyless is UNSIGNED-honest):
+
+```bash
+pip install "szl-receipt-dsse>=0.3.3" pytest httpx
+python -m pytest -q
+```
+
+## Public status Space (governed source-of-truth)
+
+The investor-facing status page at
+[`SZLHOLDINGS/llm-router-live`](https://huggingface.co/spaces/SZLHOLDINGS/llm-router-live)
+is a **static** surface (no internals, no keys) and is now governed from this repo
+under [`space/`](space/) — previously it was hand-built on HF with no GitHub source.
+It is deployed whole-context (`hf-space-deploy.yml`, `huggingface_hub.upload_folder`)
+because its `COPY . /app` Dockerfile is intentionally excluded by the org's per-file
+deployer. Publication acceptance is deliberately stricter than matching bytes:
+`hf-space-drift-check.yml` verifies the complete remote file set and every byte at
+one immutable HF revision, validates its exact GitHub source binding, requires the
+provider API to report `RUNNING` at that same runtime SHA, and requires nonce-fresh,
+`no-store`, no-redirect HTTP 200 witnesses from `/readyz` and
+`/.well-known/szl-source.json`. The latter must bind the same exact GitHub SHA
+and HF revision before acceptance. `PAUSED`, build/start/stop/error or unknown
+stages, stale revisions, missing token or endpoint configuration, malformed provider
+data, redirects, auth/error pages, and non-200 readiness all fail closed.
+
+Each run preserves `hf-space-parity-evidence.json` as a workflow artifact. Its
+`source`, `publication`, `deployment`, and `runtime` sections are separate:
+source checkout, published bytes, provider stage, and a live readiness witness are
+never interchangeable claims. The verifier is read-only and does not restart, wake,
+pause, publish, or otherwise mutate the Space. This is distinct from the **router gateway image**
+(`publish.yml` → GHCR), which stays private and serves a different surface on `:8000`.
+
+`scripts/prep_hf_signing_request.py` prepares an offline, no-secrets
+`szl.hf-parity-signing-request/v1` manifest for owner review. It accepts the exact accepted
+producer bytes, including the workflow's pretty-printed JSON; compact input is not required.
+The manifest separately records the SHA-256 and byte length of those original bytes and the
+SHA-256, byte length, and base64 of the canonical evidence body used as the decoded DSSE
+payload. Duplicate keys, non-finite numbers, non-accepted evidence, provenance or revision
+mismatch, incoherent artifact fields/counts, and stale or future observations are rejected.
+
+```bash
+python scripts/prep_hf_signing_request.py \
+  --evidence hf-space-parity-evidence.json \
+  --output hf-space-parity-signing-request.json \
+  --expected-source-revision "$EXPECTED_PROTECTED_SOURCE_SHA" \
+  --expected-hf-revision "$EXPECTED_HF_HEAD_SHA" \
+  --expected-space-id SZLHOLDINGS/llm-router-live \
+  --max-observation-age-seconds 300 \
+  --current-timestamp "$EXPLICIT_TIMEZONE_AWARE_CURRENT_TIMESTAMP"
+```
+
+The expected revisions and current timestamp are **operator-supplied expectations**, not heads
+observed by this tool. Preparation performs no Git or provider query, deployment, or signing,
+and has no private-key input. Its output always has `authority: OWNER_REVIEW_REQUIRED`,
+`signature: null`, and `signing_verified: false`; the output file must not already exist.
+
+The owner-approved signer must review the original evidence and expectations, decode and check
+`canonical_evidence_body_base64`, and sign **that canonical evidence body, not the request
+wrapper**. Signing remains a separate owner-controlled operation using the existing receipt
+library (the preparation component never executes these steps):
+
+```python
+import base64
+import hashlib
+import json
+from pathlib import Path
+
+import szl_receipt
+
+request = json.loads(Path("hf-space-parity-signing-request.json").read_text(encoding="utf-8"))
+body = base64.b64decode(request["canonical_evidence_body_base64"], validate=True)
+assert hashlib.sha256(body).hexdigest() == request["canonical_evidence_body_sha256"]
+envelope = szl_receipt.sign_receipt(
+    szl_receipt.Receipt(request["receipt_kind"], json.loads(body)),
+    owner_private_key_pem,  # Held only by the owner-approved signer; never by preparation.
+    organ="owner-approved-offline-review",
+)
+assert base64.b64decode(envelope["payload"], validate=True) == body
+assert envelope["digest"] == request["canonical_evidence_body_sha256"]
+Path("hf-space-parity-evidence.signed.json").write_text(
+    json.dumps(envelope, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+)
+```
+
+`scripts/verify_hf_release_evidence.py` is the separate **offline consumer** for the resulting
+signed envelope over the canonical serialization of the unchanged accepted evidence object.
+It requires an explicitly trusted
+public key, the exact expected protected source and HF head SHAs, the Space ID, and a maximum
+observation age. It uses `szl-receipt-dsse` for real DSSE verification, rejects duplicate JSON
+keys and non-canonical or digest-mismatched payloads, and checks the complete accepted evidence
+contract. It never performs live readback, authorizes deployment, or admits paid inference.
+`SOURCE_AHEAD` reports that the supplied current protected head differs from the signed source
+binding; offline hashes alone do not establish Git ancestry.
+
+```bash
+python scripts/verify_hf_release_evidence.py \
+  --envelope hf-space-parity-evidence.signed.json \
+  --public-key approved-release-signer.pub \
+  --expected-source-revision "$EXPECTED_PROTECTED_SOURCE_SHA" \
+  --expected-hf-revision "$EXPECTED_HF_HEAD_SHA" \
+  --expected-space-id SZLHOLDINGS/llm-router-live \
+  --max-observation-age-seconds 300 \
+  --expected-signer-key-sha256 "$APPROVED_PUBLIC_KEY_DER_SHA256"
+```
+
+The optional signer identity is a SHA-256 fingerprint of the trusted public key's DER
+`SubjectPublicKeyInfo`; the receipt envelope's `organ` and `keyid` labels are not signed and
+confer no identity. The verifier neither creates nor configures a signer. **No producer-signed
+proof exists until an approved signer publishes a real envelope**: existing unsigned evidence
+artifacts remain historical observations and are rejected by this consumer.
+
+## The Ouroboros loop (doctrine cross-reference)
+
+The router **is** an instance of the estate's Ouroboros bounded-recursion loop. The
+canonical definition is the receipt-closed kernel
+[`szl-holdings/platform`](https://github.com/szl-holdings/platform)
+(`runLoop`): *bounded recursion with measurable convergence* that MUST terminate on one
+of four exit conditions — `converged | consistent | aborted | budgetExhausted` — and
+emits a governance receipt for every run.
+
+How the router embodies that same primitive (in `szl_router/core.py`, see **Reliability** above):
+
+- **Bounded.** Each logical model walks an *ordered, finite* route list; each
+  eligible provider retries at most `SZL_RETRY_MAX_ATTEMPTS` times
+  with exponential backoff + full jitter; a spent provider cools down. There is no
+  unbounded retry — the loop always terminates, either on a working upstream or a loud
+  `HTTP 502` carrying the complete `attempts` trail.
+- **Receipt-closed.** Every answer carries the `x-szl-receipt` envelope; the router's
+  `attempts` trail is the loop's `LoopTrace` — **the trace is the product.**
+- **Metaphor (doctrine, not math):** `receipts.in ≡ receipts.out` — the snake eats its
+  own tail; each answer's provenance is fed back as an auditable input.
+
+**Honesty (Doctrine v11):** Λ (the trust aggregator the kernel references) is
+**Conjecture 1** — advisory, *never* a proven theorem (unconditional uniqueness is
+machine-checked FALSE; only conditional CUT-2 uniqueness is proven in
+[`lutar-lean`](https://github.com/szl-holdings/lutar-lean)). This loop is a *bounded,
+terminating* control primitive — it makes **no** perpetual-motion or zero-cost claim.
+
+---
+
+**Explore the SZL estate:** [a11oy console](https://a-11-oy.com) · [Receipt format spec](https://github.com/szl-holdings/governed-receipt-spec) · [Lean proofs](https://github.com/szl-holdings/lutar-lean) · [Public proof site](https://github.com/szl-holdings/a11oy-net) · [Build acceptance](https://github.com/szl-holdings/szl-build-env) · [Telemetry](https://github.com/szl-holdings/vsp-otel) · [🤗 SZLHOLDINGS](https://huggingface.co/SZLHOLDINGS)
+
+## License
+
+Apache-2.0 — see [LICENSE](LICENSE).
+
+
+## Offline paged-KV GPU memory planning (not a runtime guarantee)
+
+[Frontier Inference Math — reviewed leaders, papers, formulas and operational
+gates](docs/FRONTIER_INFERENCE_MATH_20261117.md) documents the official
+vLLM/PagedAttention, SGLang/RadixAttention, NVIDIA Dynamo, Ray Serve,
+FlashAttention, GenAI-Perf and Palantir sources used to guide a small,
+**independently implemented** SZL capacity control.
+
+The `szl-router-kv-plan` console script provides a **single-device** exact
+integer worst-case standard-KV page estimate. It requires model weights,
+non-KV workspace, safety reserve, actual KV dimensions, page size,
+maximum context and requested concurrency. An estimated fit is NOT measured
+VRAM, an inference benchmark, an admission to launch jobs, a guarantee
+against OOM, a method to fuse GPU memories, or proof of a model's trained
+weights. Unknown and unsupported geometries fail closed. No provider
+calls, credentials, weights downloads or GPU drivers are required.
+
+The existing sovereign-first router, request attempt/deadline guard,
+spend boundary, per-node mesh and protected publishers remain untouched.
+A separate measured GPU/runtime calibration and owner-reviewed launch
+integration would be needed before production use.
