@@ -556,7 +556,10 @@ def test_invalid_provider_url_diagnostics_hide_host_port_and_token(monkeypatch):
         if path == "/readyz/inference":
             assert response.status_code == 503
             assert admission["checks"]["registry_valid"] is False
-        assert admission["registry_state"] == "INVALID_FAIL_CLOSED" if path != "/api/routes" else observed["state"] == "INVALID_FAIL_CLOSED"
+        if path == "/api/routes":
+            assert observed["state"] == "INVALID_FAIL_CLOSED"
+        else:
+            assert admission["registry_state"] == "INVALID_FAIL_CLOSED"
         assert admission["config_error"] == expected_error
         for secret in ("private-diagnostic-host", "11434", "private-fixture", "regional-test-secret"):
             assert secret not in response.text
