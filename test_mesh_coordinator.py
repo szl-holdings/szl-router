@@ -180,12 +180,12 @@ def test_fail_loud_no_fabrication():
     print()
 
 
-def test_proxy_picks_reachable_and_failover():
-    print("== proxy routes to reachable sovereign, fails over honestly (fake transport) ==")
+def test_proxy_picks_reachable_worker():
+    print("== proxy routes to the reachable sovereign (fake transport) ==")
     c = mc.MeshCoordinator(_workers(), failover=_failover())
     c.refresh_reachability = lambda force=False: None  # type: ignore
 
-    # Fake http transport: omen 200, laptop 500. Records who was called.
+    # Fake http transport: the reachable omen returns 200. The down laptop is never called.
     calls = []
 
     class FakeResp:
@@ -200,11 +200,11 @@ def test_proxy_picks_reachable_and_failover():
     class FakeConn:
         def __init__(self, host, port, timeout=None):
             self.host = host
+        def connect(self):
+            pass
         def request(self, method, path, body=None, headers=None):
             calls.append(self.host)
-            self._reply = (FakeResp(200, b'{"choices":[{"message":{"content":"ok"}}]}')
-                           if self.host == "omen.example"
-                           else FakeResp(500, b'{"error":"boom"}'))
+            self._reply = FakeResp(200, b'{"choices":[{"message":{"content":"ok"}}]}')
         def getresponse(self):
             return self._reply
         def close(self):
@@ -213,10 +213,10 @@ def test_proxy_picks_reachable_and_failover():
     orig = mc.http.client.HTTPConnection
     mc.http.client.HTTPConnection = FakeConn  # type: ignore
     try:
-        # omen reachable + healthy, laptop reachable but 500s
+        # Only omen is reachable; the down laptop must not be selected.
         by = {w.name: w for w in c.workers}
         by["omen"].reachable = True
-        by["laptop"].reachable = True
+        by["laptop"].reachable = False
         by["omen"].inflight = 0
         by["laptop"].inflight = 0
         status, headers, raw, attempts = c.proxy("POST", "/chat/completions", b"{}", {})
@@ -301,7 +301,7 @@ if __name__ == "__main__":
     test_sovereign_never_inferred()
     test_provenance_injection()
     test_fail_loud_no_fabrication()
-    test_proxy_picks_reachable_and_failover()
+    test_proxy_picks_reachable_worker()
     test_chaski_armed_as_real_worker_honest()
     if FAILED:
         print("\nRESULT: %d check(s) FAILED — coordinator logic regressed." % FAILED)

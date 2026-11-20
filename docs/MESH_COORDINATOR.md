@@ -31,6 +31,19 @@ instead of one laptop.
 - **Fails loud.** If no sovereign worker is reachable and no cloud failover is
   armed, it returns **502** with the full attempt trail and `served_by: null`. It
   **never fabricates** an answer.
+- **Never replays a dispatched request.** The coordinator explicitly calls
+  `connect()` before sending. Only `ConnectionRefusedError` from that preflight may
+  advance to the next worker. Once `request()` has been attempted, send failures,
+  response timeouts/disconnects, and HTTP 5xx are terminal **502** failures with
+  `error.outcome: "UNKNOWN"` and `error.automatic_retry_safe: false`; there is no
+  automatic cross-worker retry. HTTP 2xx/4xx responses are returned normally.
+- **Sanitizes failures.** Failure attempts contain the worker, HTTP status when
+  available, and only the exception class — never upstream error bodies, headers,
+  exception text, or tokens. Failure provenance keeps `served_by: null`; `UNKNOWN`
+  does not claim the producer did or did not process the request. Reconcile with the
+  producer before any manual retry. Connection cleanup is attempted and every
+  in-flight reservation is released on success and failure; a cleanup error never
+  replaces the terminal dispatch outcome.
 - **NEVER claims fused/combined VRAM.** This is **horizontal placement +
   load-balance across separate workers**. The `placement` field literally states
   "separate worker; VRAM not fused". Memory does not merge across the network.

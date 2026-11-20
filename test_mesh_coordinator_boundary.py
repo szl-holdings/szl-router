@@ -28,10 +28,12 @@ CLIENT = http.client.HTTPConnection
 
 
 class _FakeResp:
-    status = 200
+    def __init__(self, status=200, body=b'{"choices":[{"message":{"content":"ok"}}]}'):
+        self.status = status
+        self._body = body
 
     def read(self):
-        return b'{"choices":[{"message":{"content":"ok"}}]}'
+        return self._body
 
     def getheaders(self):
         return [("Content-Type", "application/json")]
@@ -46,6 +48,9 @@ def fake_upstream(monkeypatch):
             assert (host, port) == ("omen.example", 11434), "fake intercepted a non-upstream connection"
             self.host = host
             self.port = port
+
+        def connect(self):
+            pass
 
         def request(self, method, path, body=None, headers=None):
             sent.append({"host": self.host, "port": self.port, "path": path, "headers": dict(headers or {}),
@@ -75,8 +80,8 @@ def _coord():
 def server(request):
     servers = []
 
-    def start(**kw):
-        srv = ThreadingHTTPServer(("127.0.0.1", 0), mc.make_handler(_coord(), **kw))
+    def start(coord=None, **kw):
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), mc.make_handler(coord or _coord(), **kw))
         srv.daemon_threads = True
         t = threading.Thread(target=srv.serve_forever, daemon=True)
         t.start()
@@ -114,6 +119,90 @@ def _post(port, headers, body=b"{}"):
     r.read()
     conn.close()
     return r.status
+
+
+def _post_json(port):
+    conn = CLIENT("127.0.0.1", port, timeout=5)
+    conn.request("POST", "/v1/chat/completions", body=b"{}", headers={})
+    response = conn.getresponse()
+    payload = json.loads(response.read())
+    headers = {key.lower(): value for key, value in response.getheaders()}
+    conn.close()
+    return response.status, payload, headers
+
+
+def _two_worker_coord():
+    workers = [
+        mc.Worker(name="first", base_url="http://first.example:11434/v1", sovereign=True),
+        mc.Worker(name="second", base_url="http://second.example:11434/v1", sovereign=True),
+    ]
+    for worker in workers:
+        worker.reachable = True
+    coord = mc.MeshCoordinator(workers)
+    coord.refresh_reachability = lambda force=False: None  # type: ignore
+    coord.pick_order = lambda: (workers, mc.TIER_MESH_LIVE)  # type: ignore
+    return coord
+
+
+@pytest.fixture
+def scripted_upstream(monkeypatch):
+    scripts = {}
+    created = []
+
+    class FakeConn:
+        def __init__(self, host, port, timeout=None):
+            self.host = host
+            self.script = scripts[host]
+            self.events = []
+            self.closed = False
+            created.append(self)
+
+        def connect(self):
+            self.events.append("connect")
+            failure = self.script.get("connect")
+            if failure:
+                raise failure
+
+        def request(self, method, path, body=None, headers=None):
+            self.events.append("request")
+            failure = self.script.get("request")
+            if failure:
+                raise failure
+
+        def getresponse(self):
+            self.events.append("getresponse")
+            failure = self.script.get("getresponse")
+            if failure:
+                raise failure
+            return _FakeResp(self.script.get("status", 200), self.script.get("body", b"{}"))
+
+        def close(self):
+            self.events.append("close")
+            self.closed = True
+            failure = self.script.get("close")
+            if failure:
+                raise failure
+
+    def script(host, **steps):
+        scripts[host] = steps
+
+    monkeypatch.setattr(mc.http.client, "HTTPConnection", FakeConn)
+    monkeypatch.setattr(mc.http.client, "HTTPSConnection", FakeConn)
+    return script, created
+
+
+def _assert_resources_released(coord, created):
+    assert all(worker.inflight == 0 for worker in coord.workers)
+    assert all(conn.closed for conn in created)
+
+
+def _assert_terminal_unknown(status, payload, headers):
+    assert status == 502
+    assert payload["error"]["outcome"] == "UNKNOWN"
+    assert payload["error"]["automatic_retry_safe"] is False
+    assert payload["x_szl_provenance"]["served_by"] is None
+    assert payload["x_szl_provenance"]["serve_tier"] is None
+    assert "x-szl-served-by" not in headers
 
 
 def test_default_bind_is_loopback():
@@ -208,6 +297,122 @@ def test_proxy_can_withhold_upstream_key(fake_upstream):
     c = _coord()
     c.proxy("POST", "/chat/completions", b"{}", {}, inject_upstream_key=False)
     assert "Authorization" not in fake_upstream[0]["headers"]
+
+
+def test_connect_refusal_before_dispatch_can_fail_over(scripted_upstream):
+    script, created = scripted_upstream
+    secret = "private-connect-detail"
+    script("first.example", connect=ConnectionRefusedError(secret))
+    script("second.example")
+    coord = _two_worker_coord()
+
+    status, headers, raw, attempts = coord.proxy("POST", "/chat/completions", b"{}", {})
+
+    assert status == 200
+    assert json.loads(raw)["x_szl_provenance"]["served_by"] == "second"
+    assert headers["x-szl-served-by"] == "second"
+    assert [conn.host for conn in created] == ["first.example", "second.example"]
+    assert created[0].events == ["connect", "close"]
+    assert created[1].events[:2] == ["connect", "request"]
+    assert len(attempts) == 2
+    assert attempts[0].outcome == "NOT_DISPATCHED"
+    assert secret not in raw.decode()
+    _assert_resources_released(coord, created)
+
+
+def test_http_500_after_dispatch_is_terminal_sanitized_unknown(server, scripted_upstream):
+    script, created = scripted_upstream
+    secret = "private-upstream-error-body"
+    script("first.example", status=500, body=secret.encode())
+    script("second.example")
+    coord = _two_worker_coord()
+
+    status, payload, headers = _post_json(server(coord=coord))
+
+    _assert_terminal_unknown(status, payload, headers)
+    assert payload["error"]["type"] == "mesh_worker_outcome_unknown"
+    assert payload["x_szl_provenance"]["attempts"][0]["status"] == 500
+    assert payload["x_szl_provenance"]["attempts"][0]["outcome"] == "UNKNOWN"
+    assert secret not in json.dumps(payload)
+    assert [conn.host for conn in created] == ["first.example"]
+    assert created[0].events == ["connect", "request", "getresponse", "close"]
+    _assert_resources_released(coord, created)
+
+
+@pytest.mark.parametrize("failure", [
+    socket.timeout("private-timeout-detail"),
+    http.client.RemoteDisconnected("private-disconnect-detail"),
+], ids=["timeout", "remote-disconnected"])
+def test_response_failure_after_dispatch_is_terminal_unknown(server, scripted_upstream, failure):
+    script, created = scripted_upstream
+    script("first.example", getresponse=failure)
+    script("second.example")
+    coord = _two_worker_coord()
+
+    status, payload, headers = _post_json(server(coord=coord))
+
+    _assert_terminal_unknown(status, payload, headers)
+    attempt = payload["x_szl_provenance"]["attempts"][0]
+    assert attempt["error"] == type(failure).__name__
+    assert attempt["outcome"] == "UNKNOWN"
+    assert "private-" not in json.dumps(payload)
+    assert [conn.host for conn in created] == ["first.example"]
+    assert created[0].events == ["connect", "request", "getresponse", "close"]
+    _assert_resources_released(coord, created)
+
+
+def test_sovereign_unknown_failure_is_not_attributed_to_hf_failover(server, scripted_upstream):
+    script, created = scripted_upstream
+    script("first.example", status=500)
+    script("second.example")
+    coord = _two_worker_coord()
+
+    status, payload, headers = _post_json(server(coord=coord))
+
+    _assert_terminal_unknown(status, payload, headers)
+    provenance = payload["x_szl_provenance"]
+    assert provenance["serve_tier"] != mc.TIER_HF_FAILOVER
+    assert provenance["attempts"][0]["worker"] == "first"
+    assert "hf-failover" not in json.dumps(provenance)
+    assert "x-szl-serve-tier" not in headers
+    assert [conn.host for conn in created] == ["first.example"]
+
+
+def test_close_failure_preserves_terminal_unknown_and_releases_inflight(scripted_upstream):
+    script, created = scripted_upstream
+    script("first.example", getresponse=http.client.RemoteDisconnected("private-disconnect-detail"),
+           close=RuntimeError("private-close-detail"))
+    script("second.example")
+    coord = _two_worker_coord()
+
+    with pytest.raises(mc.CoordinatorError) as raised:
+        coord.proxy("POST", "/chat/completions", b"{}", {})
+
+    assert str(raised.value) == "worker request outcome unknown; automatic retry disabled"
+    assert len(raised.value.attempts) == 1
+    assert raised.value.attempts[0].outcome == "UNKNOWN"
+    assert raised.value.attempts[0].error == "RemoteDisconnected"
+    assert [conn.host for conn in created] == ["first.example"]
+    assert created[0].events == ["connect", "request", "getresponse", "close"]
+    _assert_resources_released(coord, created)
+
+
+def test_request_failure_after_attempt_is_terminal_unknown(server, scripted_upstream):
+    script, created = scripted_upstream
+    script("first.example", request=BrokenPipeError("private-send-detail"))
+    script("second.example")
+    coord = _two_worker_coord()
+
+    status, payload, headers = _post_json(server(coord=coord))
+
+    _assert_terminal_unknown(status, payload, headers)
+    attempt = payload["x_szl_provenance"]["attempts"][0]
+    assert attempt["error"] == "BrokenPipeError"
+    assert attempt["outcome"] == "UNKNOWN"
+    assert "private-send-detail" not in json.dumps(payload)
+    assert [conn.host for conn in created] == ["first.example"]
+    assert created[0].events == ["connect", "request", "close"]
+    _assert_resources_released(coord, created)
 
 
 AUTH = ("Authorization: Bearer " + FAKE_CALLER + "\r\n").encode()

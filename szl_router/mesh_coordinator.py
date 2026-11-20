@@ -41,6 +41,9 @@ HARD DOCTRINE (never weakened here)
   * Fail LOUD: if no sovereign worker is reachable and no cloud failover is armed,
     return 502 with the full attempt trail. We never fabricate an answer and never
     claim a down node served one.
+  * NEVER replay a dispatched request: only an explicit connect() refusal may try
+    another worker. After request() is attempted, 5xx and transport failures are
+    terminal UNKNOWN with automatic_retry_safe=false and sanitized error details.
   * Keys ONLY from the environment; nothing secret is written to disk or logged.
 
 TRUST AND RESOURCE BOUNDARY (RQ-20)
@@ -192,6 +195,7 @@ class Attempt:
     status: Optional[int] = None
     error: Optional[str] = None
     latency_ms: Optional[int] = None
+    outcome: Optional[str] = None
 
 
 class CoordinatorConfigError(RuntimeError):
@@ -360,7 +364,8 @@ class MeshCoordinator:
               in_headers: Dict[str, str],
               inject_upstream_key: bool = True) -> Tuple[int, Dict[str, str], bytes, List[Attempt]]:
         """Proxy `method sub_path` (e.g. POST /chat/completions) to the chosen
-        worker(s). Tries the picked order until one answers; records every attempt.
+        worker(s). Only an explicit pre-dispatch connect refusal can advance to the
+        next worker; once request() is attempted, every failure is terminal UNKNOWN.
         Returns (status, out_headers, body_bytes, attempts). Raises CoordinatorError
         if nothing answers (fail loud — never fabricates, never claims a down node)."""
         self.refresh_reachability()
@@ -377,6 +382,8 @@ class MeshCoordinator:
             with self._lock:
                 w.inflight += 1
             t0 = time.time()
+            conn = None
+            request_attempted = False
             try:
                 conn_cls = http.client.HTTPSConnection if https else http.client.HTTPConnection
                 conn = conn_cls(host, port, timeout=self.proxy_timeout)
@@ -387,19 +394,18 @@ class MeshCoordinator:
                 key = _worker_key(w) if inject_upstream_key else None
                 if key:
                     hdrs["Authorization"] = "Bearer " + key
+                conn.connect()
+                request_attempted = True
                 conn.request(method, full_path, body=body, headers=hdrs)
                 resp = conn.getresponse()
-                raw = resp.read()
-                conn.close()
                 dt = int((time.time() - t0) * 1000)
-                with self._lock:
-                    w.inflight -= 1
                 if resp.status >= 500:
                     attempts.append(Attempt(w.name, w.base_url, ok=False,
-                                            status=resp.status,
-                                            error=raw[:200].decode("utf-8", "replace"),
-                                            latency_ms=dt))
-                    continue
+                                            status=resp.status, error="HTTP %d" % resp.status,
+                                            latency_ms=dt, outcome="UNKNOWN"))
+                    raise CoordinatorError(
+                        "worker request outcome unknown; automatic retry disabled", attempts)
+                raw = resp.read()
                 attempts.append(Attempt(w.name, w.base_url, ok=True,
                                         status=resp.status, latency_ms=dt))
                 out_headers = {k: v for k, v in resp.getheaders()
@@ -409,14 +415,38 @@ class MeshCoordinator:
                 out_headers["x-szl-served-by"] = w.name
                 out_headers["x-szl-sovereign"] = "true" if w.sovereign else "false"
                 return resp.status, out_headers, raw, attempts
-            except Exception as exc:  # noqa: BLE001 - honest catch-all, recorded
+            except ConnectionRefusedError as exc:
                 dt = int((time.time() - t0) * 1000)
-                with self._lock:
-                    w.inflight -= 1
-                attempts.append(Attempt(w.name, w.base_url, ok=False,
-                                        error="%s: %s" % (type(exc).__name__, exc),
-                                        latency_ms=dt))
-                continue
+                attempts.append(Attempt(
+                    w.name, w.base_url, ok=False, error=type(exc).__name__,
+                    latency_ms=dt,
+                    outcome="UNKNOWN" if request_attempted else "NOT_DISPATCHED"))
+                if not request_attempted:
+                    continue
+                raise CoordinatorError(
+                    "worker request outcome unknown; automatic retry disabled", attempts) from None
+            except CoordinatorError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - sanitized class only, never exception text
+                dt = int((time.time() - t0) * 1000)
+                attempts.append(Attempt(
+                    w.name, w.base_url, ok=False, error=type(exc).__name__,
+                    latency_ms=dt,
+                    outcome="UNKNOWN" if request_attempted else "NOT_DISPATCHED"))
+                if request_attempted:
+                    raise CoordinatorError(
+                        "worker request outcome unknown; automatic retry disabled", attempts) from None
+                raise CoordinatorError(
+                    "worker connection failed before request dispatch", attempts) from None
+            finally:
+                try:
+                    if conn is not None:
+                        conn.close()
+                except Exception:
+                    pass
+                finally:
+                    with self._lock:
+                        w.inflight -= 1
         raise CoordinatorError("all reachable workers failed", attempts)
 
     # -- honest status -----------------------------------------------------
@@ -688,14 +718,25 @@ def make_handler(
                 status, out_headers, raw, _attempts = coord.proxy(
                     method, sub, body, in_headers, inject_upstream_key=True)
             except CoordinatorError as e:
-                # fail LOUD — full attempt trail, never a fabricated answer
+                # fail LOUD — sanitized attempt trail, never a fabricated answer
+                unknown = any(a.outcome == "UNKNOWN" for a in e.attempts)
+                error = {
+                    "message": str(e),
+                    "type": "mesh_worker_outcome_unknown" if unknown else "mesh_no_reachable_worker",
+                }
+                if unknown:
+                    error["outcome"] = "UNKNOWN"
+                    error["automatic_retry_safe"] = False
                 return self._send_json(502, {
-                    "error": {"message": str(e), "type": "mesh_no_reachable_worker"},
+                    "error": error,
                     "x_szl_provenance": {
-                        "serve_tier": TIER_HF_FAILOVER,
+                        "serve_tier": None,
                         "served_by": None,
                         "attempts": [a.__dict__ for a in e.attempts],
-                        "doctrine": "no reachable worker; never fabricate, never claim a down node served.",
+                        "doctrine": (
+                            "outcome unverified; producer readback required before retry."
+                            if unknown else "no verified serving worker; never fabricate."
+                        ),
                     },
                 })
             self.send_response(status)
