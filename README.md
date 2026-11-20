@@ -359,6 +359,32 @@ never interchangeable claims. The verifier is read-only and does not restart, wa
 pause, publish, or otherwise mutate the Space. This is distinct from the **router gateway image**
 (`publish.yml` → GHCR), which stays private and serves a different surface on `:8000`.
 
+`scripts/verify_hf_release_evidence.py` is a separate **offline consumer** for a proposed
+signed envelope over the unchanged accepted evidence JSON. It requires an explicitly trusted
+public key, the exact expected protected source and HF head SHAs, the Space ID, and a maximum
+observation age. It uses `szl-receipt-dsse` for real DSSE verification, rejects duplicate JSON
+keys and non-canonical or digest-mismatched payloads, and checks the complete accepted evidence
+contract. It never performs live readback, authorizes deployment, or admits paid inference.
+`SOURCE_AHEAD` reports that the supplied current protected head differs from the signed source
+binding; offline hashes alone do not establish Git ancestry.
+
+```bash
+python scripts/verify_hf_release_evidence.py \
+  --envelope hf-space-parity-evidence.signed.json \
+  --public-key approved-release-signer.pub \
+  --expected-source-revision "$EXPECTED_PROTECTED_SOURCE_SHA" \
+  --expected-hf-revision "$EXPECTED_HF_HEAD_SHA" \
+  --expected-space-id SZLHOLDINGS/llm-router-live \
+  --max-observation-age-seconds 300 \
+  --expected-signer-key-sha256 "$APPROVED_PUBLIC_KEY_DER_SHA256"
+```
+
+The optional signer identity is a SHA-256 fingerprint of the trusted public key's DER
+`SubjectPublicKeyInfo`; the receipt envelope's `organ` and `keyid` labels are not signed and
+confer no identity. The verifier neither creates nor configures a signer. **No producer-signed
+proof exists until an approved signer publishes a real envelope**: existing unsigned evidence
+artifacts remain historical observations and are rejected by this consumer.
+
 ## The Ouroboros loop (doctrine cross-reference)
 
 The router **is** an instance of the estate's Ouroboros bounded-recursion loop. The
