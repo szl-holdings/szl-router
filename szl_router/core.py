@@ -171,7 +171,7 @@ PROVIDERS: Dict[str, Provider] = {
         key_env="ZHIPU_API_KEY",
         sovereign=False,
         energy_source="grid",
-        note="GLM API candidate; model pricing, quota, and terms unverified.",
+        note="Zhipu GLM API. glm-5.3 and glm-5.3-flash owner-qualified 2026-11-19 (strict pre-call USD reservation); all other models unverified.",
     ),
     "siliconflow": Provider(
         name="siliconflow",
@@ -227,7 +227,7 @@ PROVIDERS: Dict[str, Provider] = {
         key_env="KIMI_API_KEY",
         sovereign=False,
         energy_source="grid",
-        note="Kimi paid cloud candidate; routing blocked until pricing and strict pre-call spend reservation are qualified.",
+        note="Kimi paid cloud. kimi-k3.1-pro owner-qualified 2026-11-19 (strict pre-call USD reservation); other Kimi models stay blocked paid-grid.",
     ),
 }
 
@@ -256,18 +256,24 @@ MODEL_ROUTES: Dict[str, List[Route]] = {
         ("cerebras", "gpt-oss-120b"),
         ("openrouter", "qwen/qwen3-next-80b-a3b-instruct:free"),
         ("google", "gemini-2.5-flash"),
-        # 2026-11-19 frontier-board candidates (BenchLeader open-weights
-        # board: Kimi K3.1 Pro; Z.AI GLM-5.3). Same tier as the rows above:
-        # unqualified grid. Skipped until per-model pricing, quota, and a
-        # strict pre-call spend reservation are owner-qualified. Upstream
-        # model IDs re-verified at qualification time. Listed presence never
-        # enables a route; no sovereign or armed route changed.
-        ("zhipu", "glm-5.3"),
-        ("moonshot", "kimi-k3.1-pro"),
-        # Further grid candidates, then the blocked paid candidate.
+        # Further grid candidates, then the still-blocked paid candidate.
         ("groq", "llama-3.3-70b-versatile"),
         ("nvidia_nim", "meta/llama-3.3-70b-instruct"),
+        # Moonshot's K2 series closed to new users on 2026-10-31 with
+        # retirement planned by end of 2026-12 (BenchLM 2026-11-18). The row
+        # stays a BLOCKED paid-grid candidate: key presence never qualifies a
+        # route.
         ("moonshot", "kimi-k2.5"),
+        # OWNER-QUALIFIED paid tail (2026-11-19, owner: "green light to it
+        # all"). The 2026-11-19 frontier-board candidates moved here from the
+        # unqualified grid after per-model pricing verification and upstream
+        # model-ID re-verification (docs.z.ai; platform.kimi.ai). Strictly
+        # AFTER every sovereign and grid candidate, and served ONLY under the
+        # strict pre-call USD reservation (kill switch, mandatory max_tokens
+        # ceiling, spend cap). NOT sovereign. Cheaper reviewed rates first:
+        # glm-5.3 $1.40/$4.40, then kimi-k3.1-pro $2/$10 per 1M.
+        ("zhipu", "glm-5.3"),
+        ("moonshot", "kimi-k3.1-pro"),
         # Owner-qualified paid fallback (2026-11-16). Deliberately LAST in the
         # chain: sovereign first, then grid, and paid only as the last resort,
         # and then only after a strict pre-call USD reservation passes.
@@ -287,9 +293,11 @@ MODEL_ROUTES: Dict[str, List[Route]] = {
         ("groq", "llama-3.1-8b-instant"),
         ("nvidia_nim", "meta/llama-3.1-8b-instruct"),
         ("openrouter", "meta-llama/llama-3.3-70b-instruct:free"),
-        # 2026-11-19 frontier-board candidate (cheap tier: GLM 5.3 Flash,
-        # $0.238/M blended per BenchLeader 2026-11-19). Unqualified grid,
-        # skipped until owner qualification. No armed route or ordering change.
+        # OWNER-QUALIFIED paid (2026-11-19). GLM-5.3-Flash verified on the
+        # official Z.AI pricing page at $0.15/$0.50 per 1M (input/output):
+        # the cheapest reviewed paid route for the fast tier. Served ONLY
+        # under the strict pre-call USD reservation, strictly after
+        # sovereign and grid candidates. NOT sovereign.
         ("zhipu", "glm-5.3-flash"),
         # Owner-qualified paid fallback (2026-11-16), strictly last resort.
         ("openai", "gpt-5-mini"),
@@ -391,9 +399,32 @@ class Provenance:
         return d
 
 
-def _tier_of(p: Provider) -> str:
+# Owner-qualified paid routes as (provider_name, upstream_model) pairs.
+# Owner 2026-11-19 directive: "give it green light to it all". Per-model
+# qualification NEVER qualifies the provider's other models: moonshot
+# kimi-k3.1-pro is qualified while the retiring kimi-k2.5 stays a blocked
+# paid-grid candidate; zhipu glm-5.3 / glm-5.3-flash are qualified while
+# every other zhipu model stays unqualified grid.
+QUALIFIED_PAID_ROUTES = {
+    ("moonshot", "kimi-k3.1-pro"),
+    ("zhipu", "glm-5.3"),
+    ("zhipu", "glm-5.3-flash"),
+}
+
+
+def _tier_of(p: Provider, upstream_model: Optional[str] = None) -> str:
     if p.sovereign:
         return "sovereign"
+    if (p.name, upstream_model) in QUALIFIED_PAID_ROUTES:
+        # Owner-qualified 2026-11-19: per-model pricing verified against the
+        # official vendor pricing pages (Kimi Platform: kimi-k3.1-pro
+        # $2/$10 per 1M, $0.20 cache-hit input; Z.AI docs: glm-5.3
+        # $1.40/$4.40, glm-5.3-flash $0.15/$0.50 per 1M), and upstream model
+        # IDs re-verified at qualification time (platform.kimi.ai; docs.z.ai).
+        # Served ONLY under the same strict pre-call USD reservation as the
+        # 2026-11-16 OpenAI qualification: kill switch, mandatory max_tokens
+        # ceiling, spend cap. NOT sovereign.
+        return "qualified-paid"
     if p.name == "openai":
         # Owner-qualified 2026-11-16 ("use the API with money"): exact pricing
         # reviewed, strict pre-call USD reservation implemented. NOT sovereign.
@@ -779,7 +810,7 @@ def _warm_candidate_later(routes: List[Route], next_index: int) -> bool:
     for provider_name, _up in routes[next_index:]:
         p = PROVIDERS.get(provider_name)
         if (p is not None and p.available()
-                and _tier_of(p) not in ("unqualified-grid", "paid-grid")
+                and _tier_of(p, _up) not in ("unqualified-grid", "paid-grid")
                 and _cooldown_remaining(provider_name) <= 0):
             return True
     return False
@@ -796,7 +827,7 @@ def _cost_detail(provider: Provider, result: Dict[str, Any], upstream_model: str
                     metered here - we say so instead of inventing a number).
     * unqualified-grid -> unknown vendor charge; never represented as free.
     """
-    tier = _tier_of(provider)
+    tier = _tier_of(provider, upstream_model)
     if tier in ("paid-grid", "qualified-paid"):
         detail = spend_guard.estimate_detail(result, upstream_model)
         detail["tier"] = tier
@@ -1221,7 +1252,7 @@ def chat(
                                     error="provider unavailable (no key/url)"))
             continue
 
-        tier = _tier_of(provider)
+        tier = _tier_of(provider, upstream_model)
         if tier == "unqualified-grid":
             attempts.append(Attempt(provider_name, upstream_model, ok=False,
                                     error="pricing/quota unqualified; grid route disabled"))
@@ -1672,7 +1703,9 @@ def embed(
 
 
 def status() -> Dict[str, Any]:
-    """Honest snapshot: which providers are armed right now."""
+    """Honest snapshot: which providers are armed right now and which specific
+    upstream models are qualified paid (qualification is model-level, never
+    provider-level for non-openai providers)."""
     out = []
     for name, p in PROVIDERS.items():
         out.append({
@@ -1680,6 +1713,8 @@ def status() -> Dict[str, Any]:
             "available": p.available(),
             "sovereign": p.sovereign,
             "tier": _tier_of(p),
+            "qualified_models": sorted(
+                m for (pn, m) in QUALIFIED_PAID_ROUTES if pn == name),
             "energy_source": p.energy_source,
             "base_url": p.base_url() or None,
             "needs_key": bool(p.key_env),
@@ -1892,6 +1927,7 @@ def fabric_status(include_harvest: bool = True, allow_network: bool = True) -> D
     sovereign, free_grid, paid_grid, unqualified_grid, qualified_paid = [], [], [], [], []
     for name, p in PROVIDERS.items():
         tier = _tier_of(p)
+        qual_models = sorted(m for (pn, m) in QUALIFIED_PAID_ROUTES if pn == name)
         rec = {
             "provider": name,
             "armed": p.available() and tier in ("sovereign", "free-grid", "qualified-paid"),
@@ -1904,6 +1940,22 @@ def fabric_status(include_harvest: bool = True, allow_network: bool = True) -> D
          else free_grid if tier == "free-grid"
          else qualified_paid if tier == "qualified-paid"
          else unqualified_grid).append(rec)
+        if qual_models and not p.sovereign and name != "openai":
+            # Model-level qualified subset on a provider whose provider-level
+            # tier is still paid-grid / unqualified-grid (moonshot with
+            # kimi-k3.1-pro qualified but kimi-k2.5 blocked; zhipu with
+            # glm-5.3 / glm-5.3-flash qualified but all other models
+            # unverified). List the subset here so the ladder never hides a
+            # qualified route behind its provider bucket, and never
+            # over-claims the provider either.
+            qualified_paid.append({
+                "provider": name,
+                "armed": p.available(),
+                "sovereign": False,
+                "energy_source": p.energy_source,
+                "note": p.note,
+                "qualified_models": qual_models,
+            })
 
     sov_armed = [r for r in sovereign if r["armed"]]
     # A configured paid key is not a route while strict pre-call reservation is absent.
@@ -1965,20 +2017,21 @@ def fabric_status(include_harvest: bool = True, allow_network: bool = True) -> D
             },
             "tier_3_paid_grid": {
                 "providers": paid_grid,
-                "what": "paid cloud candidate (Kimi); blocked until exact pricing and strict pre-call reservation qualify it; sovereign:false",
+                "what": "paid cloud candidate (Moonshot K2 series, closing/retiring); blocked until exact pricing and strict pre-call reservation qualify it; sovereign:false",
             },
             "tier_3b_qualified_paid": {
                 "status": ("qualified" if [r for r in qualified_paid if r["armed"]]
                            else "keyed-but-blocked" if qualified_paid else "absent"),
                 "providers": qualified_paid,
-                "what": "owner-qualified paid route (openai); served ONLY under strict pre-call USD reservation (kill switch, max_tokens ceiling, spend cap); strictly last-fallback; sovereign:false",
+                "what": "owner-qualified paid routes: provider-level openai (2026-11-16) plus the model-level frontier routes moonshot/kimi-k3.1-pro, zhipu/glm-5.3 and zhipu/glm-5.3-flash (2026-11-19); served ONLY under strict pre-call USD reservation (kill switch, max_tokens ceiling, spend cap); strictly last-fallback; sovereign:false",
             },
         },
         "honest_energy_sources": HONEST_ENERGY_SOURCES,
         "roadmap_energy_sources": ROADMAP_ENERGY_SOURCES,
         "doctrine": "sovereign:true ONLY on own metal; energy_source claims must be real; "
-                    "unqualified and paid cloud candidates are disabled; the owner-qualified "
-                    "OpenAI route serves only under strict pre-call reservation; harvest is real grid data "
+                    "unqualified and paid cloud candidates are disabled; owner-qualified paid "
+                    "routes (openai provider-level; moonshot/zhipu model-level, 2026-11-19) "
+                    "serve only under strict pre-call reservation; harvest is real grid data "
                     "(never sovereign); joules SAMPLE until an on-box meter; no half-state.",
     }
     if harvest is not None:
