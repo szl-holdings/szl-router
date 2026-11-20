@@ -42,6 +42,16 @@ Temperature is zero and seed is
 for a passing run is 300 seconds; a missing model, empty output, failed call,
 model identity drift, invalid receipt, or exceeded budget returns nonzero.
 
+The demo creates a one-session caller bearer in memory and explicitly disables
+open/no-auth mode. It sends authenticated in-process ASGI requests; this bearer
+is not printed or recorded in receipts or the replay file. This fixes a
+default-deny regression without allowing unauthenticated gateway calls.
+The demonstration never opens a public HTTP listener.
+The public response redacts private backend URLs; the demo verifies the fixed
+loopback provider configuration inside its own process and separately records
+daemon-reported installed/resident digests. Offline receipts bind model and
+request, but do not independently prove which socket served the weights.
+
 The demo uses the production ASGI app in-process and sends real HTTP requests to
 the local model backend. It does not start a public router listener. Every request
 stores the actual answer and an ECDSA-P256 receipt, verifies request/model bindings,
