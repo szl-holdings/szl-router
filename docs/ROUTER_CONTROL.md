@@ -174,8 +174,13 @@ field so choosing a local route cannot silently become a cloud request.
 | `GET /.well-known/szl-source.json` | exact GitHub source identity; equivalent to `/api/source` |
 
 An inference readiness 200 means `LOCAL_CONFIGURATION_ONLY`. It does not probe
-the provider or prove a completed answer. Consumers must separately verify an
-answer and its receipt. Operational responses use `Cache-Control: no-store`.
+the provider or prove a completed answer. Readiness includes the already-sanitized
+`registry_state` (`UNAVAILABLE_NOT_CONFIGURED`, `INVALID_FAIL_CLOSED`, or
+`VALIDATED`) and `config_error` (a fixed generic message or null), matching
+`/api/routes`. These fields disclose no provider URL, credential, raw port or
+private validation details; an invalid registry remains HTTP 503. Consumers must
+separately verify an answer and its receipt. Operational responses use
+`Cache-Control: no-store`.
 Set `SOURCE_REVISION` to the exact GitHub commit deployed (or `GIT_COMMIT`).
 `SPACE_COMMIT_SHA` identifies a different repository and cannot establish GitHub
 source identity.
