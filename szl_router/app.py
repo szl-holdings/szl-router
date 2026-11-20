@@ -260,6 +260,14 @@ async def chat_completions(request: Request) -> JSONResponse:
         raise HTTPException(status_code=400, detail="model must be a string")
     if not _is_known_chat_model(model):
         return _model_not_found(model, "chat")
+    # Bind the exact finite-JSON request BEFORE any model dispatch or payment.
+    # Reject unsupported Python/NaN payloads instead of serving a response
+    # whose claimed request digest would be ambiguous or impossible to mint.
+    try:
+        req_digest = receipts.request_digest(model, messages)
+    except (TypeError, ValueError, OverflowError, RecursionError):
+        raise HTTPException(status_code=400,
+                            detail="messages must contain only finite JSON values") from None
     try:
         # core.chat is synchronous (stdlib http.client + time.sleep backoff).
         # Run it in the worker threadpool so one slow upstream cannot block the
@@ -304,7 +312,7 @@ async def chat_completions(request: Request) -> JSONResponse:
         provenance=prov,
         model=model,
         usage=result.get("usage"),
-        req_digest=receipts.request_digest(model, messages),
+        req_digest=req_digest,
         # For "szl-auto" this signs the routing decision INTO the receipt; None
         # (hence omitted) for every other model, keeping their receipts unchanged.
         routing=prov.get("routing"),
