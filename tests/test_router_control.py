@@ -541,6 +541,27 @@ def test_invalid_configuration_does_not_echo_secret_input(monkeypatch):
     assert "fixture-secret-never-echo" not in response.text
 
 
+def test_invalid_provider_url_diagnostics_hide_host_port_and_token(monkeypatch):
+    configure(monkeypatch, egress=True, tokens=True)
+    registry = registry_payload()
+    registry["providers"][0]["base_url"] = (
+        "http://private-diagnostic-host.example.test:11434/v1?token=private-fixture"
+    )
+    monkeypatch.setenv("SZL_ROUTER_PROVIDERS_JSON", json.dumps(registry))
+    expected_error = "Provider configuration is invalid; check the registry schema and hostname allowlist."
+    for path in ("/readyz/inference", "/readyz", "/api/routes"):
+        response = client.get(path)
+        observed = response.json()
+        admission = observed.get("inference", observed)
+        if path == "/readyz/inference":
+            assert response.status_code == 503
+            assert admission["checks"]["registry_valid"] is False
+        assert admission["registry_state"] == "INVALID_FAIL_CLOSED" if path != "/api/routes" else observed["state"] == "INVALID_FAIL_CLOSED"
+        assert admission["config_error"] == expected_error
+        for secret in ("private-diagnostic-host", "11434", "private-fixture", "regional-test-secret"):
+            assert secret not in response.text
+
+
 def test_hub_revision_cannot_impersonate_github_source(monkeypatch):
     monkeypatch.setenv("SPACE_COMMIT_SHA", "a" * 40)
     assert client.get("/api/source").json()["revision"] == "UNAVAILABLE"
