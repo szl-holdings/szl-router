@@ -119,6 +119,15 @@ The router process and Ollama must share a network namespace for that fixed addr
 
 `/api/local-models` probes only configured local aliases. It admits one live tags/loaded-model probe at a time and reuses a result for at most two seconds under the same validated configuration. The response labels a fresh observation `LIVE_PROBE`, reuse `CACHED_RECENT` with observation time and age, and concurrent uncached probes `BUSY` without claiming a reachable model. The completion path always repeats its own pre/post digest checks; a cached status response cannot authorize inference.
 
+The provider-level
+`inventory_state` distinguishes `DAEMON_INVENTORY_INVALID` (a malformed,
+duplicate-key, oversized or nonconforming daemon catalog) from
+`DAEMON_INVENTORY_UNAVAILABLE` (an unreachable or timed-out daemon).
+These are sanitized fixed codes: the endpoint never returns raw exception
+text, daemon bodies, private URLs or tokens. Each affected model remains
+`UNAVAILABLE` even if the HTTP observation response itself is 200;
+a cached categorized observation does not establish inference readiness.
+
 Callers must send `Authorization: Bearer <SZL_ROUTER_TOKEN>` on completion requests.
 This credential is separate from upstream provider credentials. Missing caller
 configuration returns 503; a missing or incorrect request credential returns 401

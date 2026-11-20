@@ -789,7 +789,8 @@ def test_bounded_malformed_daemon_inventory_is_sanitized(monkeypatch, body):
         transport=httpx.MockTransport(handle), **kwargs))
     inventory = client.get("/api/local-models")
     assert inventory.status_code == 200
-    assert inventory.json()["providers"][0]["inventory_state"] == "UNAVAILABLE"
+    assert inventory.json()["providers"][0]["inventory_state"] == "DAEMON_INVENTORY_INVALID"
+    assert inventory.json()["providers"][0]["models"][0]["state"] == "UNAVAILABLE"
     response = client.post("/v1/chat/completions", json=chat_request(model="a11oy-mini-r2"))
     assert response.status_code == 503
     detail = response.json()["detail"]
@@ -797,6 +798,55 @@ def test_bounded_malformed_daemon_inventory_is_sanitized(monkeypatch, body):
     assert detail["attempts"] == [{"provider_id": "local-ollama", "state": "DAEMON_INVENTORY_INVALID"}]
     assert len(detail["digest"]) == 64
     assert "999999" not in response.text
+
+
+@pytest.mark.parametrize("kind", ["connect_error", "timeout"])
+def test_local_model_probe_daemon_failure_is_categorized_and_cached(monkeypatch, kind):
+    configure_local(monkeypatch)
+    calls = []
+
+    async def fail_inventory(which):
+        calls.append(which)
+        if kind == "connect_error":
+            raise httpx.ConnectError(
+                "SENTINEL_PRIVATE_ENDPOINT_NEVER_EXPOSE",
+                request=httpx.Request("GET", "http://127.0.0.1:11434/api/tags"),
+            )
+        raise asyncio.TimeoutError("SENTINEL_PRIVATE_ENDPOINT_NEVER_EXPOSE")
+
+    monkeypatch.setattr(module, "ollama_inventory", fail_inventory)
+    first_response = client.get("/api/local-models")
+    assert first_response.status_code == 200
+    first = first_response.json()
+    assert first["observation_state"] == "LIVE_PROBE"
+    assert first["providers"][0]["inventory_state"] == "DAEMON_INVENTORY_UNAVAILABLE"
+    assert first["providers"][0]["models"][0]["state"] == "UNAVAILABLE"
+    assert first["providers"][0]["models"][0]["resident_state"] == "UNAVAILABLE"
+    assert "SENTINEL_PRIVATE_ENDPOINT_NEVER_EXPOSE" not in first_response.text
+    assert len(first["receipt"]["digest"]) == 64
+    cached_response = client.get("/api/local-models")
+    cached = cached_response.json()
+    assert cached_response.status_code == 200
+    assert cached["observation_state"] == "CACHED_RECENT"
+    assert cached["providers"][0]["inventory_state"] == "DAEMON_INVENTORY_UNAVAILABLE"
+    assert cached["providers"][0]["models"][0]["state"] == "UNAVAILABLE"
+    assert cached["observed_at"] == first["observed_at"]
+    assert "SENTINEL_PRIVATE_ENDPOINT_NEVER_EXPOSE" not in cached_response.text
+    assert calls == ["tags"]
+
+
+def test_local_model_probe_never_exposes_unknown_exception_state(monkeypatch):
+    configure_local(monkeypatch)
+
+    async def bad_inventory(_kind):
+        raise module.ModelIdentityError("SENTINEL_PRIVATE_UNTRUSTED_STATE")
+
+    monkeypatch.setattr(module, "ollama_inventory", bad_inventory)
+    response = client.get("/api/local-models")
+    assert response.status_code == 200
+    assert response.json()["providers"][0]["inventory_state"] == "DAEMON_INVENTORY_UNAVAILABLE"
+    assert response.json()["providers"][0]["models"][0]["state"] == "UNAVAILABLE"
+    assert "SENTINEL_PRIVATE_UNTRUSTED_STATE" not in response.text
 
 
 def test_deep_upstream_json_emits_failure_receipt_instead_of_server_error(monkeypatch):
