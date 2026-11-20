@@ -154,10 +154,19 @@ def public_key_pem() -> Optional[str]:
 
 
 def request_digest(model: str, messages: Any) -> str:
-    """Stable SHA-256 over the request shape (model + messages), so a receipt
-    binds to exactly what was asked without storing the prompt itself."""
-    blob = json.dumps({"model": model, "messages": messages},
-                      sort_keys=True, separators=(",", ":"), default=str)
+    """Stable SHA-256 over finite JSON model/messages, never Python repr strings.
+
+    A receipt must not silently stringify unknown objects or admit NaN/Infinity.
+    Valid JSON inputs retain their existing byte-identical digest encoding.
+    This digest is a request *identifier*, never a signature or permission grant.
+    """
+    if type(model) is not str or not model:
+        raise ValueError("request model must be a nonempty string")
+    try:
+        blob = json.dumps({"model": model, "messages": messages},
+                          sort_keys=True, separators=(",", ":"), allow_nan=False)
+    except (TypeError, ValueError, OverflowError, RecursionError):
+        raise ValueError("request messages must be finite JSON values") from None
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
