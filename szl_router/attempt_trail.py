@@ -8,8 +8,15 @@ the trail qualifies nothing, arms nothing, and routes nothing.
 
 No network, no keys, no secrets: provider/model are plain identifiers and
 must never carry credentials. The trail spends nothing. Pure stdlib.
-Corruption tolerance is fail-closed: corrupt lines (including lines that
-are not valid UTF-8) are skipped and counted, never repaired or guessed.
+
+Fail-closed policy, stated plainly: corrupt lines (invalid JSON, wrong
+schema, invalid UTF-8, pathologically nested or oversize lines) are skipped
+and counted, never repaired or guessed; a missing file is no evidence.
+Appends are single-syscall binary writes (single-writer assumption; the
+reader counts any torn line as corrupt rather than inventing data). Kept
+records are materialized in memory on read. I/O errors other than a
+missing file (permissions, vanished directory, mid-read failure) propagate
+loudly: failure is disclosed, never invented.
 """
 from __future__ import annotations
 
@@ -22,6 +29,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 _SCHEMA = "szl.router.attempt_trail/v1"
 _NOTE = "direct records only; corrupt lines skipped and counted, never repaired"
 _KEYS = frozenset(("provider", "model", "ok", "latency_s", "ts"))
+_MAX_LINE_BYTES = 1 << 20  # 1 MiB cap: a legitimate attempt record is < 1 KB
 
 
 def _valid_identifier(value: Any) -> bool:
@@ -126,10 +134,22 @@ def record(
         "ts": resolved_ts,
     }
     line = json.dumps(item, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    payload = (line + "\n").encode("utf-8")
     parent = os.path.dirname(os.path.abspath(trail_path))
     os.makedirs(parent, exist_ok=True)
-    with open(trail_path, "a", encoding="utf-8") as handle:
-        handle.write(line + "\n")
+    # Single-syscall binary append: no text-mode newline translation (the
+    # on-disk bytes are identical on every platform), and one os.write per
+    # record keeps concurrent torn-line risk minimal under the documented
+    # single-writer assumption. Any torn line is corrupt to the reader,
+    # never invented data.
+    fd = os.open(trail_path,
+                 os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    try:
+        view = memoryview(payload)
+        while view:
+            view = view[os.write(fd, view):]
+    finally:
+        os.close(fd)
     return item
 
 
@@ -149,9 +169,14 @@ def read(trail_path: str) -> Dict[str, Any]:
     with handle:
         for raw_line in handle:
             lines += 1
+            # Bounds: oversize and pathologically nested lines are corrupt,
+            # never a crash (RecursionError from json bombs) or OOM guesses.
+            if len(raw_line) > _MAX_LINE_BYTES:
+                corrupt += 1
+                continue
             try:
                 value = json.loads(raw_line.decode("utf-8"))
-            except (ValueError, UnicodeDecodeError):
+            except (ValueError, UnicodeDecodeError, RecursionError):
                 corrupt += 1
                 continue
             item = _parse_record(value)

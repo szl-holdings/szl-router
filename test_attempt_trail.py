@@ -48,15 +48,21 @@ class AttemptTrailTests(unittest.TestCase):
         self.assertEqual(disclosure["schema"], "szl.router.attempt_trail/v1")
 
     def test_defaults_and_validation(self):
+        import time as _time
         first = attempt_trail.record(
             self.trail_path, "alpha", "m", True, 0.1
         )
-        second = attempt_trail.record(
-            self.trail_path, "alpha", "m", True, 0.2
-        )
+        # Auto ts is the wall clock: sanity-window it, never compare two
+        # wall-clock reads (NTP steps would flake a monotonic assertion).
         self.assertIsInstance(first["ts"], float)
-        self.assertIsInstance(second["ts"], float)
-        self.assertLessEqual(first["ts"], second["ts"])
+        self.assertLess(abs(first["ts"] - _time.time()), 60.0)
+
+        for ts in (float("nan"), float("inf")):
+            with self.subTest(ts=ts):
+                with self.assertRaises(ValueError):
+                    attempt_trail.record(
+                        self.trail_path, "alpha", "m", True, 0.1, ts=ts,
+                    )
 
         for latency in (float("nan"), float("inf")):
             with self.subTest(latency=latency):
@@ -65,6 +71,12 @@ class AttemptTrailTests(unittest.TestCase):
                         self.trail_path, "alpha", "m", True,
                         latency, ts=1.0,
                     )
+
+        # ok must be an exact bool, not a truthy int.
+        with self.assertRaises(ValueError):
+            attempt_trail.record(
+                self.trail_path, "alpha", "m", 1, 0.1, ts=1.0
+            )
 
         for provider in ("", " \t "):
             with self.subTest(provider=provider):
@@ -79,6 +91,59 @@ class AttemptTrailTests(unittest.TestCase):
                 self.trail_path, "bad\nprovider", "m", True,
                 0.1, ts=1.0,
             )
+
+        # Model identifiers are validated exactly like providers.
+        for model in ("", "bad\nmodel", None):
+            with self.subTest(model=model):
+                with self.assertRaises(ValueError):
+                    attempt_trail.record(
+                        self.trail_path, "alpha", model, True,
+                        0.1, ts=1.0,
+                    )
+
+    def test_deterministic_bytes_no_crlf(self):
+        # Binary single-syscall append: on-disk bytes are platform-identical.
+        attempt_trail.record(self.trail_path, "alpha", "m", True, 0.1, ts=1.0)
+        with open(self.trail_path, "rb") as handle:
+            raw = handle.read()
+        expected = ('{"latency_s":0.1,"model":"m","ok":true,'
+                    '"provider":"alpha","ts":1.0}\n').encode("utf-8")
+        self.assertEqual(raw, expected)
+        self.assertNotIn(b"\r", raw)
+
+    def test_json_edge_lines_are_corrupt(self):
+        # Non-dict JSON, extra-key objects, NaN/Infinity literals (which
+        # json.loads happily accepts) and unicode bombs never reach the
+        # statistics: every one of them counts as corrupt.
+        attempt_trail.record(self.trail_path, "alpha", "m", True, 0.1, ts=1.0)
+        with open(self.trail_path, "ab") as handle:
+            handle.write(b"[1,2]\n")
+            handle.write(b'"a string"\n')
+            handle.write(b"42\n")
+            handle.write(b'{"provider":"a","model":"m","ok":true,'
+                         b'"latency_s":NaN,"ts":5}\n')
+            handle.write(b'{"provider":"a","model":"m","ok":true,'
+                         b'"latency_s":0.1,"ts":5,"extra":1}\n')
+            handle.write(b'{"provider":"a","model":"m","ok":true,'
+                         b'"latency_s":Infinity,"ts":5}\n')
+        attempt_trail.record(self.trail_path, "beta", "m", True, 0.2, ts=2.0)
+
+        result = attempt_trail.read(self.trail_path)
+        self.assertEqual(len(result["records"]), 2)
+        self.assertEqual(result["disclosure"]["lines"], 8)
+        self.assertEqual(result["disclosure"]["kept"], 2)
+        self.assertEqual(result["disclosure"]["corrupt"], 6)
+
+    def test_deep_nesting_and_oversize_lines_never_crash(self):
+        # Mistral-review regression: a JSON bomb must be counted corrupt,
+        # never raise RecursionError; an oversize line is corrupt by cap.
+        with open(self.trail_path, "wb") as handle:
+            handle.write(b"[" * 50000 + b"]" * 50000 + b"\n")
+            handle.write(b"a" * (2 << 20) + b"\n")
+        result = attempt_trail.read(self.trail_path)
+        self.assertEqual(result["records"], [])
+        self.assertEqual(result["disclosure"]["corrupt"], 2)
+        self.assertEqual(result["disclosure"]["lines"], 2)
 
     def test_missing_file_is_not_error(self):
         result = attempt_trail.read(self.trail_path)
@@ -167,6 +232,16 @@ class AttemptTrailTests(unittest.TestCase):
         self.assertEqual(
             result["trail"], {"lines": 0, "kept": 0, "corrupt": 0}
         )
+
+    def test_window_zero_passes_through_to_scorecard(self):
+        attempt_trail.record(self.trail_path, "alpha", "m", True, 0.1, ts=100.0)
+        attempt_trail.record(self.trail_path, "alpha", "m", True, 0.2, ts=101.0)
+        result = attempt_trail.scorecard_from_trail(
+            self.trail_path, window_s=0, min_samples=1
+        )
+        self.assertEqual(result["window_s"], 0)
+        # Exact-latest only: the ts=101 row survives, ts=100 is dropped.
+        self.assertEqual(result["cards"]["alpha:m"]["samples"], 1)
 
     def test_doctrine_never_qualifies(self):
         attempt_trail.record(
