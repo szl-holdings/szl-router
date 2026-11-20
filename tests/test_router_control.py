@@ -465,6 +465,8 @@ def test_control_plane_readiness_is_separate_from_inference():
     assert control.json()["inference"]["ready_for_requests"] is False
     assert inference.status_code == 503
     assert inference.json()["inference_witness"] == "UNAVAILABLE"
+    assert inference.json()["registry_state"] == "UNAVAILABLE_NOT_CONFIGURED"
+    assert inference.json()["config_error"] is None
 
 
 def test_configured_inference_does_not_claim_provider_reachability(monkeypatch):
@@ -473,6 +475,9 @@ def test_configured_inference_does_not_claim_provider_reachability(monkeypatch):
     assert response.status_code == 200
     assert response.json()["basis"] == "LOCAL_CONFIGURATION_ONLY"
     assert response.json()["provider_reachability"] == "UNVERIFIED"
+    assert response.json()["registry_state"] == "VALIDATED"
+    assert response.json()["config_error"] is None
+    assert response.json()["model_identity"] == "UNVERIFIED"
     monkeypatch.delenv("SOVEREIGN_TOKEN")
     monkeypatch.delenv("REGIONAL_TOKEN")
     assert client.get("/readyz/inference").status_code == 503
@@ -521,10 +526,16 @@ def test_invalid_configuration_does_not_echo_secret_input(monkeypatch):
     registry = registry_payload()
     registry["accidental_private_value"] = "fixture-secret-never-echo"
     monkeypatch.setenv("SZL_ROUTER_PROVIDERS_JSON", json.dumps(registry))
-    for path in ("/api/routes", "/readyz", "/deployment.json"):
+    for path in ("/api/routes", "/readyz", "/readyz/inference", "/deployment.json"):
         response = client.get(path)
         assert "fixture-secret-never-echo" not in response.text
         assert "accidental_private_value" not in response.text
+        if path == "/readyz/inference":
+            assert response.status_code == 503
+            assert response.json()["registry_state"] == "INVALID_FAIL_CLOSED"
+            assert response.json()["config_error"] == (
+                "Provider configuration is invalid; check the registry schema and hostname allowlist."
+            )
     response = client.post("/v1/chat/completions", json=chat_request())
     assert response.status_code == 503
     assert "fixture-secret-never-echo" not in response.text
