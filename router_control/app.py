@@ -637,6 +637,8 @@ def inference_readiness(settings: Settings) -> dict[str, Any]:
     return {
         "status": "configured" if admitted else "unavailable",
         "checks": checks,
+        "registry_state": settings.config_state,
+        "config_error": settings.config_error,
         "remote_credentialed_provider": remote_credentialed_provider,
         "ready_for_requests": admitted,
         "basis": "LOCAL_CONFIGURATION_ONLY",
