@@ -689,14 +689,21 @@ def _retry_after_seconds(exc: Optional[Exception]) -> Optional[float]:
         return None
 
 
-def _retry_delay(attempt: int, exc: Optional[Exception]) -> Optional[float]:
+def _retry_delay(attempt: int, exc: Optional[Exception], *,
+                 budget: Optional[RequestBudget] = None) -> Optional[float]:
     """None means leave this provider, never truncate its requested minimum."""
     minimum = _retry_after_seconds(exc)
     if minimum is None:
         return _backoff_sleep_seconds(attempt)
     if minimum > min(_MAX_SERVER_RETRY_DELAY, _RETRY_MAX_DELAY):
         return None
-    return max(minimum, _backoff_sleep_seconds(attempt))
+    jitter = _backoff_sleep_seconds(attempt)
+    # A provider can defer another call to itself, not consume the time left
+    # for an eligible fallback. When local jitter determines the wait instead,
+    # retain the existing request-wide deadline semantics for ordinary backoff.
+    if budget is not None and minimum > jitter and minimum >= budget.deadline - budget.clock():
+        return None
+    return max(minimum, jitter)
 
 
 def _latency_ms(now: float, started: float) -> int:
@@ -814,7 +821,7 @@ def _post_with_retry(poster, provider: Provider, payload: Dict[str, Any],
         finally:
             _REQUEST_BUDGET.reset(token)
         assert last_budget_exc is not None  # successful dispatches returned above
-        delay = _retry_delay(attempt_no - 1, last_budget_exc)
+        delay = _retry_delay(attempt_no - 1, last_budget_exc, budget=budget)
         # Even on immediate failover, let the shared budget record exhaustion
         # or cancellation before the outer loop considers another provider.
         if not budget.allow_backoff(0.0 if delay is None else delay) or delay is None:

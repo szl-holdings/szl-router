@@ -268,8 +268,11 @@ Two layers of resilience, both honest (a real failure is always surfaced in the
   the router will not retry that provider if the requested minimum exceeds
   `SZL_RETRY_MAX_DELAY` (or 60 seconds, whichever is lower). It does not sleep
   or shorten the hint in this case: normal fallback eligibility applies.
-  A wait that fits the cap but not the shared request deadline stops a budgeted
-  request without sleeping. The header never sets a process-wide cooldown.
+  If the provider's minimum would use up the time remaining in a budgeted
+  request, the router likewise leaves that provider without sleeping; another
+  eligible route can run only with time and attempts still available. Ordinary
+  local backoff keeps its existing deadline behavior. The header never sets a
+  process-wide cooldown.
   Permanent errors (`400`/`401`/`404`) are not retried. Tunable via env:
 
   | env | default | meaning |

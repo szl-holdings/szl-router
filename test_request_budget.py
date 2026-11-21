@@ -181,7 +181,11 @@ def test_late_timeout_does_not_dispatch_again():
 
 @pytest.mark.parametrize(("hint", "deadline", "attempts", "names", "sleeps", "terminal"), [
     ("2", 5, 2, ["first", "first"], [2.0], "success"),
-    ("2", 2, 3, ["first"], [], "deadline_exhausted"),
+    ("2", 2, 3, ["first", "second"], [], "success"),
+    ("2", 1, 3, ["first", "second"], [], "success"),
+    ("2", 2, 1, ["first"], [], "attempt_exhausted"),
+    ("0", 0.25, 3, ["first"], [], "deadline_exhausted"),
+    ("malformed", 0.25, 3, ["first"], [], "deadline_exhausted"),
     ("9999", 5, 2, ["first", "second"], [], "success"),
     ("9999", 5, 1, ["first"], [], "attempt_exhausted"),
 ])
@@ -217,6 +221,38 @@ def test_server_retry_after_obeys_shared_budget_and_eligible_fallback(
     assert budget.reserved == len(names)
     assert budget.terminal == terminal
     assert clock.slept == sleeps
+
+
+@pytest.mark.parametrize(("elapsed", "names", "terminal"), [
+    (3, ["first", "second"], "success"),  # 2s hint, only 1s remains
+    (4, ["first"], "deadline_exhausted"),  # no time remains even for fallback
+])
+def test_retry_after_compares_to_remaining_not_initial_time(monkeypatch, elapsed, names, terminal):
+    clock = Clock()
+    budget = _budget(clock, attempts=3, deadline=4)
+    routes = _Routes((("first", True), ("second", True)))
+    monkeypatch.setattr(core, "_backoff_sleep_seconds", lambda _: 0.25)
+    monkeypatch.setattr(core, "_RETRY_MAX_DELAY", 4.0)
+    try:
+        def poster(provider, payload, timeout):
+            if provider.name == "first":
+                clock.advance(elapsed)
+                exc = _http_error(429)
+                exc.headers["Retry-After"] = "2"
+                raise exc
+            assert timeout == 1
+            return dict(OK)
+        routes.install(poster)
+        if terminal == "success":
+            core.chat("budget-chat", [], request_budget=budget)
+        else:
+            with pytest.raises(core.RouterError):
+                core.chat("budget-chat", [], request_budget=budget)
+    finally:
+        routes.close()
+    assert [name for name, _ in routes.calls] == names
+    assert budget.terminal == terminal
+    assert clock.slept == []
 
 
 def test_server_hint_never_extends_shared_cooldown_beyond_local_policy(monkeypatch):
