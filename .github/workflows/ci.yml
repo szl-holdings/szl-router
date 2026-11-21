@@ -12,13 +12,10 @@
 #               every other szl-holdings repo's doctrine.yml.
 #
 # Honesty contract:
-#   * `python -m pytest -q` collects ONLY the offline, deterministic test_*
-#     functions (test_mesh_coordinator.py in full + test_router.py's pure
-#     test_harvest_classifier). The live-network smoke driver in
-#     test_router.py's __main__ block (try_model / show_harvest_live) is NOT a
-#     test_* function and is intentionally NOT collected — it requires armed
-#     providers + network egress and is an operational smoke check, not a CI
-#     gate. Nothing is skipped or allow-failure'd to fake green.
+#   * `python -m pytest -q` discovers the offline suite, including routing,
+#     request budgets, receipt verification, packaging and control-plane tests.
+#     The live-network smoke driver in test_router.py's __main__ block is not
+#     collected; it requires armed providers and is not part of this CI gate.
 #   * No secrets are referenced. Tests pass with zero providers armed and no
 #     network, which is exactly the CI sandbox posture.
 #

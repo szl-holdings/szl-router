@@ -30,6 +30,7 @@ import json
 import math
 import os
 import random
+import re
 import struct
 import threading
 import time
@@ -37,6 +38,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 try:
@@ -568,7 +571,7 @@ class _ConnectionPool:
                 conn.close()
                 raise urllib.error.HTTPError(
                     url, status, resp.reason,
-                    {k.lower(): v for k, v in resp.getheaders()},
+                    resp.headers,  # HTTPMessage preserves repeated header fields
                     io.BytesIO(body),
                 )
             if keep_alive:
@@ -626,6 +629,16 @@ _RETRY_MAX_ATTEMPTS = int(os.environ.get("SZL_RETRY_MAX_ATTEMPTS", "3") or 3)  #
 _RETRY_BASE_DELAY = float(os.environ.get("SZL_RETRY_BASE_DELAY", "0.25") or 0.25)  # seconds
 _RETRY_MAX_DELAY = float(os.environ.get("SZL_RETRY_MAX_DELAY", "4.0") or 4.0)  # seconds cap
 _RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+_MAX_SERVER_RETRY_DELAY = 60.0
+_WEEKDAY = r"(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)"
+_MONTH = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)"
+_HMS = r"[0-9]{2}:[0-9]{2}:[0-9]{2}"
+_HTTP_DATE = re.compile(
+    rf"{_WEEKDAY}, [0-9]{{2}} {_MONTH} [0-9]{{4}} {_HMS} GMT"
+    rf"|(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), "
+    rf"[0-9]{{2}}-{_MONTH}-[0-9]{{2}} {_HMS} GMT"
+    rf"|{_WEEKDAY} {_MONTH} (?: [0-9]|[0-9]{{2}}) {_HMS} [0-9]{{4}}"
+)
 
 
 def _is_retryable_http(status: Optional[int]) -> bool:
@@ -638,6 +651,52 @@ def _backoff_sleep_seconds(attempt: int) -> float:
     schedule is easy to reason about and override via env."""
     ceiling = min(_RETRY_MAX_DELAY, _RETRY_BASE_DELAY * (2 ** attempt))
     return random.uniform(0, ceiling) if ceiling > 0 else 0.0
+
+
+def _retry_after_seconds(exc: Optional[Exception]) -> Optional[float]:
+    """Read a 429/503 hint without consuming the response body or saving headers."""
+    if not isinstance(exc, urllib.error.HTTPError) or exc.code not in (429, 503):
+        return None
+    # HTTPMessage can contain duplicates. Custom callers can supply plain dicts.
+    values = [v for k, v in (exc.headers or {}).items() if k.lower() == "retry-after"]
+    if len(values) != 1 or not isinstance(values[0], str):
+        return None
+    value = values[0].strip()
+    if value.isascii() and value.isdigit():
+        # float (unlike int) accepts very long digit strings; positive overflow
+        # is an excessive server minimum, not permission to retry immediately.
+        return float(value)
+    # The email date parser also accepts offsets, extra text, and missing
+    # zones. Only HTTP-date (including its two obsolete forms) is a hint.
+    if not _HTTP_DATE.fullmatch(value):
+        return None
+    try:
+        date = parsedate_to_datetime(value)
+        if date.tzinfo is None:  # obsolete HTTP asctime format is also UTC
+            date = date.replace(tzinfo=timezone.utc)
+        now = time.time()
+        if "-" in value:
+            # RFC 9110 uses a rolling 50-year future limit for rfc850-date,
+            # not the email parser's fixed 1969/2068 century boundary.
+            utc = datetime.fromtimestamp(now, timezone.utc)
+            yy = date.year % 100
+            year = (utc.year + 50 - yy) // 100 * 100 + yy
+            if year == utc.year + 50 and date.timetuple()[1:6] > utc.timetuple()[1:6]:
+                year -= 100
+            date = date.replace(year=year)
+        return max(0.0, date.timestamp() - now)
+    except (ValueError, TypeError, OverflowError, OSError):
+        return None
+
+
+def _retry_delay(attempt: int, exc: Optional[Exception]) -> Optional[float]:
+    """None means leave this provider, never truncate its requested minimum."""
+    minimum = _retry_after_seconds(exc)
+    if minimum is None:
+        return _backoff_sleep_seconds(attempt)
+    if minimum > min(_MAX_SERVER_RETRY_DELAY, _RETRY_MAX_DELAY):
+        return None
+    return max(minimum, _backoff_sleep_seconds(attempt))
 
 
 def _latency_ms(now: float, started: float) -> int:
@@ -694,7 +753,10 @@ def _post_with_retry(poster, provider: Provider, payload: Dict[str, Any],
                 last_exc = e  # connection-level blip — retryable
             if attempt + 1 >= _RETRY_MAX_ATTEMPTS:
                 break
-            time.sleep(_backoff_sleep_seconds(attempt))
+            delay = _retry_delay(attempt, last_exc)
+            if delay is None:
+                break
+            time.sleep(delay)
         raise last_exc
 
     last_budget_exc: Optional[Exception] = None
@@ -751,10 +813,11 @@ def _post_with_retry(poster, provider: Provider, payload: Dict[str, Any],
                 return result
         finally:
             _REQUEST_BUDGET.reset(token)
-        delay = _backoff_sleep_seconds(attempt_no - 1)
-        if not budget.allow_backoff(delay):
-            if last_budget_exc is None:
-                raise BudgetStop(budget.terminal or "attempt_exhausted", budget.in_flight)
+        assert last_budget_exc is not None  # successful dispatches returned above
+        delay = _retry_delay(attempt_no - 1, last_budget_exc)
+        # Even on immediate failover, let the shared budget record exhaustion
+        # or cancellation before the outer loop considers another provider.
+        if not budget.allow_backoff(0.0 if delay is None else delay) or delay is None:
             raise last_budget_exc
         budget.sleep(delay)
 

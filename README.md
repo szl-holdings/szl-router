@@ -259,8 +259,18 @@ Two layers of resilience, both honest (a real failure is always surfaced in the
   provider that blips transiently (HTTP `429`/`500`/`502`/`503`/`504`, or a
   dropped connection) is retried with **exponential backoff + full jitter**, so
   concurrent callers don't retry in lockstep and stampede a recovering upstream.
-  Permanent errors (`400`/`401`/`404`) are **not** retried — they fail through to
-  the next route immediately. Tunable via env:
+  For chat and embeddings, an upstream `429` or `503` with a `Retry-After`
+  header sets a minimum wait before retrying that same provider. The router
+  accepts delay-seconds and HTTP dates ([RFC 9110, §10.2.3](https://datatracker.ietf.org/doc/html/rfc9110#section-10.2.3))
+  and uses the greater of its normal jitter and the requested delay. Missing,
+  malformed or expired hints leave normal jitter in effect. Inspired by
+  [LiteLLM's bounded provider waits](https://docs.litellm.ai/docs/router/learn/reliability),
+  the router will not retry that provider if the requested minimum exceeds
+  `SZL_RETRY_MAX_DELAY` (or 60 seconds, whichever is lower). It does not sleep
+  or shorten the hint in this case: normal fallback eligibility applies.
+  A wait that fits the cap but not the shared request deadline stops a budgeted
+  request without sleeping. The header never sets a process-wide cooldown.
+  Permanent errors (`400`/`401`/`404`) are not retried. Tunable via env:
 
   | env | default | meaning |
   |-----|---------|---------|

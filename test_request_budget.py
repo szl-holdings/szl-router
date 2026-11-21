@@ -179,6 +179,71 @@ def test_late_timeout_does_not_dispatch_again():
     assert clock.slept == []
 
 
+@pytest.mark.parametrize(("hint", "deadline", "attempts", "names", "sleeps", "terminal"), [
+    ("2", 5, 2, ["first", "first"], [2.0], "success"),
+    ("2", 2, 3, ["first"], [], "deadline_exhausted"),
+    ("9999", 5, 2, ["first", "second"], [], "success"),
+    ("9999", 5, 1, ["first"], [], "attempt_exhausted"),
+])
+def test_server_retry_after_obeys_shared_budget_and_eligible_fallback(
+        monkeypatch, hint, deadline, attempts, names, sleeps, terminal):
+    clock = Clock()
+    budget = _budget(clock, attempts=attempts, deadline=deadline)
+    routes = _Routes((("first", True), ("unqualified", False), ("second", True)))
+    monkeypatch.setattr(core, "_RETRY_MAX_DELAY", 4.0)
+    monkeypatch.setattr(core, "_backoff_sleep_seconds", lambda _: 0.25)
+    try:
+        def poster(provider, payload, timeout):
+            if len(routes.calls) == 1:
+                exc = _http_error(503)
+                exc.headers["retry-after"] = hint
+                raise exc
+            return dict(OK)
+        routes.install(poster)
+        if terminal == "success":
+            result = core.chat("budget-chat", [{"role": "user", "content": "hi"}],
+                               request_budget=budget)
+            trail = result["x_szl_provenance"]["attempts"]
+            assert trail[0]["status"] == 503
+            assert trail[-1]["ok"]
+        else:
+            with pytest.raises(core.RouterError) as caught:
+                core.chat("budget-chat", [{"role": "user", "content": "hi"}],
+                          request_budget=budget)
+            assert caught.value.attempts[0].status == 503
+    finally:
+        routes.close()
+    assert [name for name, _ in routes.calls] == names
+    assert budget.reserved == len(names)
+    assert budget.terminal == terminal
+    assert clock.slept == sleeps
+
+
+def test_server_hint_never_extends_shared_cooldown_beyond_local_policy(monkeypatch):
+    clock = Clock(100)
+    routes = _Routes((("first", True),))
+    try:
+        os.environ["SZL_COOLDOWN_SECONDS"] = "7"
+        monkeypatch.setattr(core.time, "time", clock)
+        monkeypatch.setattr(core, "_RETRY_MAX_DELAY", 4.0)
+        monkeypatch.setattr(core.time, "sleep", lambda _: pytest.fail("unexpected wait"))
+
+        def poster(*_):
+            exc = _http_error(429)
+            exc.headers["Retry-After"] = "99999"
+            raise exc
+        routes.install(poster)
+        for now in (100, 103):
+            clock.now = now
+            with pytest.raises(core.RouterError):
+                core.chat("budget-chat", [{"role": "user", "content": "hi"}])
+            # Last-resort failures refresh the local TTL, not the provider's hint.
+            assert core._COOLDOWN_UNTIL["first"] == now + 7
+        assert len(routes.calls) == 2
+    finally:
+        routes.close()
+
+
 def test_backoff_cannot_outlive_the_request():
     clock = Clock()
     budget = _budget(clock, attempts=4, deadline=1)
