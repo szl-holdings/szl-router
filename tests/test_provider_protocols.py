@@ -114,6 +114,22 @@ def test_non_text_and_unfinished_responses_never_become_answers():
         normalize_provider_response("perplexity_agent_https", broken)
 
 
+@pytest.mark.parametrize("citations", [{}, "", 0, False])
+def test_malformed_falsey_anthropic_citations_are_refused(citations):
+    reply = anthropic_reply()
+    reply["content"][0]["citations"] = citations
+    with pytest.raises(ValueError, match="provenance-preserving"):
+        normalize_provider_response("anthropic_messages_https", reply)
+
+
+@pytest.mark.parametrize("citations", [None, []])
+def test_valid_citation_free_anthropic_variants_remain_accepted(citations):
+    reply = anthropic_reply()
+    reply["content"][0]["citations"] = citations
+    result = normalize_provider_response("anthropic_messages_https", reply)
+    assert result["choices"][0]["message"]["content"] == "Public comet."
+
+
 @pytest.mark.parametrize("kind,hostname", [
     ("anthropic_messages_https", "proxy.example.org"),
     ("perplexity_agent_https", "proxy.example.org"),
