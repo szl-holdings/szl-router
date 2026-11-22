@@ -588,7 +588,7 @@ def test_operational_evidence_is_not_cacheable(path):
         {"choices": [{"message": message}]}
         for message in (
             {"role": "assistant", "content": ""},
-            {"role": "assistant", "content": " \\t "},
+            {"role": "assistant", "content": " \t "},
             {"role": "assistant", "content": None},
             {"role": "assistant", "refusal": ""},
             {"role": "assistant", "tool_calls": []},
