@@ -96,6 +96,10 @@ def test_non_text_and_unfinished_responses_never_become_answers():
     broken["content"] = [{"type": "tool_use", "name": "sensitive_action"}]
     with pytest.raises(ValueError):
         normalize_provider_response("anthropic_messages_https", broken)
+    broken = anthropic_reply()
+    broken["content"][0]["citations"] = [{"type": "web_search_result_location", "url": "https://example.test"}]
+    with pytest.raises(ValueError):
+        normalize_provider_response("anthropic_messages_https", broken)
     broken = agent_reply()
     broken["output"].append({"type": "search_results", "results": [{"url": "private"}]})
     with pytest.raises(ValueError):
