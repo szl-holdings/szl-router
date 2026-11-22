@@ -108,6 +108,8 @@ def _text_only(blocks: Any, expected: str) -> str:
             raise ValueError("non-text or tool output cannot be silently normalized")
         if expected == "output_text" and block.get("annotations"):
             raise ValueError("annotated citations require a provenance-preserving adapter")
+        if expected == "text" and block.get("citations"):
+            raise ValueError("citations require a provenance-preserving adapter")
         text = block.get("text")
         if not isinstance(text, str):
             raise ValueError("provider text block is malformed")
