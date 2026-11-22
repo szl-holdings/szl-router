@@ -134,8 +134,9 @@ content (including responses that spent the whole token allowance on private
 reasoning), empty tool-call lists, and empty audio/function payloads are
 rejected as unusable; substantive tool calls and refusals remain valid. The
 router may attempt another already-eligible route but never marks the empty
-answer as a success. This is source-contract behavior, not proof of model
-quality or deployed inference.
+answer as a success. Unicode format-only content (such as zero-width characters)
+and completions with `finish_reason=length` or `content_filter` also fail closed.
+This is source-contract behavior, not proof of model quality or deployed inference.
 
 Callers must send `Authorization: Bearer <SZL_ROUTER_TOKEN>` on completion requests.
 This credential is separate from upstream provider credentials. Missing caller
