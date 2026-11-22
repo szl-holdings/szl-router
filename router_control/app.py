@@ -662,6 +662,36 @@ def check_caller_auth(request: Request) -> None:
         )
 
 
+def _visible_output(value: Any) -> bool:
+    return isinstance(value, str) and any(
+        not ch.isspace() and unicodedata.category(ch) not in {"Cf", "Cc"}
+        for ch in value
+    )
+
+
+def _usable_function_call(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and _visible_output(value.get("name"))
+        and _visible_output(value.get("arguments"))
+    )
+
+
+def _usable_tool_call(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and value.get("type") == "function"
+        and _visible_output(value.get("id"))
+        and _usable_function_call(value.get("function"))
+    )
+
+
+def _usable_audio(value: Any) -> bool:
+    return isinstance(value, dict) and (
+        _visible_output(value.get("data")) or _visible_output(value.get("transcript"))
+    )
+
+
 def validate_completion(value: Any) -> None:
     """An HTTP success alone cannot establish a usable completion."""
     if not isinstance(value, dict) or value.get("error") is not None:
@@ -691,17 +721,12 @@ def validate_completion(value: Any) -> None:
         # A 200 response with content="" is not a completion. Reasoning-only
         # responses can exhaust max_tokens without yielding user-visible text;
         # never mint an answer receipt from the mere presence of a field.
-        has_text = any(
-            isinstance(message.get(key), str)
-            and any(not ch.isspace() and unicodedata.category(ch) not in {"Cf", "Cc"}
-                    for ch in message[key])
-            for key in ("content", "refusal")
+        has_text = any(_visible_output(message.get(key)) for key in ("content", "refusal"))
+        has_calls = isinstance(calls, list) and bool(calls) and all(
+            _usable_tool_call(call) for call in calls
         )
-        has_calls = isinstance(calls, list) and bool(calls)
-        has_function = isinstance(message.get("function_call"), dict) and bool(
-            message["function_call"]
-        )
-        has_audio = isinstance(message.get("audio"), dict) and bool(message["audio"])
+        has_function = _usable_function_call(message.get("function_call"))
+        has_audio = _usable_audio(message.get("audio"))
         if not (has_text or has_calls or has_function or has_audio):
             raise RuntimeError("upstream assistant message has no substantive output")
 

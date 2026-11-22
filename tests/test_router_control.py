@@ -594,6 +594,17 @@ def test_operational_evidence_is_not_cacheable(path):
             {"role": "assistant", "tool_calls": []},
             {"role": "assistant", "function_call": {}},
             {"role": "assistant", "audio": {}},
+            {"role": "assistant", "audio": {"unexpected": ""}},
+            {"role": "assistant", "audio": {"id": "audio_1", "expires_at": 1}},
+            {"role": "assistant", "audio": {"data": "\u200b  "}},
+            {"role": "assistant", "function_call": {"name": ""}},
+            {"role": "assistant", "function_call": {"name": "lookup", "arguments": ""}},
+            {"role": "assistant", "function_call": {"name": "\u200b", "arguments": "{}"}},
+            {"role": "assistant", "tool_calls": [{"unexpected": ""}]},
+            {"role": "assistant", "tool_calls": [
+                {"id": "call_1", "type": "function",
+                 "function": {"name": "", "arguments": "{}"}},
+            ]},
             {"role": "assistant", "content": "", "reasoning_content": "private-only"},
         )
     ),
@@ -635,6 +646,15 @@ def test_nontext_tool_call_and_refusal_remain_valid_completions():
     }}]})
     module.validate_completion({"choices": [{"message": {
         "role": "assistant", "refusal": "Request declined."
+    }}]})
+    module.validate_completion({"choices": [{"message": {
+        "role": "assistant", "function_call": {"name": "lookup", "arguments": "{}"}
+    }}]})
+    module.validate_completion({"choices": [{"message": {
+        "role": "assistant", "audio": {"data": "AQID", "transcript": ""}
+    }}]})
+    module.validate_completion({"choices": [{"message": {
+        "role": "assistant", "audio": {"transcript": "Spoken answer"}
     }}]})
 
 
