@@ -17,6 +17,7 @@ import os
 import re
 import secrets
 import threading
+import unicodedata
 import time
 import urllib.parse
 from dataclasses import dataclass
@@ -674,6 +675,8 @@ def validate_completion(value: Any) -> None:
         message = choice.get("message") if isinstance(choice, dict) else None
         if not isinstance(message, dict) or message.get("role") != "assistant":
             raise RuntimeError("upstream completion requires assistant messages")
+        if choice.get("finish_reason") in {"length", "content_filter"}:
+            raise RuntimeError("upstream completion was truncated or filtered")
         if not any(key in message for key in ("content", "refusal", "tool_calls", "function_call", "audio")):
             raise RuntimeError("upstream assistant message has no output")
         for key in ("content", "refusal"):
@@ -689,7 +692,9 @@ def validate_completion(value: Any) -> None:
         # responses can exhaust max_tokens without yielding user-visible text;
         # never mint an answer receipt from the mere presence of a field.
         has_text = any(
-            isinstance(message.get(key), str) and bool(message[key].strip())
+            isinstance(message.get(key), str)
+            and any(not ch.isspace() and unicodedata.category(ch) not in {"Cf", "Cc"}
+                    for ch in message[key])
             for key in ("content", "refusal")
         )
         has_calls = isinstance(calls, list) and bool(calls)
