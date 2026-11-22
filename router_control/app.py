@@ -685,6 +685,20 @@ def validate_completion(value: Any) -> None:
             or any(not isinstance(call, dict) or not call for call in calls)
         ):
             raise RuntimeError("upstream output has invalid tool calls")
+        # A 200 response with content="" is not a completion. Reasoning-only
+        # responses can exhaust max_tokens without yielding user-visible text;
+        # never mint an answer receipt from the mere presence of a field.
+        has_text = any(
+            isinstance(message.get(key), str) and bool(message[key].strip())
+            for key in ("content", "refusal")
+        )
+        has_calls = isinstance(calls, list) and bool(calls)
+        has_function = isinstance(message.get("function_call"), dict) and bool(
+            message["function_call"]
+        )
+        has_audio = isinstance(message.get("audio"), dict) and bool(message["audio"])
+        if not (has_text or has_calls or has_function or has_audio):
+            raise RuntimeError("upstream assistant message has no substantive output")
 
 
 async def attempt_candidate(provider: ProviderRecord, request: ChatRequest,
