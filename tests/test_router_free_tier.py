@@ -191,7 +191,7 @@ def test_proposals_are_not_registered_even_with_credentials(monkeypatch):
 def test_new_assets_and_module_in_actual_source_witness():
     with TestClient(control.app) as client:
         source = client.get("/api/source").json()
-        for path in ("router_control/free_tier.py", "router_control/static/free-options.js", "router_control/static/free-options.css"):
+        for path in ("router_control/free_tier.py", "router_control/provider_protocols.py", "router_control/static/free-options.js", "router_control/static/free-options.css"):
             assert source["controlled_files"][path] == hashlib.sha256((ROOT / path).read_bytes()).hexdigest()
         for filename in ("free-options.js", "free-options.css"):
             response = client.get("/static/" + filename)
