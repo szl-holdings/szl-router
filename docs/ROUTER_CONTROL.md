@@ -128,6 +128,15 @@ text, daemon bodies, private URLs or tokens. Each affected model remains
 `UNAVAILABLE` even if the HTTP observation response itself is 200;
 a cached categorized observation does not establish inference readiness.
 
+Upstream HTTP 200 is not sufficient for a receipt-backed completion: a text-only
+assistant message must contain non-whitespace content or refusal text. Empty
+content (including responses that spent the whole token allowance on private
+reasoning), empty tool-call lists, and empty audio/function payloads are
+rejected as unusable; substantive tool calls and refusals remain valid. The
+router may attempt another already-eligible route but never marks the empty
+answer as a success. This is source-contract behavior, not proof of model
+quality or deployed inference.
+
 Callers must send `Authorization: Bearer <SZL_ROUTER_TOKEN>` on completion requests.
 This credential is separate from upstream provider credentials. Missing caller
 configuration returns 503; a missing or incorrect request credential returns 401
