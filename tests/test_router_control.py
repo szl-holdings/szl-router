@@ -597,6 +597,13 @@ def test_operational_evidence_is_not_cacheable(path):
             {"role": "assistant", "content": "", "reasoning_content": "private-only"},
         )
     ),
+    {"choices": [{"message": {"role": "assistant", "content": "\u200b\ufeff"}}]},
+    {"choices": [{"message": {"role": "assistant", "content": "partial"},
+                  "finish_reason": "length"}]},
+    {"choices": [{"message": {"role": "assistant", "content": "filtered"},
+                  "finish_reason": "content_filter"}]},
+    {"choices": [{"message": {"role": "assistant", "content": "valid"}},
+                 {"message": {"role": "assistant", "content": ""}}]},
 ])
 def test_malformed_upstream_answers_fail_over_before_receipting(monkeypatch, bad):
     configure(monkeypatch, egress=True, tokens=True)
