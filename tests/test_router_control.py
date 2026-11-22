@@ -579,7 +579,25 @@ def test_operational_evidence_is_not_cacheable(path):
     assert client.get(path).headers["cache-control"] == "no-store"
 
 
-@pytest.mark.parametrize("bad", [{"choices": []}, {"choices": None}, {"error": "private diagnostic"}, {"choices": [{}]}])
+@pytest.mark.parametrize("bad", [
+    {"choices": []},
+    {"choices": None},
+    {"error": "private diagnostic"},
+    {"choices": [{}]},
+    *(
+        {"choices": [{"message": message}]}
+        for message in (
+            {"role": "assistant", "content": ""},
+            {"role": "assistant", "content": " \\t "},
+            {"role": "assistant", "content": None},
+            {"role": "assistant", "refusal": ""},
+            {"role": "assistant", "tool_calls": []},
+            {"role": "assistant", "function_call": {}},
+            {"role": "assistant", "audio": {}},
+            {"role": "assistant", "content": "", "reasoning_content": "private-only"},
+        )
+    ),
+])
 def test_malformed_upstream_answers_fail_over_before_receipting(monkeypatch, bad):
     configure(monkeypatch, egress=True, tokens=True)
     calls = []
@@ -599,6 +617,18 @@ def test_malformed_upstream_answers_fail_over_before_receipting(monkeypatch, bad
     assert payload["szl_receipt"]["provider_id"] == "regional"
     assert payload["szl_receipt"]["attempts"][0]["state"] == "TRANSPORT_OR_CONTRACT_ERROR"
     assert "private diagnostic" not in response.text
+
+
+def test_nontext_tool_call_and_refusal_remain_valid_completions():
+    module.validate_completion({"choices": [{"message": {
+        "role": "assistant", "content": None, "tool_calls": [
+            {"id": "call_1", "type": "function",
+             "function": {"name": "lookup", "arguments": "{}"}}
+        ],
+    }}]})
+    module.validate_completion({"choices": [{"message": {
+        "role": "assistant", "refusal": "Request declined."
+    }}]})
 
 
 @pytest.mark.parametrize("mutation", [
