@@ -791,6 +791,7 @@ def source() -> dict[str, Any]:
         Path(__file__),
         Path(__file__).with_name("local_store.py"),
         Path(__file__).with_name("verification.py"),
+        Path(__file__).with_name("provider_protocols.py"),
         Path(__file__).with_name("free_tier.py"),
         STATIC / "index.html",
         STATIC / "app.js",
