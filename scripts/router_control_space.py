@@ -28,7 +28,13 @@ SOURCE_REPOSITORY = "szl-holdings/szl-router"
 IMAGE = "ghcr.io/szl-holdings/szl-router-control"
 ENDPOINT = "https://szlholdings-szl-router-control.hf.space"
 SCHEMA = "szl.router-control-space/v1"
-FILES = frozenset({"README.md", "Dockerfile", "SOURCE_BINDING.json"})
+PUBLISHING_ROOT = Path(__file__).resolve().parents[1] / "publishing" / "router-control-assets"
+PRESERVED_ARTWORK = {
+    "assets/szl-card/mesh-receipts.svg": PUBLISHING_ROOT / "assets" / "szl-card" / "mesh-receipts.svg",
+    "assets/szl-card/org-context.svg": PUBLISHING_ROOT / "assets" / "szl-card" / "org-context.svg",
+}
+FILES = frozenset({"README.md", "Dockerfile", "SOURCE_BINDING.json", *PRESERVED_ARTWORK})
+LEGACY_README_SHA256 = "bce9c634da2ed14b28fe1dbd0929c34b060b0cd96e3b4bb7046319321e9dea8c"
 PROVIDER_METADATA = ".gitattributes"
 BOOTSTRAP_BINDING = Path(__file__).resolve().parents[1] / "publishing/router-control-bootstrap.v1.json"
 SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -125,11 +131,17 @@ The separate `SZLHOLDINGS/llm-router-live` status Space is independently owned.
 ENV SZL_ROUTER_ENABLE_EGRESS=0
 CMD ["sh", "-c", "exec env SZL_ROUTER_ENABLE_EGRESS=0 uvicorn router_control.app:app --host 0.0.0.0 --port 7860 --workers 1 --no-access-log"]
 """
-    return {
+    files = {
         "README.md": readme.encode("utf-8"),
         "Dockerfile": dockerfile.encode("utf-8"),
         "SOURCE_BINDING.json": _json_bytes(binding),
     }
+    for target, source in PRESERVED_ARTWORK.items():
+        try:
+            files[target] = source.read_bytes()
+        except OSError as exc:
+            raise ControlSpaceError("PUBLISHING_ARTIFACT_UNAVAILABLE") from exc
+    return files
 
 
 def space_files(revision: str, digest: str) -> dict[str, bytes]:
@@ -256,6 +268,9 @@ def _existing_target_admitted(api: Any, download: Callable[..., str],
     legacy_card = _legacy_space_files(binding.get("source_revision"), binding.get("image_digest"))["README.md"]
     for filename, body in old_expected.items():
         observed_body = _download_bytes(download, filename, revision, token)
+        if (filename == "README.md"
+                and hashlib.sha256(observed_body).hexdigest() == LEGACY_README_SHA256):
+            continue
         accepted = (body, legacy_card) if filename == "README.md" else (body,)
         if observed_body not in accepted:
             raise ControlSpaceError("EXISTING_SPACE_BYTES_REJECTED")
@@ -391,7 +406,9 @@ def publish(api: Any, download: Callable[..., str], *, token: str,
     with tempfile.TemporaryDirectory(prefix="szl-router-control-space-") as temporary:
         folder = Path(temporary)
         for filename, body in expected.items():
-            (folder / filename).write_bytes(body)
+            destination = folder / filename
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(body)
         record(phase="UPLOAD_REQUESTED", write_outcome="UNKNOWN")
         commit = api.upload_folder(
             repo_id=TARGET, repo_type="space", folder_path=str(folder),
