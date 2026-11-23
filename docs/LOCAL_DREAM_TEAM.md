@@ -31,7 +31,13 @@ Malformed, truncated or reasoning-only results are withheld, never treated
 as a completed advisory. Mistral and Qwen have separately bounded token
 ceilings calibrated against observed stop-versus-length behavior.
 
-The natural-language responses are **untrusted advice**. The next seat may
+The natural-language responses are **untrusted advice**. Replies
+containing markup delimiter characters (angle brackets, Unicode think
+delimiters, or square brackets) or invalid UTF-8 are withheld from the
+receipt and later prompts, including Unicode fullwidth forms folded by NFKC.
+This intentionally rejects some otherwise legitimate code-like suggestions:
+this council accepts plain-prose advisory text only. Unmarked reasoning
+cannot be reliably detected; all accepted text remains untrusted. The next seat may
 read bounded prior advice as data, but it cannot execute it. The terminal
 SHA-256 record chain is a locally generated **unsigned** content commitment,
 not signer verification, model quality, paid-compute accounting, license proof

@@ -106,6 +106,90 @@ class LocalCouncilTests(unittest.TestCase):
                 self.assertTrue(all(row.get("reason") == "EMPTY_INCOMPLETE_OR_MODEL_MISMATCH"
                                     for row in report["seats"]))
 
+    def test_reject_reasoning_markup_in_all_seats_without_relay(self):
+        cases = (
+            "◁think▷HIDDEN_MARKER_9c",
+            "<think>HIDDEN_MARKER_9c",
+            "<thi" + chr(0x200B) + "nk>HIDDEN_MARKER_9c",
+            "<thi" + chr(0xFE0F) + "nk>HIDDEN_MARKER_9c",
+            "<ᵀhink>HIDDEN_MARKER_9c",
+            "<thi" + chr(0x1160) + "nk>HIDDEN_MARKER_9c",
+            "<thi" + chr(0x0301) + "nk>HIDDEN_MARKER_9c",
+            "<think >HIDDEN_MARKER_9c",
+            "＜think＞HIDDEN_MARKER_9c",
+            "[think]HIDDEN_MARKER_9c",
+            "◁thi" + chr(0x200B) + "nk▷HIDDEN_MARKER_9c",
+        )
+        for seat_name in ("Kimi", "Mistral"):
+            for suspect in cases:
+                with self.subTest(seat=seat_name, suspect=ascii(suspect)):
+                    def respond(payload):
+                        name = next(name for name, model, _, _ in council.SEATS
+                                    if model == payload["model"])
+                        if name == "Kimi":
+                            correction = suspect if name == seat_name else "Check visible content"
+                            value = json.dumps({"correction": correction,
+                                                "negative_test": "Reject blank output"})
+                        else:
+                            value = suspect if name == seat_name else "Visible negative test."
+                        return {"model": payload["model"], "response": value,
+                                "done": True, "done_reason": "stop"}
+                    self.response = respond
+                    start = len(self.calls)
+                    report = council.observe_cycle(self.fetch, observed_at="synthetic")
+                    self.assertEqual(report["local_answer_count"], 3)
+                    held = next(row for row in report["seats"] if row["seat"] == seat_name)
+                    self.assertEqual(held["outcome"], "UNAVAILABLE")
+                    self.assertNotIn("text", held)
+                    past_bad_seat = False
+                    for route, payload in self.calls[start:]:
+                        if route != "/api/generate":
+                            continue
+                        name = next(n for n, model, _, _ in council.SEATS
+                                    if model == payload["model"])
+                        if past_bad_seat:
+                            self.assertNotIn("HIDDEN_MARKER_9c", payload["prompt"])
+                        if name == seat_name:
+                            past_bad_seat = True
+                    self.assertTrue(past_bad_seat)
+
+    def test_plain_advice_contract_denies_markup_delimiters(self):
+        for bad in ("x < y", "x > y", "array[index]", "<thing>",
+                    "◁think▷", "[thinking]", "＜thing＞"):
+            with self.subTest(bad=bad):
+                self.assertFalse(council.safe_visible_advice(bad))
+        for good in ("Plain safe advice.", "Use a negative test.",
+                     '{"correction":"plain","negative_test":"check"}'):
+            with self.subTest(good=good):
+                self.assertTrue(council.safe_visible_advice(good))
+
+    def test_lone_surrogate_withheld_per_seat_and_chain_survives(self):
+        for seat_name in ("Kimi", "Mistral"):
+            with self.subTest(seat=seat_name):
+                def respond(payload):
+                    name = next(name for name, model, _, _ in council.SEATS
+                                if model == payload["model"])
+                    if name == "Kimi":
+                        value = json.dumps({
+                            "correction": "\ud800" if seat_name == "Kimi" else "Visible",
+                            "negative_test": "Check nonblank output"
+                        })
+                    else:
+                        value = "\ud800" if name == seat_name else "Visible advice."
+                    return {"model": payload["model"], "response": value,
+                            "done": True, "done_reason": "stop"}
+                self.response = respond
+                start = len(self.calls)
+                report = council.observe_cycle(self.fetch, observed_at="synthetic")
+                self.assertEqual(report["local_answer_count"], 3)
+                held = next(row for row in report["seats"] if row["seat"] == seat_name)
+                self.assertEqual(held["outcome"], "UNAVAILABLE")
+                self.assertNotIn("text", held)
+                self.assertEqual(len(report["terminal_chain_sha256"]), 64)
+                for route, payload in self.calls[start:]:
+                    if route == "/api/generate":
+                        self.assertNotIn("\ud800", payload["prompt"])
+
     def test_live_call_error_is_withheld_not_promoted(self):
         def network_refused(route, payload):
             if route == "/api/tags":
