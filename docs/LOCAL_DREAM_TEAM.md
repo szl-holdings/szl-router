@@ -24,6 +24,12 @@ The fixed local seats are Kimi-VL-A3B-Thinking, Mistral 7B, Qwen 3.5 0.8B
 and SZLHOLDINGS A11OY-MINI. The local Ollama daemon must report each precise
 manifest digest **before and after** completion; a missing or moved pin is
 `UNAVAILABLE`. Each seat has a fixed small token ceiling and one request only.
+The installed Kimi-VL thinking model can exhaust a small free-text ceiling
+with internal commentary; its candidate instead uses Ollama's bounded JSON
+schema grammar and requires exactly two nonempty, uniquely keyed short fields.
+Malformed, truncated or reasoning-only results are withheld, never treated
+as a completed advisory. Mistral and Qwen have separately bounded token
+ceilings calibrated against observed stop-versus-length behavior.
 
 The natural-language responses are **untrusted advice**. The next seat may
 read bounded prior advice as data, but it cannot execute it. The terminal
