@@ -17,6 +17,7 @@ import os
 import re
 import secrets
 import threading
+import unicodedata
 import time
 import urllib.parse
 from dataclasses import dataclass
@@ -672,6 +673,36 @@ def check_caller_auth(request: Request) -> None:
         )
 
 
+def _visible_output(value: Any) -> bool:
+    return isinstance(value, str) and any(
+        not ch.isspace() and unicodedata.category(ch) not in {"Cf", "Cc"}
+        for ch in value
+    )
+
+
+def _usable_function_call(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and _visible_output(value.get("name"))
+        and _visible_output(value.get("arguments"))
+    )
+
+
+def _usable_tool_call(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and value.get("type") == "function"
+        and _visible_output(value.get("id"))
+        and _usable_function_call(value.get("function"))
+    )
+
+
+def _usable_audio(value: Any) -> bool:
+    return isinstance(value, dict) and (
+        _visible_output(value.get("data")) or _visible_output(value.get("transcript"))
+    )
+
+
 def validate_completion(value: Any) -> None:
     """An HTTP success alone cannot establish a usable completion."""
     if not isinstance(value, dict) or value.get("error") is not None:
@@ -685,6 +716,8 @@ def validate_completion(value: Any) -> None:
         message = choice.get("message") if isinstance(choice, dict) else None
         if not isinstance(message, dict) or message.get("role") != "assistant":
             raise RuntimeError("upstream completion requires assistant messages")
+        if choice.get("finish_reason") in {"length", "content_filter"}:
+            raise RuntimeError("upstream completion was truncated or filtered")
         if not any(key in message for key in ("content", "refusal", "tool_calls", "function_call", "audio")):
             raise RuntimeError("upstream assistant message has no output")
         for key in ("content", "refusal"):
@@ -696,6 +729,17 @@ def validate_completion(value: Any) -> None:
             or any(not isinstance(call, dict) or not call for call in calls)
         ):
             raise RuntimeError("upstream output has invalid tool calls")
+        # A 200 response with content="" is not a completion. Reasoning-only
+        # responses can exhaust max_tokens without yielding user-visible text;
+        # never mint an answer receipt from the mere presence of a field.
+        has_text = any(_visible_output(message.get(key)) for key in ("content", "refusal"))
+        has_calls = isinstance(calls, list) and bool(calls) and all(
+            _usable_tool_call(call) for call in calls
+        )
+        has_function = _usable_function_call(message.get("function_call"))
+        has_audio = _usable_audio(message.get("audio"))
+        if not (has_text or has_calls or has_function or has_audio):
+            raise RuntimeError("upstream assistant message has no substantive output")
 
 
 async def attempt_candidate(provider: ProviderRecord, request: ChatRequest,
