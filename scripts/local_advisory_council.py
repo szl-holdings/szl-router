@@ -133,6 +133,28 @@ def nonblank(value: Any) -> bool:
     )
 
 
+def safe_visible_advice(value: Any) -> bool:
+    """Refuse malformed Unicode and markup in a plain-prose advisory lane.
+
+    No syntactic filter certifies that arbitrary model text lacks internal
+    reasoning; even accepted text remains untrusted advisory data.
+    """
+    if not nonblank(value):
+        return False
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    # An advisory answer is plain prose, NOT markup or executable code.
+    # Reject tag delimiters rather than trying to enumerate every possible
+    # invisible Unicode glyph or whitespace variant inside a reasoning tag.
+    # NFKC also folds fullwidth angle brackets into their ASCII counterparts.
+    normalized = unicodedata.normalize("NFKC", value)
+    if any(delimiter in normalized for delimiter in "<>◁▷[]"):
+        return False
+    return True
+
+
 def observe_cycle(fetch: Callable, *, observed_at: str) -> dict:
     """One non-authorizing iteration; every candidate has an exact manifest pin."""
     observed = inventory(fetch)
@@ -188,7 +210,7 @@ def observe_cycle(fetch: Callable, *, observed_at: str) -> dict:
                 if after.get(model) != expected:
                     row["reason"] = "PIN_CHANGED_DURING_CYCLE"
                 elif (answer.get("model") == model and answer.get("done") is True
-                      and answer.get("done_reason") == "stop" and nonblank(text)):
+                      and answer.get("done_reason") == "stop" and safe_visible_advice(text)):
                     row["outcome"] = "LOCAL_ADVISORY_TEXT_OBSERVED"
                     row["text"] = text[:1600]
                     prior += "\n" + seat + ": " + text[:500]
