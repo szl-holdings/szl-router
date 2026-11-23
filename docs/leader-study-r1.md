@@ -8,7 +8,7 @@ Date: 2026-11-22. Method: web-verified 2026 gateway landscape + governing-seat s
 
 1. **LiteLLM** (open-source, self-host, 0% markup). Study basis: 2026 gateway comparisons (LiteLLM vs Portkey vs OpenRouter). Moat: per-key/route budget controls, spend tracking, self-host ownership.
 2. **Portkey** (enterprise SaaS). Moat: governance + observability: request tracing, prompt management, RBAC, audit trails first-class; strongest out-of-box compliance story (per 2026 TrueFoundry comparison).
-3. **OpenRouter** (managed multi-provider, per-request markup). Moat: instant multi-provider breadth, thin dashboard analytics.
+3. **OpenRouter** (managed multi-provider). Moat: instant multi-provider breadth, thin dashboard analytics. Its public pricing states inference is billed at provider list price, with platform fees charged when credits are purchased rather than as a per-request markup.
 
 ## Absorb actions (FUTURE PROPOSALS, non-authorizing)
 
