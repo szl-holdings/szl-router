@@ -579,7 +579,43 @@ def test_operational_evidence_is_not_cacheable(path):
     assert client.get(path).headers["cache-control"] == "no-store"
 
 
-@pytest.mark.parametrize("bad", [{"choices": []}, {"choices": None}, {"error": "private diagnostic"}, {"choices": [{}]}])
+@pytest.mark.parametrize("bad", [
+    {"choices": []},
+    {"choices": None},
+    {"error": "private diagnostic"},
+    {"choices": [{}]},
+    *(
+        {"choices": [{"message": message}]}
+        for message in (
+            {"role": "assistant", "content": ""},
+            {"role": "assistant", "content": " \t "},
+            {"role": "assistant", "content": None},
+            {"role": "assistant", "refusal": ""},
+            {"role": "assistant", "tool_calls": []},
+            {"role": "assistant", "function_call": {}},
+            {"role": "assistant", "audio": {}},
+            {"role": "assistant", "audio": {"unexpected": ""}},
+            {"role": "assistant", "audio": {"id": "audio_1", "expires_at": 1}},
+            {"role": "assistant", "audio": {"data": "\u200b  "}},
+            {"role": "assistant", "function_call": {"name": ""}},
+            {"role": "assistant", "function_call": {"name": "lookup", "arguments": ""}},
+            {"role": "assistant", "function_call": {"name": "\u200b", "arguments": "{}"}},
+            {"role": "assistant", "tool_calls": [{"unexpected": ""}]},
+            {"role": "assistant", "tool_calls": [
+                {"id": "call_1", "type": "function",
+                 "function": {"name": "", "arguments": "{}"}},
+            ]},
+            {"role": "assistant", "content": "", "reasoning_content": "private-only"},
+        )
+    ),
+    {"choices": [{"message": {"role": "assistant", "content": "\u200b\ufeff"}}]},
+    {"choices": [{"message": {"role": "assistant", "content": "partial"},
+                  "finish_reason": "length"}]},
+    {"choices": [{"message": {"role": "assistant", "content": "filtered"},
+                  "finish_reason": "content_filter"}]},
+    {"choices": [{"message": {"role": "assistant", "content": "valid"}},
+                 {"message": {"role": "assistant", "content": ""}}]},
+])
 def test_malformed_upstream_answers_fail_over_before_receipting(monkeypatch, bad):
     configure(monkeypatch, egress=True, tokens=True)
     calls = []
@@ -599,6 +635,27 @@ def test_malformed_upstream_answers_fail_over_before_receipting(monkeypatch, bad
     assert payload["szl_receipt"]["provider_id"] == "regional"
     assert payload["szl_receipt"]["attempts"][0]["state"] == "TRANSPORT_OR_CONTRACT_ERROR"
     assert "private diagnostic" not in response.text
+
+
+def test_nontext_tool_call_and_refusal_remain_valid_completions():
+    module.validate_completion({"choices": [{"message": {
+        "role": "assistant", "content": None, "tool_calls": [
+            {"id": "call_1", "type": "function",
+             "function": {"name": "lookup", "arguments": "{}"}}
+        ],
+    }}]})
+    module.validate_completion({"choices": [{"message": {
+        "role": "assistant", "refusal": "Request declined."
+    }}]})
+    module.validate_completion({"choices": [{"message": {
+        "role": "assistant", "function_call": {"name": "lookup", "arguments": "{}"}
+    }}]})
+    module.validate_completion({"choices": [{"message": {
+        "role": "assistant", "audio": {"data": "AQID", "transcript": ""}
+    }}]})
+    module.validate_completion({"choices": [{"message": {
+        "role": "assistant", "audio": {"transcript": "Spoken answer"}
+    }}]})
 
 
 @pytest.mark.parametrize("mutation", [
