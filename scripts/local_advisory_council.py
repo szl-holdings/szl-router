@@ -109,6 +109,11 @@ def safe_visible_advice(value: Any) -> bool:
     except UnicodeEncodeError:
         return False
     normalized = unicodedata.normalize("NFKC", value.casefold())
+    # Ignore default-ignorable format characters in the marker scan, so
+    # visually disguised tags such as <thi\u200bnk> cannot evade the hold.
+    normalized = "".join(
+        char for char in normalized if unicodedata.category(char) != "Cf"
+    )
     # Inference can put reasoning markers in "response" despite think=False.
     # Refuse them in the advisory channel, even with done_reason="stop".
     markers = ("◁think▷", "◁/think▷", "<think>", "</think>",

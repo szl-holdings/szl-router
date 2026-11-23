@@ -101,7 +101,8 @@ class LocalCouncilTests(unittest.TestCase):
 
     def test_reasoning_only_text_is_not_admitted_as_visible_advice(self):
         for text in ("◁think▷reasoning only", "<think>analysis</think>",
-                     "[think]analysis[/think]", "text ◁/think▷ stray"):
+                     "[think]analysis[/think]", "text ◁/think▷ stray",
+                     "<thi\u200bnk>analysis</think>", "◁thi\u200bnk▷hidden"):
             with self.subTest(text=text):
                 self.response = lambda payload: {
                     "model": payload["model"],
@@ -109,7 +110,15 @@ class LocalCouncilTests(unittest.TestCase):
                                 else "Visible independent negative test.",
                     "done": True, "done_reason": "stop",
                 }
+                call_start = len(self.calls)
                 report = council.observe_cycle(self.fetch, observed_at="T")
+                later_prompts = [
+                    payload["prompt"] for route, payload in self.calls[call_start:]
+                    if route == "/api/generate"
+                    and payload["model"] != council.SEATS[0][1]
+                ]
+                self.assertTrue(later_prompts)
+                self.assertTrue(all(text not in prompt for prompt in later_prompts))
                 self.assertEqual(report["local_answer_count"], 3)
                 self.assertEqual(report["seats"][0]["outcome"], "UNAVAILABLE")
                 self.assertNotIn("text", report["seats"][0])
@@ -123,7 +132,15 @@ class LocalCouncilTests(unittest.TestCase):
                         else "Visible independent negative test.",
             "done": True, "done_reason": "stop",
         }
+        call_start = len(self.calls)
         report = council.observe_cycle(self.fetch, observed_at="T")
+        later_prompts = [
+            payload["prompt"] for route, payload in self.calls[call_start:]
+            if route == "/api/generate"
+            and payload["model"] != council.SEATS[0][1]
+        ]
+        self.assertTrue(later_prompts)
+        self.assertTrue(all("\ud800" not in prompt for prompt in later_prompts))
         self.assertEqual(report["local_answer_count"], 3)
         self.assertNotIn("text", report["seats"][0])
         self.assertTrue(report["terminal_chain_sha256"])

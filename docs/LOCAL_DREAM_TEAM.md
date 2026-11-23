@@ -30,7 +30,7 @@ read bounded prior advice as data, but it cannot execute it. The terminal
 SHA-256 record chain is a locally generated **unsigned** content commitment,
 not signer verification, model quality, paid-compute accounting, license proof
 or proof of the executing weight bytes. Zero-width-only, empty, incomplete, reasoning-marked, invalid UTF-8
-and mismatched-model outputs cannot become successful observations.
+and mismatched-model outputs cannot become successful observations. Format-control\ncharacters cannot conceal known reasoning tags. Unmarked semantic reasoning is\nnot machine-verifiable here; all advisory text remains untrusted.
 
 ## External Dream Team seats
 
