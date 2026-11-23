@@ -402,7 +402,9 @@ def publish(api: Any, download: Callable[..., str], *, token: str,
     with tempfile.TemporaryDirectory(prefix="szl-router-control-space-") as temporary:
         folder = Path(temporary)
         for filename, body in expected.items():
-            (folder / filename).write_bytes(body)
+            destination = folder / filename
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(body)
         record(phase="UPLOAD_REQUESTED", write_outcome="UNKNOWN")
         commit = api.upload_folder(
             repo_id=TARGET, repo_type="space", folder_path=str(folder),
