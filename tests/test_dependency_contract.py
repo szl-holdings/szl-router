@@ -35,7 +35,7 @@ except ModuleNotFoundError:  # Python 3.10
     tomllib = None
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PACKAGES = ("szl_router", "router_control")
+PACKAGES = ("szl_router", "router_control", "routing_cost")
 
 # import name -> (distribution, groups that must list it); "core" is [project].dependencies.
 DECLARED = {
