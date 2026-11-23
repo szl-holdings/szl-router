@@ -67,7 +67,8 @@ class FakeApi:
         folder = Path(kwargs["folder_path"])
         self.files = {
             control.PROVIDER_METADATA: self.files[control.PROVIDER_METADATA],
-            **{path.name: path.read_bytes() for path in folder.iterdir()},
+            **{str(path.relative_to(folder)).replace("\\\\", "/"): path.read_bytes()
+               for path in folder.rglob("*") if path.is_file()},
         }
         self.uploaded = True
         self.sha = PUBLISHED
@@ -91,6 +92,7 @@ class SpacePublisherTests(unittest.TestCase):
             self.assertEqual((repo_id, repo_type, revision, token),
                              (control.TARGET, "space", api.sha, "fixture-token"))
             path = Path(self.temporary.name) / filename
+            path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(api.files[filename])
             return str(path)
         return fake_download
