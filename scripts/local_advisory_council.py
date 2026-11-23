@@ -98,6 +98,24 @@ def nonblank(value: Any) -> bool:
     )
 
 
+def safe_visible_advice(value: Any) -> bool:
+    """Hold reasoning-only output and invalid Unicode; never hash or relay them."""
+    if not nonblank(value):
+        return False
+    # JSON can decode an escaped lone surrogate into a str that cannot be
+    # encoded as UTF-8. Withhold the one bad seat, not the entire report.
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    normalized = unicodedata.normalize("NFKC", value.casefold())
+    # Inference can put reasoning markers in "response" despite think=False.
+    # Refuse them in the advisory channel, even with done_reason="stop".
+    markers = ("◁think▷", "◁/think▷", "<think>", "</think>",
+               "[think]", "[/think]")
+    return not any(marker in normalized for marker in markers)
+
+
 def observe_cycle(fetch: Callable, *, observed_at: str) -> dict:
     """One non-authorizing iteration; every candidate has an exact manifest pin."""
     observed = inventory(fetch)
@@ -144,7 +162,7 @@ def observe_cycle(fetch: Callable, *, observed_at: str) -> dict:
                 if after.get(model) != expected:
                     row["reason"] = "PIN_CHANGED_DURING_CYCLE"
                 elif (answer.get("model") == model and answer.get("done") is True
-                      and answer.get("done_reason") == "stop" and nonblank(text)):
+                      and answer.get("done_reason") == "stop" and safe_visible_advice(text)):
                     row["outcome"] = "LOCAL_ADVISORY_TEXT_OBSERVED"
                     row["text"] = text[:1600]
                     prior += "\n" + seat + ": " + text[:500]

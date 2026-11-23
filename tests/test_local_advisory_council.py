@@ -99,6 +99,37 @@ class LocalCouncilTests(unittest.TestCase):
                 self.assertTrue(all(row.get("reason") == "EMPTY_INCOMPLETE_OR_MODEL_MISMATCH"
                                     for row in report["seats"]))
 
+    def test_reasoning_only_text_is_not_admitted_as_visible_advice(self):
+        for text in ("◁think▷reasoning only", "<think>analysis</think>",
+                     "[think]analysis[/think]", "text ◁/think▷ stray"):
+            with self.subTest(text=text):
+                self.response = lambda payload: {
+                    "model": payload["model"],
+                    "response": text if payload["model"] == council.SEATS[0][1]
+                                else "Visible independent negative test.",
+                    "done": True, "done_reason": "stop",
+                }
+                report = council.observe_cycle(self.fetch, observed_at="T")
+                self.assertEqual(report["local_answer_count"], 3)
+                self.assertEqual(report["seats"][0]["outcome"], "UNAVAILABLE")
+                self.assertNotIn("text", report["seats"][0])
+                self.assertEqual(report["seats"][1]["outcome"],
+                                 "LOCAL_ADVISORY_TEXT_OBSERVED")
+
+    def test_escaped_lone_surrogate_is_withheld_without_aborting_council(self):
+        self.response = lambda payload: {
+            "model": payload["model"],
+            "response": "\ud800" if payload["model"] == council.SEATS[0][1]
+                        else "Visible independent negative test.",
+            "done": True, "done_reason": "stop",
+        }
+        report = council.observe_cycle(self.fetch, observed_at="T")
+        self.assertEqual(report["local_answer_count"], 3)
+        self.assertNotIn("text", report["seats"][0])
+        self.assertTrue(report["terminal_chain_sha256"])
+        self.assertEqual(report["seats"][1]["outcome"],
+                         "LOCAL_ADVISORY_TEXT_OBSERVED")
+
     def test_live_call_error_is_withheld_not_promoted(self):
         def network_refused(route, payload):
             if route == "/api/tags":
