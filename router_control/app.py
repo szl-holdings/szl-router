@@ -17,6 +17,7 @@ import os
 import re
 import secrets
 import threading
+import unicodedata
 import time
 import urllib.parse
 from dataclasses import dataclass
@@ -31,6 +32,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from router_control.free_tier import dossier as free_provider_dossier
+from router_control.provider_protocols import prepare_provider_request, normalize_provider_response
 from router_control.local_store import (
     HASH_BUDGET_SECONDS, LocalStoreError, manifest_relative_path, verify_store_bytes,
 )
@@ -128,7 +130,7 @@ def validate_base_url(value: str, allowed_hosts: frozenset[str]) -> str:
 class ProviderRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str = Field(min_length=1, max_length=96, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$")
-    provider_type: Literal["openai_https", "ollama_loopback"] = "openai_https"
+    provider_type: Literal["openai_https", "ollama_loopback", "anthropic_messages_https", "perplexity_agent_https"] = "openai_https"
     base_url: str | None = Field(default=None, min_length=9, max_length=512)
     models: dict[str, str] = Field(min_length=1, max_length=MAX_MODELS_PER_PROVIDER)
     model_digests: dict[str, str] = Field(default_factory=dict, max_length=MAX_MODELS_PER_PROVIDER)
@@ -219,9 +221,17 @@ def load_settings() -> Settings:
                 store_root = os.getenv("SZL_ROUTER_OLLAMA_MODELS_DIR", "").strip()
                 if not store_root or not Path(store_root).is_absolute():
                     raise ValueError("local byte admission requires an absolute model store root")
-            normalized.append(provider if provider.provider_type == "ollama_loopback" else provider.model_copy(
-                update={"base_url": validate_base_url(provider.base_url, allowed_hosts)}
-            ))
+            if provider.provider_type == "ollama_loopback":
+                normalized.append(provider)
+            else:
+                url = validate_base_url(provider.base_url, allowed_hosts)
+                pinned_origins = {
+                    "anthropic_messages_https": "https://api.anthropic.com",
+                    "perplexity_agent_https": "https://api.perplexity.ai",
+                }
+                if provider.provider_type in pinned_origins and url != pinned_origins[provider.provider_type]:
+                    raise ValueError("provider protocol requires its exact official origin")
+                normalized.append(provider.model_copy(update={"base_url": url}))
         return Settings(
             Registry(providers=normalized),
             allowed_hosts,
@@ -525,11 +535,12 @@ async def observe_store_bytes(provider: ProviderRecord, public_model: str) -> di
 
 async def call_provider(provider: ProviderRecord, payload: dict[str, Any]) -> tuple[dict[str, Any], int]:
     token = os.getenv(provider.token_env, "") if provider.token_env else ""
-    if provider.provider_type == "openai_https" and not token:
+    if provider.provider_type != "ollama_loopback" and not token:
         raise RuntimeError("credential unavailable")
     base_url = (OLLAMA_LOOPBACK_ORIGIN + "/v1" if provider.provider_type == "ollama_loopback"
                 else provider.base_url)
-    url = base_url.rstrip("/") + "/chat/completions"
+    path, upstream_body, extra_headers = prepare_provider_request(provider.provider_type, payload)
+    url = base_url.rstrip("/") + path
     timeout = httpx.Timeout(MAX_TIMEOUT_SECONDS, connect=10.0)
     async with httpx.AsyncClient(
         timeout=timeout,
@@ -545,8 +556,9 @@ async def call_provider(provider: ProviderRecord, payload: dict[str, Any]) -> tu
                 "Content-Type": "application/json",
                 "Accept": "application/json",
                 "User-Agent": "szl-router/1.0",
+                **extra_headers,
             },
-            json=payload,
+            json=upstream_body,
         ) as response:
             chunks: list[bytes] = []
             size = 0
@@ -569,7 +581,7 @@ async def call_provider(provider: ProviderRecord, payload: dict[str, Any]) -> tu
                 raise RuntimeError("upstream response was not bounded UTF-8 JSON") from exc
             if not isinstance(value, dict):
                 raise RuntimeError("upstream response must be a JSON object")
-            return value, response.status_code
+            return normalize_provider_response(provider.provider_type, value), response.status_code
 
 
 def public_registry(settings: Settings) -> list[dict[str, Any]]:
@@ -661,6 +673,36 @@ def check_caller_auth(request: Request) -> None:
         )
 
 
+def _visible_output(value: Any) -> bool:
+    return isinstance(value, str) and any(
+        not ch.isspace() and unicodedata.category(ch) not in {"Cf", "Cc"}
+        for ch in value
+    )
+
+
+def _usable_function_call(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and _visible_output(value.get("name"))
+        and _visible_output(value.get("arguments"))
+    )
+
+
+def _usable_tool_call(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and value.get("type") == "function"
+        and _visible_output(value.get("id"))
+        and _usable_function_call(value.get("function"))
+    )
+
+
+def _usable_audio(value: Any) -> bool:
+    return isinstance(value, dict) and (
+        _visible_output(value.get("data")) or _visible_output(value.get("transcript"))
+    )
+
+
 def validate_completion(value: Any) -> None:
     """An HTTP success alone cannot establish a usable completion."""
     if not isinstance(value, dict) or value.get("error") is not None:
@@ -674,6 +716,8 @@ def validate_completion(value: Any) -> None:
         message = choice.get("message") if isinstance(choice, dict) else None
         if not isinstance(message, dict) or message.get("role") != "assistant":
             raise RuntimeError("upstream completion requires assistant messages")
+        if choice.get("finish_reason") in {"length", "content_filter"}:
+            raise RuntimeError("upstream completion was truncated or filtered")
         if not any(key in message for key in ("content", "refusal", "tool_calls", "function_call", "audio")):
             raise RuntimeError("upstream assistant message has no output")
         for key in ("content", "refusal"):
@@ -685,6 +729,17 @@ def validate_completion(value: Any) -> None:
             or any(not isinstance(call, dict) or not call for call in calls)
         ):
             raise RuntimeError("upstream output has invalid tool calls")
+        # A 200 response with content="" is not a completion. Reasoning-only
+        # responses can exhaust max_tokens without yielding user-visible text;
+        # never mint an answer receipt from the mere presence of a field.
+        has_text = any(_visible_output(message.get(key)) for key in ("content", "refusal"))
+        has_calls = isinstance(calls, list) and bool(calls) and all(
+            _usable_tool_call(call) for call in calls
+        )
+        has_function = _usable_function_call(message.get("function_call"))
+        has_audio = _usable_audio(message.get("audio"))
+        if not (has_text or has_calls or has_function or has_audio):
+            raise RuntimeError("upstream assistant message has no substantive output")
 
 
 async def attempt_candidate(provider: ProviderRecord, request: ChatRequest,
@@ -780,6 +835,7 @@ def source() -> dict[str, Any]:
         Path(__file__),
         Path(__file__).with_name("local_store.py"),
         Path(__file__).with_name("verification.py"),
+        Path(__file__).with_name("provider_protocols.py"),
         Path(__file__).with_name("free_tier.py"),
         STATIC / "index.html",
         STATIC / "app.js",
