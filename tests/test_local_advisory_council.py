@@ -25,8 +25,11 @@ class LocalCouncilTests(unittest.TestCase):
         self.calls = []
         self.response = lambda payload: {
             "model": payload["model"],
-            "response": "Defect: a nonempty choices list can hide a blank answer. "
-                        "Negative test: choices with content='' must fail.",
+            "response": (json.dumps({"correction": "Require visible assistant output",
+                                    "negative_test": "Reject blank choices"})
+                         if payload["model"] == council.SEATS[0][1]
+                         else "Defect: a nonempty choices list can hide a blank answer. "
+                              "Negative test: choices with content='' must fail."),
             "done": True,
             "done_reason": "stop",
         }
@@ -39,7 +42,11 @@ class LocalCouncilTests(unittest.TestCase):
         self.assertFalse(payload["stream"])
         self.assertFalse(payload["think"])
         self.assertFalse(payload["options"]["temperature"])
-        self.assertLessEqual(payload["options"]["num_predict"], 100)
+        self.assertLessEqual(payload["options"]["num_predict"], 200)
+        if payload["model"] == council.SEATS[0][1]:
+            self.assertEqual(payload.get("format"), council.KIMI_OUTPUT_SCHEMA)
+        else:
+            self.assertNotIn("format", payload)
         return self.response(payload)
 
     def test_all_four_source_bound_advisors_return_with_replayable_chain(self):
@@ -107,6 +114,22 @@ class LocalCouncilTests(unittest.TestCase):
         report = council.observe_cycle(network_refused, observed_at="T")
         self.assertEqual(report["local_answer_count"], 0)
         self.assertTrue(all("text" not in row for row in report["seats"]))
+
+    def test_kimi_structured_completion_rejects_nonfinal_and_ambiguous_json(self):
+        valid = json.dumps({"correction": "Require visible assistant output",
+                            "negative_test": "Reject blank content"})
+        self.assertEqual(json.loads(council.decode_kimi_advice(valid))["negative_test"],
+                         "Reject blank content")
+        for malformed in (
+            "", "some free text", '{"correction":"yes"}',
+            '{"correction":"yes","negative_test":""}',
+            '{"correction":"yes","negative_test":"x","hidden":"unverified"}',
+            '{"correction":"yes","correction":"x","negative_test":"test"}',
+            '{"correction":"yes","negative_test":"\\u200b"}',
+            '{"correction":"yes","negative_test":"x" +',
+        ):
+            with self.subTest(malformed=malformed):
+                self.assertIsNone(council.decode_kimi_advice(malformed))
 
     def test_output_is_private_create_only(self):
         with tempfile.TemporaryDirectory() as folder:
