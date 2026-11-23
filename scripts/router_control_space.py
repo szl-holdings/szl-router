@@ -34,6 +34,7 @@ PRESERVED_ARTWORK = {
     "assets/szl-card/org-context.svg": PUBLISHING_ROOT / "assets" / "szl-card" / "org-context.svg",
 }
 FILES = frozenset({"README.md", "Dockerfile", "SOURCE_BINDING.json", *PRESERVED_ARTWORK})
+LEGACY_README_SHA256 = "bce9c634da2ed14b28fe1dbd0929c34b060b0cd96e3b4bb7046319321e9dea8c"
 PROVIDER_METADATA = ".gitattributes"
 BOOTSTRAP_BINDING = Path(__file__).resolve().parents[1] / "publishing/router-control-bootstrap.v1.json"
 SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -267,6 +268,9 @@ def _existing_target_admitted(api: Any, download: Callable[..., str],
     legacy_card = _legacy_space_files(binding.get("source_revision"), binding.get("image_digest"))["README.md"]
     for filename, body in old_expected.items():
         observed_body = _download_bytes(download, filename, revision, token)
+        if (filename == "README.md"
+                and hashlib.sha256(observed_body).hexdigest() == LEGACY_README_SHA256):
+            continue
         accepted = (body, legacy_card) if filename == "README.md" else (body,)
         if observed_body not in accepted:
             raise ControlSpaceError("EXISTING_SPACE_BYTES_REJECTED")

@@ -234,6 +234,15 @@ class SpacePublisherTests(unittest.TestCase):
         self.assertEqual(caught.exception.code, "SPACE_PROVIDER_METADATA_DRIFT")
         witness.assert_not_called()
 
+    def test_pinned_legacy_readme_can_be_admitted_without_loosened_file_checks(self):
+        files = control.space_files(SOURCE, IMAGE_DIGEST)
+        files["README.md"] = b"pinned legacy card"
+        with patch.object(control, "LEGACY_README_SHA256", hashlib.sha256(files["README.md"]).hexdigest()):
+            api = FakeApi(exists=True, files={control.PROVIDER_METADATA: PROVIDER_METADATA, **files})
+            result = self.run_publish(api)
+        self.assertTrue(api.uploaded)
+        self.assertEqual(result["status"], "MEASURED")
+
     def test_existing_exact_space_can_update_without_changing_provider_metadata(self):
         files = control.space_files(SOURCE, IMAGE_DIGEST)
         api = FakeApi(exists=True, files={control.PROVIDER_METADATA: PROVIDER_METADATA, **files})
