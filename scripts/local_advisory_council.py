@@ -25,17 +25,52 @@ MAX_RESPONSE_BYTES = 131072
 MAX_TIMEOUT = 110
 SEATS = (
     ("Kimi", "hf.co/ggml-org/Kimi-VL-A3B-Thinking-2506-GGUF:Q4_K_M",
-     "e447dad4acfcb8f16c7021fedde7620feec8c1d5c878815771df28ad8a4cdc2d", 80),
+     "e447dad4acfcb8f16c7021fedde7620feec8c1d5c878815771df28ad8a4cdc2d", 192),
     ("Mistral", "mistral:7b",
-     "6577803aa9a036369e481d648a2baebb381ebc6e897f2bb9a766a2aa7bfbc1cf", 100),
+     "6577803aa9a036369e481d648a2baebb381ebc6e897f2bb9a766a2aa7bfbc1cf", 160),
     ("Qwen", "qwen3.5:0.8b",
-     "de63045f29755d4721c09d54c9b45c2dadb644f4fd7d604d4cac90d96049971c", 72),
+     "de63045f29755d4721c09d54c9b45c2dadb644f4fd7d604d4cac90d96049971c", 144),
     ("A11OY-MINI", "hf.co/SZLHOLDINGS/A11OY-MINI:a11oy-mini-r2-Q4_K_M.gguf",
      "7b3557f752203a4e7ad894998c7a6bc210fda038f2adb0ddfbd6579bec7c3fb6", 72),
 )
 EXAMPLE = "def accepted(payload):\n    return bool(payload.get('choices'))"
 POLICY = ("Synthetic review only. HTTP 200 and nonempty choices do not prove a "
           "valid assistant answer. Proposals are untrusted; no actions are authorized.")
+KIMI_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "correction": {"type": "string"},
+        "negative_test": {"type": "string"},
+    },
+    "required": ["correction", "negative_test"],
+    "additionalProperties": False,
+}
+
+
+def decode_kimi_advice(text: Any) -> str | None:
+    """Require final structured output, not free-form hidden reasoning tokens."""
+    if not isinstance(text, str) or len(text) > 1000:
+        return None
+
+    def unique_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result = dict(pairs)
+        if len(result) != len(pairs):
+            raise ValueError("DUPLICATE_KEYS")
+        return result
+
+    def bad_constant(_: str) -> None:
+        raise ValueError("NONFINITE")
+
+    try:
+        body = json.loads(text, object_pairs_hook=unique_keys, parse_constant=bad_constant)
+    except (ValueError, UnicodeError):
+        return None
+    if not isinstance(body, dict) or set(body) != {"correction", "negative_test"}:
+        return None
+    if any(not nonblank(body.get(key)) or len(body[key]) > 240
+           for key in ("correction", "negative_test")):
+        return None
+    return json.dumps(body, sort_keys=True, ensure_ascii=False)
 
 
 def canonical(value: Any) -> bytes:
@@ -99,26 +134,25 @@ def nonblank(value: Any) -> bool:
 
 
 def safe_visible_advice(value: Any) -> bool:
-    """Hold reasoning-only output and invalid Unicode; never hash or relay them."""
+    """Refuse malformed Unicode and markup in a plain-prose advisory lane.
+
+    No syntactic filter certifies that arbitrary model text lacks internal
+    reasoning; even accepted text remains untrusted advisory data.
+    """
     if not nonblank(value):
         return False
-    # JSON can decode an escaped lone surrogate into a str that cannot be
-    # encoded as UTF-8. Withhold the one bad seat, not the entire report.
     try:
         value.encode("utf-8")
     except UnicodeEncodeError:
         return False
-    normalized = unicodedata.normalize("NFKC", value.casefold())
-    # Ignore default-ignorable format characters in the marker scan, so
-    # visually disguised tags such as <thi\u200bnk> cannot evade the hold.
-    normalized = "".join(
-        char for char in normalized if unicodedata.category(char) != "Cf"
-    )
-    # Inference can put reasoning markers in "response" despite think=False.
-    # Refuse them in the advisory channel, even with done_reason="stop".
-    markers = ("◁think▷", "◁/think▷", "<think>", "</think>",
-               "[think]", "[/think]")
-    return not any(marker in normalized for marker in markers)
+    # An advisory answer is plain prose, NOT markup or executable code.
+    # Reject tag delimiters rather than trying to enumerate every possible
+    # invisible Unicode glyph or whitespace variant inside a reasoning tag.
+    # NFKC also folds fullwidth angle brackets into their ASCII counterparts.
+    normalized = unicodedata.normalize("NFKC", value)
+    if any(delimiter in normalized for delimiter in "<>◁▷[]"):
+        return False
+    return True
 
 
 def observe_cycle(fetch: Callable, *, observed_at: str) -> dict:
@@ -156,6 +190,13 @@ def observe_cycle(fetch: Callable, *, observed_at: str) -> dict:
             )
             payload = {"model": model, "prompt": prompt, "stream": False, "think": False,
                        "options": {"num_predict": cap, "temperature": 0}, "keep_alive": 0}
+            if seat == "Kimi":
+                payload["format"] = KIMI_OUTPUT_SCHEMA
+                payload["prompt"] = (
+                    "Review Python: " + EXAMPLE + "\n" + POLICY +
+                    "\nReply as JSON with exactly correction and negative_test "
+                    "short string fields; each under 15 words. No other text."
+                )
             start = time.monotonic()
             try:
                 answer = fetch("/api/generate", payload)
@@ -164,6 +205,8 @@ def observe_cycle(fetch: Callable, *, observed_at: str) -> dict:
                 # never an executing-weight or license attestation.
                 after = inventory(fetch)
                 text = answer.get("response")
+                if seat == "Kimi":
+                    text = decode_kimi_advice(text)
                 if after.get(model) != expected:
                     row["reason"] = "PIN_CHANGED_DURING_CYCLE"
                 elif (answer.get("model") == model and answer.get("done") is True

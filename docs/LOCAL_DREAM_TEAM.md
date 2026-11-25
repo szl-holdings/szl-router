@@ -24,13 +24,25 @@ The fixed local seats are Kimi-VL-A3B-Thinking, Mistral 7B, Qwen 3.5 0.8B
 and SZLHOLDINGS A11OY-MINI. The local Ollama daemon must report each precise
 manifest digest **before and after** completion; a missing or moved pin is
 `UNAVAILABLE`. Each seat has a fixed small token ceiling and one request only.
+The installed Kimi-VL thinking model can exhaust a small free-text ceiling
+with internal commentary; its candidate instead uses Ollama's bounded JSON
+schema grammar and requires exactly two nonempty, uniquely keyed short fields.
+Malformed, truncated or reasoning-only results are withheld, never treated
+as a completed advisory. Mistral and Qwen have separately bounded token
+ceilings calibrated against observed stop-versus-length behavior.
 
-The natural-language responses are **untrusted advice**. The next seat may
+The natural-language responses are **untrusted advice**. Replies
+containing markup delimiter characters (angle brackets, Unicode think
+delimiters, or square brackets) or invalid UTF-8 are withheld from the
+receipt and later prompts, including Unicode fullwidth forms folded by NFKC.
+This intentionally rejects some otherwise legitimate code-like suggestions:
+this council accepts plain-prose advisory text only. Unmarked reasoning
+cannot be reliably detected; all accepted text remains untrusted. The next seat may
 read bounded prior advice as data, but it cannot execute it. The terminal
 SHA-256 record chain is a locally generated **unsigned** content commitment,
 not signer verification, model quality, paid-compute accounting, license proof
-or proof of the executing weight bytes. Zero-width-only, empty, incomplete, reasoning-marked, invalid UTF-8
-and mismatched-model outputs cannot become successful observations. Format-control\ncharacters cannot conceal known reasoning tags. Unmarked semantic reasoning is\nnot machine-verifiable here; all advisory text remains untrusted.
+or proof of the executing weight bytes. Zero-width-only, empty, incomplete
+and mismatched-model outputs cannot become successful observations.
 
 ## External Dream Team seats
 
