@@ -133,7 +133,7 @@ class RouterFlagshipContractTests(unittest.TestCase):
         )
         for marker in required:
             self.assertIn(marker, workflow)
-        self.assertNotIn("workflow_dispatch", workflow)
+        self.assertIn("workflow_dispatch", workflow)
 
         uses = re.findall(
             r"^\s*uses:\s*(\S+)\s*(?:#.*)?$",
