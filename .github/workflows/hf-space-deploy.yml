@@ -4,7 +4,6 @@ name: Deploy SZL Router flagship Space
 # SZLHOLDINGS/llm-router-live target. A bounded bootstrap may create that exact
 # canonical Space when absent; no alternate or duplicate target is accepted.
 on:
-  # workflow_dispatch is intentionally disabled for production branch safety.
   push:
     branches: [main]
     paths:
